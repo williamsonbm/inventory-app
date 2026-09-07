@@ -68,8 +68,13 @@ Inherited from `materials-planner/CLAUDE.md`. Same rules, same reasons.
   the kernel refuses the write. `materials-planner` is read-write in the pod and rests on this
   rule, not on a mechanism.
 - **Feature branch and a PR.** Direct pushes to `main`, and force pushes anywhere, are rejected
-  by this repo's `.git/hooks/pre-push`. A Claude Code hook also asks before any push, so the
-  agent hands over a command rather than discovering the wall mid-push.
+  by this repo's `.git/hooks/pre-push`, which fires however git is invoked. A Claude Code hook
+  also asks before any push, so the agent hands over a command rather than discovering the wall
+  mid-push — but **an `ask` is a no-op when permissions are relaxed**: it logs to
+  `~/.claude/hook-decisions.jsonl` and the command proceeds. `pre-push` is the layer that
+  actually stops it. Confirmed 2026-09-07, both directions: `guard-push` logged `ask` on two
+  pushes that then went through unprompted, and two direct `git push origin main` attempts were
+  logged the same way and stopped by `pre-push`, not by the ask.
 - **Secrets stay out of the transcript.** `.env*`, `/keys/*` and private-key material are
   denied by the `guard-secrets` baseline hook, by resolved path.
 
