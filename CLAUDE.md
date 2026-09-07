@@ -46,30 +46,44 @@ Inherited from `materials-planner/CLAUDE.md`. Same rules, same reasons.
 - **Wrap a grade token in backticks** — `` `#1` ``, not `#1`. GitHub turns a bare `#<number>`
   into a link to that issue number. This repo has issues from #2 upward, so a bare grade name
   renders as a linked, garbled issue title.
-- **`gh pr create` and `gh pr edit` are unreliable with this token — verify the live result,
-  never trust the exit code.** Both have printed a scope error while creating the PR anyway,
-  and once fell back silently to the branch's commit message as title and body. After any call,
-  run `gh pr view <n> --json title,body` and confirm the content matches the draft before
-  reporting success. If it does not match, or the call errors, do not retry in a loop — hand the
-  drafted text to the owner to paste.
+- **`gh pr create` needs `Contents: Read` on the token, not only `Pull requests: Write`.**
+  Creating a PR first reads the base branch ref, and a ref read is Contents-scoped — so a token
+  carrying PR write but no Contents access fails *before* it writes anything. The GraphQL error
+  names `repository.defaultBranchRef`, which reads like a pull-request problem and is not one.
+  Granted 2026-09-07, after a session spent an hour on the wrong diagnosis; the fine-grained
+  token now carries Issues (write), Pull requests (write), Metadata and Contents (read) across
+  `truss-label-tool`, `materials-planner` and `inventory-app`. **Do not trust the exit code
+  regardless** — `gh pr create` has returned `0` while failing outright, and has historically
+  printed a scope error while creating the PR anyway, and once fell back silently to the
+  branch's commit message as title and body. Run `gh pr view <n> --json title,body` once after
+  any call and confirm the content matches the draft. If it does not match, hand the drafted
+  text to the owner rather than retrying in a loop. The compare URL
+  (`https://github.com/williamsonbm/inventory-app/compare/main...<branch>?expand=1`) remains the
+  fallback, no longer the default path.
 
 ## Hard constraints — do not break these
 
 - **Siblings are read-only.** Read and grep `hanger-web-app` and `materials-planner` freely;
-  changing them is the owner's job. Enforced by `.claude/hooks/guard-sibling-writes.js`.
-- **Feature branch and a PR.** Direct pushes to `main`, and force pushes anywhere, are denied
-  by `.claude/hooks/guard-git-push.js`.
+  changing them is the owner's job. `hanger-web-app` is enforced by a read-only bind mount, so
+  the kernel refuses the write. `materials-planner` is read-write in the pod and rests on this
+  rule, not on a mechanism.
+- **Feature branch and a PR.** Direct pushes to `main`, and force pushes anywhere, are rejected
+  by this repo's `.git/hooks/pre-push`. A Claude Code hook also asks before any push, so the
+  agent hands over a command rather than discovering the wall mid-push.
 - **Secrets stay out of the transcript.** `.env*`, `/keys/*` and private-key material are
-  denied by `.claude/hooks/guard-secrets.js`.
+  denied by the `guard-secrets` baseline hook, by resolved path.
 
-Those three hooks are the **only** enforcement here. This repo is private on a Free plan, so
-GitHub Rulesets and branch protection return `403 Upgrade to GitHub Pro` — unlike
-`materials-planner`, which is public and carries a server-side "Protect Main" ruleset. A hook
-binds this agent inside Claude Code and nothing else, and its Bash checks are string matching,
-so an interpreter can evade them. Treat the boundary as a floor, not a guarantee.
+This repo is private on a Free plan, so GitHub Rulesets and branch protection return
+`403 Upgrade to GitHub Pro` — unlike `materials-planner`, which is public and carries a
+server-side "Protect Main" ruleset. The `pre-push` hook stands in for that, and unlike the
+Claude Code hook it replaced, it fires however git is invoked, including from your own
+terminal.
 
-The hooks are project-scoped: a session rooted at `/workspace` instead of here loads none of
-them.
+The guardrails are defined in `../hooks-src/` and are user-scope, so they apply regardless of
+which directory a session starts in. The previous set was project-scoped: a session rooted at
+`/workspace` loaded none of it. A Claude Code hook still binds this agent inside Claude Code
+and nothing else — treat that layer as a floor, not a guarantee. The `pre-push` and
+`commit-msg` git hooks are the part that actually enforces.
 
 ## The effort — read before planning work
 
