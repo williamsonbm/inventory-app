@@ -4,8 +4,11 @@ Neutral ground for merging two existing systems — the **materials planner** (r
 no database) and **hanger-web-app** (LAN/Tailscale web app, Postgres) — into one app for one
 client. Currently holds planning artifacts only: no application code yet.
 
-Both source repos are siblings at `/workspace/`, read-only from here, and are the primary
-reference material for every decision made in this repo.
+Both source repos are siblings of this one, read-only from here, and are the primary reference
+material for every decision made in this repo. Under the `claude-pod` alias they are at
+`/workspace/`. That path is the alias's bind mount, not a fact about the repos — the Claude
+Desktop container holds the same repos under `~/Projects/claude-sandbox/`. **Resolve the path
+before you trust it**; a session that assumes `/workspace/` concludes the repos are missing.
 
 ## Working style — non-developer owner, lean by default
 
@@ -64,9 +67,14 @@ Inherited from `materials-planner/CLAUDE.md`. Same rules, same reasons.
 ## Hard constraints — do not break these
 
 - **Siblings are read-only.** Read and grep `hanger-web-app` and `materials-planner` freely;
-  changing them is the owner's job. `hanger-web-app` is enforced by a read-only bind mount, so
-  the kernel refuses the write. `materials-planner` is read-write in the pod and rests on this
-  rule, not on a mechanism.
+  changing them is the owner's job. **The rule holds everywhere. The mechanism that enforces it
+  does not.** Under `claude-pod`, `hanger-web-app` is bind-mounted `:ro` and the kernel refuses
+  the write, while `materials-planner` is read-write and rests on the rule alone. The `:ro` is a
+  flag on that one alias, not a property of the repository: in the Claude Desktop container there
+  is no such flag, and a write to `hanger-web-app` succeeds — confirmed by test 2026-09-13.
+  Outside `claude-pod`, **both siblings rest on the rule alone.** So treat the kernel as a floor
+  you cannot count on, the same way this file treats the Claude Code `ask` hook, and verify the
+  mount rather than assume it.
 - **Feature branch and a PR.** Direct pushes to `main`, and force pushes anywhere, are rejected
   by this repo's `.git/hooks/pre-push`, which fires however git is invoked. A Claude Code hook
   also asks before any push, so the agent hands over a command rather than discovering the wall
