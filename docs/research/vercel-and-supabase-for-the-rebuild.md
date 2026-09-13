@@ -50,10 +50,19 @@ reduced form. It is worth its own ticket. It is not worth delaying the start.
 **On the provider question:** going to Vercel does flip the recommendation from Neon to
 Supabase — but for a narrower reason than "Supabase is better." As a database, Neon is still
 the better buy for this workload, exactly as [#5](https://github.com/williamsonbm/inventory-app/issues/5)
-found. What changes is that the rebuild needs a login system built from nothing, and Supabase
-ships one that is already wired to the database the app is using. That is worth paying for.
-The database comparison did not change; a second requirement appeared that Supabase answers
-and Neon does not.
+found. What changes is that a second requirement appears, and Supabase answers it while Neon
+does not: the rebuild needs a login system and object storage, both already wired to the database
+the app is using.
+
+**Corrected 2026-09-13, after this document was merged.** An earlier draft of this paragraph said
+the rebuild "needs a login system built from nothing." That is wrong, and
+[#6](https://github.com/williamsonbm/inventory-app/issues/6) is the reason: on 2026-09-09 the
+owner chose to sign people in with the Microsoft 365 accounts the three office users already hold.
+The identity provider is therefore settled, and the work is to connect Entra through OIDC, which
+is a library path in any framework and runs the same against Neon. Supabase brokers that sign-in
+and can restrict it to the company tenant, so the recommendation stands — but it stands on **object
+storage and one vendor**, not on building authentication from nothing. Section 3.2 needs the object
+storage, and the Neon route adds a third service to supply it.
 
 **On cost:** Vercel Pro is **$20/month per seat, and a seat is someone who manages or deploys
 the app — not someone who uses it.** Office staff opening the app in a browser cost nothing and
@@ -78,16 +87,21 @@ stay as written and gain a pointer to this one.
 **What did not change:** Neon is still cheaper ($5–20/month against a $25 floor) and still
 includes point-in-time recovery that Supabase charges $100/month for. Anyone comparing the two
 *as databases* should still reach Neon. The recommendation below is not a claim that Supabase's
-Postgres is better. It is a claim that a bundled, already-integrated login system is worth more
-to this project than the price difference — roughly $5–20/month — and that is a judgement about
-the project, not about the databases.
+Postgres is better. It is a claim that bundled object storage, a login that is already wired to
+the database, and one vendor instead of three are worth more to this project than the price
+difference — roughly $5–20/month — and that is a judgement about the project, not about the
+databases.
 
-**The honest counter-argument**, which should be recorded rather than buried: an authentication
-service can be added next to any database. Choosing Neon and adding a separate auth provider is
-a real option and is not much harder. The case for Supabase is that one vendor, one dashboard
-and one set of credentials is worth something concrete to a non-developer owner maintaining
-this alone. If that convenience turns out not to materialise in practice, the decision is
-cheap to revisit early and expensive to revisit late.
+**The counter-argument, which is stronger than this document first made it:** an authentication
+service can be added next to any database, and so can object storage. Choosing Neon and adding
+both is a real option and is not much harder. The case for Supabase is that one vendor, one
+dashboard and one set of credentials is worth something concrete to a non-developer owner
+maintaining this alone. Now that #6 has settled the identity provider, **this is the main argument
+for Supabase rather than a caveat against it.** If the convenience does not materialise in
+practice, the decision is cheap to revisit early and expensive to revisit late.
+
+This question is open, and the map records it under *Not yet specified*. Re-test it before a
+Supabase project is created, because creating one also fixes the region.
 
 Supabase's side of the cost comparison was re-checked on 2026-09-13 and holds: Pro is "from
 $25/month" and includes $10 of compute credits, backups are daily with 7-day retention, and
