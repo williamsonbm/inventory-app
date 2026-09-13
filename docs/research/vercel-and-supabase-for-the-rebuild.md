@@ -1,8 +1,10 @@
 # Vercel and Supabase for the rebuild
 
-- **Ticket:** not yet filed — this session had no GitHub access (see *Access note* below).
-  File it against [#2](https://github.com/williamsonbm/inventory-app/issues/2) and label it
-  `wayfinder:research`.
+- **Ticket:** section 4 is filed as
+  [#28](https://github.com/williamsonbm/inventory-app/issues/28), labelled `wayfinder:task` and
+  linked as a child of [#2](https://github.com/williamsonbm/inventory-app/issues/2). This
+  document is not itself filed as a research ticket, because it was written outside the tracker
+  (see *Access note* below).
 - **Feeds:** [#10](https://github.com/williamsonbm/inventory-app/issues/10) (refactor vs.
   rebuild) and [#6](https://github.com/williamsonbm/inventory-app/issues/6) (login), and
   **revises** [#5](https://github.com/williamsonbm/inventory-app/issues/5) (managed Postgres).
@@ -15,9 +17,10 @@
   change often — re-check before acting on this if it is more than a few months old.
 - **How this was verified:** claims about `hanger-web-app` and `materials-planner` were read
   directly out of the source in this session and are cited by file and line. Claims about
-  Vercel and Supabase product limits are from memory of their documentation and are **marked
-  `[verify]` where a wrong number would change a decision.** Nothing below was confirmed
-  against a live vendor page, because this session could not reach one usefully.
+  Vercel and Supabase product limits were written from memory, then **checked against the
+  live vendor documentation on 2026-09-13** by a later session that could reach it. All four
+  marked claims held; two turned out to be narrower than stated and are corrected in place. The
+  pages used are listed under *Vendor sources*.
 
 ## Access note — why no ticket number
 
@@ -86,6 +89,11 @@ and one set of credentials is worth something concrete to a non-developer owner 
 this alone. If that convenience turns out not to materialise in practice, the decision is
 cheap to revisit early and expensive to revisit late.
 
+Supabase's side of the cost comparison was re-checked on 2026-09-13 and holds: Pro is "from
+$25/month" and includes $10 of compute credits, backups are daily with 7-day retention, and
+point-in-time recovery is a $100/month add-on per 7 days of retention. The Neon figures are #5's
+and were not re-checked here.
+
 ## 2. Vercel pricing — what a seat is
 
 This was a direct question and it has a clean answer.
@@ -97,12 +105,19 @@ This was a direct question and it has a clean answer.
 
 End users of a deployed site are visitors. They never hold a Vercel account, and traffic is
 billed as bandwidth and compute, not per person. For an office of under ten people where one
-person manages the deployment, the seat cost is **$20/month total**, not $20 × 10. `[verify]`
-the current per-seat rate before committing.
+person manages the deployment, the seat cost is **$20/month total**, not $20 × 10.
+
+**Confirmed 2026-09-13:** "Developer seats cost **$20 per user / month**, while Viewer seats are
+free." There is also a **Viewer** seat worth knowing about: free, unlimited, and it lets a person
+read dashboards, deployments and analytics without being able to deploy or to see sensitive data.
+So a second person can watch the deployment without adding $20.
 
 **The Hobby (free) tier is not an option here.** Vercel's terms restrict Hobby to
 non-commercial use, and this is a business application for a client. Budget for Pro from the
-start rather than discovering the restriction after go-live. `[verify]`
+start rather than discovering the restriction after go-live.
+
+**Confirmed 2026-09-13:** "the Hobby plan restricts users to non-commercial, personal use only,"
+stated in the Hobby plan page and sourced there to the fair-use guidelines on commercial usage.
 
 Note that Vercel seats and the app's own user accounts are unrelated. Building an access
 control list with office and shop roles has no effect on the Vercel bill.
@@ -130,9 +145,15 @@ This is also the requirement that pulls Supabase ahead of Neon in §1.
 ### 3.2 File uploads — a design constraint to absorb now
 
 `hanger-web-app` accepts job CSVs and packing-list PDFs as base64 inside a JSON body, capped at
-10 MB (`hanger-web-app/server.js:445`). Vercel's serverless functions cap request bodies at
-**4.5 MB** `[verify]`, and the rejection happens at the platform layer where application code
-never sees it.
+10 MB (`hanger-web-app/server.js:445`). Vercel's functions cap request bodies at **4.5 MB**, and
+the rejection happens at the platform layer where application code never sees it.
+
+**Confirmed 2026-09-13, and the limit is broader than stated above:** 4.5 MB is the maximum for
+"the request body **or the response body**" of a Vercel Function, and a breach returns
+`413 FUNCTION_PAYLOAD_TOO_LARGE`. The response half matters here and was missed: any endpoint that
+returns a whole file — a generated packing list, a CSV export — sits under the same ceiling as the
+upload does. Vercel publishes a bypass guide for the limit, and it describes the direct-to-storage
+pattern below.
 
 Rebuilding means this is a choice rather than a breakage. The standard pattern is to upload the
 file directly to object storage from the browser and hand the app only a reference to it.
@@ -153,8 +174,8 @@ a subtle, hard-to-see failure.
 
 ## 4. The connection problem, explained
 
-**File this as its own ticket.** It is the only item here that can produce wrong answers
-without producing an error message.
+**Filed as [#28](https://github.com/williamsonbm/inventory-app/issues/28).** It is the only item
+here that can produce wrong answers without producing an error message.
 
 ### What a connection pool is, and why serverless breaks it
 
@@ -169,8 +190,12 @@ handle.
 
 **The standard fix is a pooler** — a small service that sits in front of the database and
 multiplexes many short-lived app connections onto a few real ones. Supabase's is called
-Supavisor, and for serverless it runs in **transaction mode** on port 6543 `[verify]`, meaning
-a connection is borrowed for one transaction and handed back.
+Supavisor, and for serverless it runs in **transaction mode** on port 6543, meaning a connection
+is borrowed for one transaction and handed back.
+
+**Confirmed 2026-09-13:** port **6543** reaches Supavisor in shared transaction mode and port
+**5432** reaches it in session mode. Transaction mode is the mode Supabase recommends for
+serverless and edge functions, because those environments "open many short-lived connections."
 
 ### Why this is worse than usual in `hanger-web-app`
 
@@ -188,6 +213,14 @@ are exactly where per-connection settings become unreliable. If it does not carr
 app does not crash. It resolves the *wrong* `norm()` function and returns subtly wrong numbers.
 A buy list that is quietly wrong is worse than one that fails.
 
+**The vendor documentation confirms the mechanism, not only the risk.** Supabase states that in
+transaction mode "anything that depends on session state doesn't survive between transactions,"
+and it names temporary tables, cursors and advisory locks. A `search_path` set once per connection
+is that kind of session state. The same page adds a second constraint to carry into the ticket:
+transaction mode **does not support prepared statements**, so they must be turned off in the
+connection library. That one is a driver setting, and getting it wrong raises an error instead of
+returning a wrong number — the easier half of the problem.
+
 ### Why the rebuild mostly dissolves this
 
 The six pools exist to paper over a schema problem the schema survey
@@ -200,7 +233,7 @@ A rebuild that does not reproduce that shape does not inherit the problem. Two r
 go away:
 
 1. **Do not create one schema per material family.** The survey is the evidence that the
-   duplication was never load-bearing.
+   nothing depends on the families having separate schemas.
 2. **Never depend on `search_path`.** Fully qualify every database object, or use exactly one
    schema. Then a transaction-mode pooler has nothing to lose.
 
@@ -253,6 +286,31 @@ production stoppage.
 | `docs/handoff-inventory-app-wayfinder.md` (in `materials-planner`) | "App containerized on office hardware" | **Superseded.** Hosting is Vercel. |
 | `docs/handoff-inventory-app-wayfinder.md` | "does the office ever lose internet?" | **Answered** — see §5. |
 | Any description of `hanger-web-app` as a "LAN app" | — | **Wrong.** Homelab plus Tailscale. See §5. |
+| [#20](https://github.com/williamsonbm/inventory-app/issues/20) | "Both parts stay in the office. A managed database is rejected." | **Superseded by a later owner decision.** See the note below — this is the largest item in this table and the session that wrote this document could not see it. |
+
+**On [#20](https://github.com/williamsonbm/inventory-app/issues/20) — added 2026-09-13 by the
+session that verified this document.** #20 closed on 2026-09-08 with the opposite answer to the
+one this document assumes: both the app and the database stay on office hardware, a managed
+database is rejected, and Tailscale survives as the login system, which it recorded as making
+[#6](https://github.com/williamsonbm/inventory-app/issues/6) "largely dissolve." This document's
+premise is a **later** owner decision, of 2026-09-13, to rebuild and host on Vercel. The dates
+put the owner's decision after #20's resolution, so this document does not contradict #20 so much
+as record that #20 was overtaken.
+
+Three consequences follow, and all three are the owner's call rather than this document's:
+
+- **#20 needs a comment recording the reversal**, so a future reader does not act on its answer.
+- **[#27](https://github.com/williamsonbm/inventory-app/issues/27) may be moot.** It is open and
+  labelled `ready-for-human` to build the Windows/Docker deployment, which was #20's condition. On
+  Vercel there is nothing for it to build. It may still be worth keeping as the offline-fallback
+  question in §8, open question 2.
+- **#6 is back on, not dissolved.** #20 set it aside because Tailscale survived. Vercel removes
+  Tailscale, so a login system has to be built, and §3.1 puts it in slice one.
+
+One thing #20 got right and this document should inherit: **#20 found the same `search_path`
+hazard independently**, through Neon's PgBouncer rather than Supabase's Supavisor, and used it as
+an argument *against* a managed database. That argument does not disappear when the host changes.
+It is the reason §4 gets its own ticket.
 
 ## 8. Open questions
 
@@ -266,6 +324,26 @@ production stoppage.
    which events, retained how long, visible to whom. Needs a spec before it is built.
 4. **Region.** Both Vercel and Supabase fix a region at creation. Pick the one closest to the
    office rather than accepting a default.
+
+## Vendor sources
+
+Every page below was read on **2026-09-13**. Vercel and Supabase change pricing and limits often;
+re-check before acting on these numbers.
+
+| Claim | Source |
+|---|---|
+| $20/month developer seat, free unlimited viewer seat | [Vercel Hobby plan](https://vercel.com/docs/plans/hobby) (*Upgrading to Pro*, and the Hobby/Pro comparison) |
+| $20/month per seat, app visitors need no account | [Vercel pricing](https://vercel.com/pricing) |
+| Hobby restricted to non-commercial, personal use | [Vercel Hobby plan](https://vercel.com/docs/plans/hobby), citing [fair use guidelines](https://vercel.com/docs/limits/fair-use-guidelines#commercial-usage) |
+| 4.5 MB request **or response** body, `413 FUNCTION_PAYLOAD_TOO_LARGE` | [Vercel Functions limits](https://vercel.com/docs/functions/limitations) (*Request body size*) |
+| Transaction mode on 6543, session mode on 5432, transaction mode recommended for serverless, no prepared statements, session state does not survive | [Supabase — connecting to Postgres](https://supabase.com/docs/guides/database/connecting-to-postgres) |
+| Pro from $25/month, daily backups at 7-day retention, PITR a $100/month add-on per 7 days | [Supabase pricing](https://supabase.com/pricing) |
+
+One further Vercel limit is recorded here because it belongs to the connection ticket rather than
+to any section above: a Vercel Function gets **1,024 file descriptors shared across all concurrent
+executions**, and database connections consume them
+([Vercel Functions limits](https://vercel.com/docs/functions/limitations), *File descriptors*).
+It is a second, independent reason to keep per-instance pool sizes at 1 or 2.
 
 ## Corrections to `CLAUDE.md`
 
