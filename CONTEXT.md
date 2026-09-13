@@ -42,9 +42,14 @@ _Avoid_: available length (collides with *available*), valid length
 lifecycle keep their `hanger-web-app/CONTEXT.md` meanings. Nothing decided in ticket #4 changes
 any of them.
 
+## Overrides — these bind everywhere in this repo
+
+**It is the materials planner.** The handoff's "laptop planner" is wrong.
+
 **Never use the bare word "stock."** It names a snapshot handed to the planner in one system and a
 ledger maintained in the other, with on hand, committed and available tangled inside it. Name the
-quantity meant. This rule comes from `CLAUDE.md` and applies to screen text as well as prose.
+quantity meant. This applies to prose, to screen text, and to identifiers, column names and JSON
+fields.
 
 ---
 
