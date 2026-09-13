@@ -150,9 +150,27 @@ On Vercel the app is on the public internet, and any client can send that header
 mechanism does not weaken — it stops existing.** Anyone could claim to be any office user.
 
 For a port, that is a blocker. For a rebuild it is a requirement that was already on the list:
-the owner wants a functioning ACL and audit trail in the first slice. Nothing is lost and
-nothing needs a workaround. It does mean **authentication is slice one, not a later
-hardening pass** — the app cannot be publicly deployed even once before it exists.
+the owner wants a functioning ACL and audit trail. Nothing is lost and nothing needs a workaround.
+
+**Corrected 2026-09-13. An earlier version of this section said authentication is slice one, "not
+a later hardening pass," because "the app cannot be publicly deployed even once before it
+exists." That reasoning assumes the only way to deploy is publicly, and it is wrong.**
+
+**Vercel Authentication** gates a deployment at no cost on every plan, for each project. Only a
+person with deployment access can open the site, and everyone else meets a login wall. The three
+office users hold free **Viewer** seats, so the app reaches them before any login code exists.
+[#12](https://github.com/williamsonbm/inventory-app/issues/12) therefore puts the materials
+planner first, and authentication arrives with the first slice that writes shared data.
+
+Two things keep this from being a loophole:
+
+- **Vercel Authentication does not tell the application who the person is.** It controls who can
+  open the site. No byline, no office or shop role, and no audit trail comes from it. Everything
+  in this section that a real login supplies is deferred, not replaced.
+- **Audit cannot come first in any case.** The planner keeps its durable state in the browser
+  (`materials-planner/src/planner/csvPile.js:99-105`), so nothing is shared between the three
+  users and no action is attributable to a person. An audit log needs a server-side record, and
+  the planner has none by design.
 
 This is also the requirement that pulls Supabase ahead of Neon in §1.
 
@@ -284,8 +302,11 @@ production stoppage.
    still favours Neon. Record it as a decision that buys an integrated login system and object
    storage for roughly $5–20/month over Neon.
 2. **Vercel Pro at $20/month for one seat.** App users are free.
-3. **Authentication and audit in slice one.** Not a hardening pass. The app cannot be deployed
-   publicly without it.
+3. **The materials planner on Vercel is slice one. Authentication and audit are not.** Corrected
+   2026-09-13; see §3.1. Vercel Authentication gates the deployment for free in the meantime, and
+   authentication and audit arrive with the first slice that writes shared data. Audit is not
+   possible before then, because the planner's state is per-browser and no action is attributable
+   to a person.
 4. **Adopt two schema rules before the first table exists:** one schema (or fully-qualified
    names everywhere), and no dependence on `search_path`. This is what keeps §4 from following
    the project into the rebuild.
