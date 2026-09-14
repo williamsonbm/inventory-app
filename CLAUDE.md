@@ -15,15 +15,31 @@ differs, so resolve it before you trust it.
   calls yourself; flag a better approach in a sentence rather than quietly widening the task.
 - **Delete before you add.** Resist new files, dependencies, and status docs unless they
   clearly earn their keep.
-- **Spec before code for a feature.** `/to-spec` publishes it to the tracker as an issue;
-  implement the logic with `/tdd`; run `/simplify`, then `/code-review`, on the diff before
-  asking to commit.
+- **Spec before code for a feature.** The spec goes to the tracker as an issue — the owner runs
+  `/to-spec`, which an agent cannot invoke. Then implement the logic with `/tdd`; then
+  `/simplify`, re-run the tests, and `/code-review` the diff before asking to commit. Simplifying
+  can break what passed before it, and `/simplify` is this repo's refactor stage — where `tdd`
+  says "the review stage", read `/simplify`.
 - **State test results plainly** — real counts, real pass/fail, never "should pass".
 
 ## Writing code
 
 `docs/CODING-STANDARDS.md` — the seams that make code testable, which changes need a test, dead
 code, and the Vercel and Postgres rules. Read it before writing, reviewing, or testing code.
+The database and access-control rules live in #28 until the database slice starts.
+
+**Precedence.** Where a skill's generic advice conflicts with a decision recorded in
+`docs/CODING-STANDARDS.md`, in `CONTEXT.md`, or in an accepted ADR, the recorded decision wins;
+between those three, an ADR wins. A task can ask you to change a recorded decision, but not to
+ignore one silently — name the decision you are departing from before you depart. Nothing here
+overrides **Hard constraints**, the commit trailer bans, or `Safety`.
+
+A `/code-review` finding is not generic advice. It is a claim about this diff: answer it on the
+merits, or record why a recorded decision covers it.
+
+**Review lens: correctness before style.** Lead with wrong-output and edge-case bugs. Naming and
+formatting rank last. Note that no skill in the pipeline hunts bugs — `/simplify` disclaims it and
+`/code-review` checks conformance — so this is yours to carry.
 
 ## Writing commits and PRs
 
@@ -36,16 +52,18 @@ trailer bans, ASD-STE100 phrasing, Conventional Commits, grade-token escaping, a
 - **Siblings are read-only.** Read and grep `hanger-web-app` and `materials-planner` freely;
   changing them is the owner's job. Some environments enforce this and some do not, so the rule,
   not the filesystem, is what holds.
-- **Feature branch and a PR.** `main` takes no direct push and no force push. A hook stops it,
-  but treat the hook as a floor: under relaxed permissions an `ask` becomes a log line and the
-  command proceeds.
+- **Feature branch and a PR.** `main` takes no direct push and no force push.
+  `.git/hooks/pre-push` enforces this however git is invoked, your own terminal included, and only
+  `--no-verify` skips it. A Claude Code `ask` fires first, but under relaxed permissions it
+  becomes a log line — `pre-push` is the layer that stops it.
 - **Ask before committing or pushing.** The owner drives that decision every time.
 - **Secrets stay out of the transcript.** `.env*`, `/keys/*` and private-key material.
 
 ## The effort — read before planning work
 
 `../materials-planner/docs/handoff-inventory-app-wayfinder.md` carries the framing and the
-working agreement. Read it first, with two corrections.
+working agreement. Read it first, with two corrections. It is pod-local: `docs/` is gitignored in
+that sibling, so the file is in no clone.
 
 **One of its findings is wrong.** It says "only lumber and LVL are genuinely absent from the web
 app." Lumber is **live in production**, backed by 18 `/api/lumber/*` routes and its own schema —

@@ -12,11 +12,15 @@ Started 2026-09-06, resolving ticket #4.
 
 ---
 
+Two markers appear under a term. **_Avoid_** lists words never to use for it. **_Not_** names a
+sibling term in this glossary that it must not be confused with — that sibling is legitimate
+vocabulary in its own right.
+
 ## Planning and purchasing
 
 **Snapshot**:
-One run that reads a batch of job material sheets, compares them against stock, and reports what
-to buy. It writes nothing to the database. The **open-orders look-ahead** is the same operation —
+One run that reads a batch of job material sheets, compares them against available, and reports
+what to buy. It writes nothing to the database. The **open-orders look-ahead** is the same operation —
 the only difference is who chooses the jobs.
 _Avoid_: projection, look-ahead, planning run, dry run
 
@@ -27,12 +31,14 @@ _Avoid_: shopping list, order list, requirements list
 **Purchase report**:
 The file a snapshot produces to be kept and referenced later. A record of one snapshot at one
 moment, never a live document.
-_Avoid_: snapshot (the saved file is not the act that produced it), export
+_Avoid_: export
+_Not_: snapshot — the saved file is not the act that produced it.
 
 **Purchasable length**:
 A stock length the supplier will actually sell for a given product. Set per product, because each
 product is priced and ordered separately.
-_Avoid_: available length (collides with *available*), valid length
+_Avoid_: valid length
+_Not_: available length — collides with *available*.
 
 ---
 
@@ -66,12 +72,14 @@ _Avoid_: carried, in stock, standard
 **Non-stock**:
 An item no longer bought deliberately, but which leftovers from past jobs mean you may still hold.
 On hand can be above zero, so a buy list nets against it.
-_Avoid_: special order, non-stocked, non-standard
+_Avoid_: non-stocked, non-standard
+_Not_: special order — leftovers may still be on hand here.
 
 **Special order**:
 An item never held. On hand is zero, and availability and lead time are unknown until somebody
 contacts the supplier, so a buy list can flag it but cannot price or size the order.
-_Avoid_: non-stock, custom, one-off
+_Avoid_: custom, one-off
+_Not_: non-stock — on hand is zero here.
 
 > These three are stages, not fixed buckets. An item stops being *stocked* the day you stop buying
 > it, is *non-stock* while leftovers last, and becomes *special order* once they are gone.
