@@ -19,9 +19,10 @@ vocabulary in its own right.
 ## Units of work
 
 **Port**:
-The move of an existing, working program to a new host, with no change to what it does for the
-person using it. The first piece of work in the rebuild is a port — the materials planner onto
-Vercel — because the planner already does its whole job.
+The move of an existing, working program to a new host. A port may leave parts behind, and it
+says which parts. What it carries, it carries unchanged — a port never improves behaviour on the
+way across. The first piece of work in the rebuild is a port: the materials planner onto Vercel,
+without its EWP tab.
 _Avoid_: lift-and-shift, rehost, migration (this project uses that word for a schema change)
 _Not_: slice — a slice adds behaviour; a port moves behaviour that already works.
 
