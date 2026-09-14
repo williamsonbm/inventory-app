@@ -116,9 +116,15 @@ This was a direct question and it has a clean answer.
 |---|---|---|
 | **Vercel seat (Pro)** | $20/month each | People who deploy, configure, or administer the project |
 | **App user** | $0 | Everyone who just opens the app in a browser |
+| **Viewer seat (Pro)** | $0, unlimited | Anybody who must pass a Vercel Authentication gate |
 
-End users of a deployed site are visitors. They never hold a Vercel account, and traffic is
-billed as bandwidth and compute, not per person. For an office of under ten people where one
+End users of a *public* site are visitors. They hold no Vercel account, and traffic is billed as
+bandwidth and compute rather than per person.
+
+**The port is not a public site, so this row does not cover it.** Access is Vercel
+Authentication, which admits only a signed-in team member holding at least a Viewer role. So the
+three office users each need a free Vercel account and a Viewer seat — see §3.1. Read this row as
+the answer for a site anybody may open, and §3.1 as the answer for the port. For an office of under ten people where one
 person manages the deployment, the seat cost is **$20/month total**, not $20 × 10.
 
 **Confirmed 2026-09-13:** "Developer seats cost **$20 per user / month**, while Viewer seats are
@@ -132,6 +138,14 @@ start rather than discovering the restriction after go-live.
 
 **Confirmed 2026-09-13:** "the Hobby plan restricts users to non-commercial, personal use only,"
 stated in the Hobby plan page and sourced there to the fair-use guidelines on commercial usage.
+
+**A second reason Pro is required, confirmed 2026-09-14.** Protecting a *production* domain needs
+the protection scope named **All Deployments**, and that scope is Pro or Enterprise only. Hobby
+reaches Standard Protection, which leaves the production domain public. All Deployments became
+free on every plan on **2026-09-09**; before that date a Pro team paid $150 a month for the
+Advanced Deployment Protection add-on. Vercel's own Deployment Protection page still lists
+"Private Production Deployments" under that add-on, so the page and the changelog disagree. The
+changelog is newer and it governs.
 
 Note that Vercel seats and the app's own user accounts are unrelated. Building an access
 control list with office and shop roles has no effect on the Vercel bill.
