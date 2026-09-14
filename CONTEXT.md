@@ -16,6 +16,20 @@ Two markers appear under a term. **_Avoid_** lists words never to use for it. **
 sibling term in this glossary that it must not be confused with — that sibling is legitimate
 vocabulary in its own right.
 
+## Units of work
+
+**Port**:
+The move of an existing, working program to a new host, with its behaviour unchanged. The first
+piece of work in the rebuild is a port — the materials planner onto Vercel — because the planner
+already does its whole job and nothing about what it does is changing.
+_Avoid_: slice (a port is not one), lift-and-shift
+_Not_: migration — this project uses that word for a database schema change.
+
+**Slice**:
+A thin piece of function, cut through every layer, that works end to end for the person using it.
+Short for *vertical slice*. The first slice after the port is authentication and audit.
+_Avoid_: phase, milestone, sprint, increment
+
 ## Planning and purchasing
 
 **Snapshot**:
