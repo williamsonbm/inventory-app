@@ -22,8 +22,9 @@ Inherited from `materials-planner/CLAUDE.md`. Same rules, same reasons.
 - **Commit subjects and PR titles use Conventional Commits** — `type(scope): summary`, with `type` one of
   `feat`, `fix`, `docs`, `refactor`, `chore`, `build`, `test`. A scope is optional. Use `chore`
   for mixed repo housekeeping, following the planner's own precedent. The materials planner
-  follows this convention (44 of its 56 commits); `hanger-web-app` uses an ad-hoc `Area: summary`
-  prefix instead (3 of 125). **This repo follows the planner.** Neither source repo documents
+  follows this convention (48 of its 56 non-merge commits); `hanger-web-app` uses an ad-hoc
+  `Area: summary` prefix on 65 of its 102 non-merge commits, and Conventional Commits on only 3.
+  **This repo follows the planner.** Neither source repo documents
   its choice, which is why this line exists. The PR title carries the prefix too — not merely
   because GitHub auto-fills it from a single commit, but because a squash merge turns the PR
   title into the commit subject on `main`.
