@@ -102,6 +102,9 @@ const assert = require('node:assert/strict');
   request against it before porting a handler.
 - **4.5 MB caps a request body and a response body.** A file moves between the browser and
   storage directly; the app handles the reference.
+- **A request body never reaches a log or an error message**, and nothing sensitive travels in a
+  URL. Runtime logs keep a day of output, query strings included, and any team member reads them.
+  A material sheet carries a customer name (#38).
 - **One schema, and every database object fully qualified.** #28 allows either; this repo
   requires both, because on day one it costs nothing. A transaction-mode pooler drops session
   state, `search_path` included, so an unqualified name resolves against whatever path comes
