@@ -138,7 +138,7 @@ control list with office and shop roles has no effect on the Vercel bill.
 
 ## 3. What Vercel actually constrains
 
-Four things. Assessed against a **rebuild**, not a port.
+Four things. Assessed against a **rebuild**, not a lift-and-shift of `hanger-web-app`.
 
 ### 3.1 Access control — forced, and that is fine
 
@@ -149,12 +149,13 @@ reasoning is written out at `hanger-web-app/server.js:448-456`.
 On Vercel the app is on the public internet, and any client can send that header. **The
 mechanism does not weaken — it stops existing.** Anyone could claim to be any office user.
 
-For a port, that is a blocker. For a rebuild it is a requirement that was already on the list:
+For a lift-and-shift, that is a blocker. For a rebuild it is a requirement already on the list:
 the owner wants a functioning ACL and audit trail. Nothing is lost and nothing needs a workaround.
 
-**Corrected 2026-09-13. An earlier version of this section said authentication is slice one, "not
-a later hardening pass," because "the app cannot be publicly deployed even once before it
-exists." That reasoning assumes the only way to deploy is publicly, and it is wrong.**
+**Corrected 2026-09-13. An earlier version of this section said authentication comes before
+everything else, "not a later hardening pass," because "the app cannot be publicly deployed even
+once before it exists." That reasoning assumes the only way to deploy is publicly, and it is
+wrong.**
 
 **Vercel Authentication** gates a deployment at no cost on every plan, for each project. Only a
 person with deployment access can open the site, and everyone else meets a login wall. The three
@@ -360,8 +361,8 @@ It is the reason §4 gets its own ticket.
 2. **What happens to `materials-planner`'s offline Windows build** once the planner lives on
    Vercel. #5's open question 2 asked this and it is still open — though §5 weakens the case
    for keeping an offline fallback.
-3. **Audit scope.** "Audit functionality" is on the owner's list for the first slice after the
-   port, but it is undefined:
+3. **Audit scope.** "Audit functionality" belongs to the first slice that writes shared data, and
+   it is undefined:
    which events, retained how long, visible to whom. Needs a spec before it is built.
 4. **Region.** Both Vercel and Supabase fix a region at creation. Pick the one closest to the
    office rather than accepting a default.

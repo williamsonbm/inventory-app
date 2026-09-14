@@ -19,16 +19,17 @@ vocabulary in its own right.
 ## Units of work
 
 **Port**:
-The move of an existing, working program to a new host, with its behaviour unchanged. The first
-piece of work in the rebuild is a port — the materials planner onto Vercel — because the planner
-already does its whole job and nothing about what it does is changing.
-_Avoid_: slice (a port is not one), lift-and-shift
-_Not_: migration — this project uses that word for a database schema change.
+The move of an existing, working program to a new host, with no change to what it does for the
+person using it. The first piece of work in the rebuild is a port — the materials planner onto
+Vercel — because the planner already does its whole job.
+_Avoid_: lift-and-shift, rehost, migration (this project uses that word for a schema change)
+_Not_: slice — a slice adds behaviour; a port moves behaviour that already works.
 
 **Slice**:
 A thin piece of function, cut through every layer, that works end to end for the person using it.
-Short for *vertical slice*. The first slice after the port is authentication and audit.
+Short for *vertical slice*.
 _Avoid_: phase, milestone, sprint, increment
+_Not_: port — a port changes nothing about what the app does.
 
 ## Planning and purchasing
 
