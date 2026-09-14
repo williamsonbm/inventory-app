@@ -78,7 +78,7 @@ precisely one scenario that would flip it:
 
 **Both halves are now true.** The owner has settled on a ground-up rebuild rather than a
 refactor, starting from `materials-planner`, hosted on Vercel, with access control and audit
-built in from the first slice. That is #10 landing on rebuild. And hosting on Vercel *forces*
+built into the first slice that follows the port. That is #10 landing on rebuild. And hosting on Vercel *forces*
 #6, because the current access-control mechanism cannot survive the move — see §3.
 
 So this is not a reversal of #5. It is #5's own stated condition being met. That doc should
@@ -138,7 +138,7 @@ control list with office and shop roles has no effect on the Vercel bill.
 
 ## 3. What Vercel actually constrains
 
-Four things. Assessed against a **rebuild**, not a port.
+Four things. Assessed against a **rebuild**, not a lift-and-shift of `hanger-web-app`.
 
 ### 3.1 Access control — forced, and that is fine
 
@@ -149,12 +149,13 @@ reasoning is written out at `hanger-web-app/server.js:448-456`.
 On Vercel the app is on the public internet, and any client can send that header. **The
 mechanism does not weaken — it stops existing.** Anyone could claim to be any office user.
 
-For a port, that is a blocker. For a rebuild it is a requirement that was already on the list:
+For a lift-and-shift, that is a blocker. For a rebuild it is a requirement already on the list:
 the owner wants a functioning ACL and audit trail. Nothing is lost and nothing needs a workaround.
 
-**Corrected 2026-09-13. An earlier version of this section said authentication is slice one, "not
-a later hardening pass," because "the app cannot be publicly deployed even once before it
-exists." That reasoning assumes the only way to deploy is publicly, and it is wrong.**
+**Corrected 2026-09-13. An earlier version of this section said authentication comes before
+everything else, "not a later hardening pass," because "the app cannot be publicly deployed even
+once before it exists." That reasoning assumes the only way to deploy is publicly, and it is
+wrong.**
 
 **Vercel Authentication** gates a deployment at no cost on every plan, for each project. Only a
 person with deployment access can open the site, and everyone else meets a login wall. The three
@@ -302,7 +303,8 @@ production stoppage.
    still favours Neon. Record it as a decision that buys an integrated login system and object
    storage for roughly $5–20/month over Neon.
 2. **Vercel Pro at $20/month for one seat.** App users are free.
-3. **The materials planner on Vercel is slice one. Authentication and audit are not.** Corrected
+3. **The materials planner on Vercel is the port, and it comes first. Authentication and audit
+   are not.** Corrected
    2026-09-13; see §3.1. Vercel Authentication gates the deployment for free in the meantime, and
    authentication and audit arrive with the first slice that writes shared data. Audit is not
    possible before then, because the planner's state is per-browser and no action is attributable
@@ -340,7 +342,8 @@ Three consequences follow, and all three are the owner's call rather than this d
   Vercel there is nothing for it to build. It may still be worth keeping as the offline-fallback
   question in §8, open question 2.
 - **#6 is back on, not dissolved.** #20 set it aside because Tailscale survived. Vercel removes
-  Tailscale, so a login system has to be built, and §3.1 puts it in slice one.
+  Tailscale, so a login system has to be built, and §3.1 puts it in the first slice that writes
+  shared data.
 
 One thing #20 got right and this document should inherit: **#20 found the same `search_path`
 hazard independently**, through Neon's PgBouncer rather than Supabase's Supavisor, and used it as
@@ -351,11 +354,15 @@ It is the reason §4 gets its own ticket.
 
 1. **Framework for the rebuild.** Unasked and undecided. Vercel is strongly optimised for
    Next.js; plain Express works but gives up much of what the platform does well. This deserves
-   its own short ticket before slice one, because it is expensive to change later.
+   its own short ticket before the first slice, because it is expensive to change later.
+   **Answered for the port** by [#12](https://github.com/williamsonbm/inventory-app/issues/12):
+   the planner keeps Express, because its front end is not React and converting it would rewrite
+   the interface for no visible gain.
 2. **What happens to `materials-planner`'s offline Windows build** once the planner lives on
    Vercel. #5's open question 2 asked this and it is still open — though §5 weakens the case
    for keeping an offline fallback.
-3. **Audit scope.** "Audit functionality" is on the owner's list for slice one but undefined:
+3. **Audit scope.** "Audit functionality" belongs to the first slice that writes shared data, and
+   it is undefined:
    which events, retained how long, visible to whom. Needs a spec before it is built.
 4. **Region.** Both Vercel and Supabase fix a region at creation. Pick the one closest to the
    office rather than accepting a default.
