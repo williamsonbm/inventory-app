@@ -1,0 +1,13 @@
+# Working material sheets and stock exports. Scrubbed, but still real job numbers and
+# quantities, and they are working data rather than repo content. The owner deletes
+# these when the measurement work in #39 is done.
+csv-examples/
+csv-materials/
+samples/
+
+# Raw exports never belong here, scrubbed or not.
+*-raw.csv
+*-unscrubbed.csv
+
+# Local node installs, if code lands here later.
+node_modules/
