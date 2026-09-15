@@ -5,9 +5,18 @@ Issues and specs for this repo live as GitHub issues. Use the `gh` CLI for all o
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
-- **Read an issue**: `gh issue view <number> --comments`, filtering comments by `jq` and also fetching labels.
+- **Read an issue**: `gh api repos/<owner>/<repo>/issues/<number> --jq '.body'` for the body, and
+  `gh api repos/<owner>/<repo>/issues/<number>/comments --paginate --jq '.[].body'` for the
+  comments. **`gh issue view <number> --comments` does not work in this repo** — it fails with a
+  GraphQL "Projects (classic) is being deprecated" error and returns nothing. An agent that
+  trusts it concludes an issue has no comments, and every decision in this repo lives in a
+  comment. `gh issue view <number> --json body,labels,title --jq ...` does work; only the
+  `--comments` flag is affected.
 - **List issues**: `gh issue list --state open --json number,title,body,labels,comments --jq '[.[] | {number, title, body, labels: [.labels[].name], comments: [.comments[].body]}]'` with appropriate `--label` and `--state` filters.
-- **Comment on an issue**: `gh issue comment <number> --body "..."`
+- **Comment on an issue**: `gh issue comment <number> --body "..."` or `--body-file`.
+- **Edit an issue or PR body**: `gh api --method PATCH repos/<owner>/<repo>/issues/<number> -f body="..."`,
+  or `.../pulls/<number>` for a PR. **`gh pr edit` fails with the same Projects deprecation
+  error.** `gh issue edit --body-file` does work.
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
