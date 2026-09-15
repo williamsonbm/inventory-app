@@ -28,6 +28,12 @@ Inherited from `materials-planner/CLAUDE.md`. Same rules, same reasons.
   its choice, which is why this line exists. The PR title carries the prefix too — not merely
   because GitHub auto-fills it from a single commit, but because a squash merge turns the PR
   title into the commit subject on `main`.
+- **A commit message wraps hard. A PR or issue body does not.** Git wants a message wrapped at
+  about 78 characters. GitHub renders every single newline in a PR or issue body as a line break,
+  so that same text reads as ragged half-lines, worst of all on a phone. Write a body with each
+  paragraph on one long line and let GitHub reflow it. **This makes `gh pr create --fill` safe
+  only for a single short paragraph** — beyond that, write a `--body-file`. The note above about
+  one text serving both a commit and a PR is true of the phrasing rules and false of the wrapping.
 - **Wrap a grade token in backticks** — `` `#1` ``, not `#1`. GitHub turns a bare `#<number>`
   into a link to that issue number. This repo has issues from #2 upward, so a bare grade name
   renders as a linked, garbled issue title.
