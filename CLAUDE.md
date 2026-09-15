@@ -22,6 +22,25 @@ differs, so resolve it before you trust it.
   says "the review stage", read `/simplify`.
 - **State test results plainly** — real counts, real pass/fail, never "should pass".
 
+## Getting facts right
+
+Four rules, each from a real mistake made in this repo. They cost seconds and they are not
+optional.
+
+- **Re-derive after a scope change.** When a decision removes part of the system, every recorded
+  fact that came from the removed part is suspect. List those facts and check them again. A field
+  list read off the EWP parser outlived the EWP tab's removal, and following it would have made
+  all four surviving pages reject every sheet.
+- **A claim carries its command, or it says it is a guess.** Quote the output that produced it.
+  Where there is no command, write "I think", not "X says". Confident arithmetic is where this
+  repo's wrong answers have come from: a run predicted at 40 minutes measured at 98 seconds.
+- **Test a borrowed rule here before it ships.** A rule copied from `materials-planner` or
+  `hanger-web-app` was written for that repo. "Every assertion carries a message as its third
+  argument" is wrong for `assert.ok`, which the source repo uses 110 times.
+- **Grep a new rule against the document that states it.** A rule is easiest to break in its own
+  file. One commit fixed four glossary entries, and the next reintroduced the same defect two
+  lines below the fix.
+
 ## Writing code
 
 `docs/CODING-STANDARDS.md` — the seams that make code testable, which changes need a test, dead
