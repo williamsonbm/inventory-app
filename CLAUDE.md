@@ -15,6 +15,11 @@ differs, so resolve it before you trust it.
   calls yourself; flag a better approach in a sentence rather than quietly widening the task.
 - **Delete before you add.** Resist new files, dependencies, and status docs unless they
   clearly earn their keep.
+- **Try the simpler thing first, and say you did.** Before adopting an approach that needs new
+  machinery — a new module, a new file, a new dependency — test whether the version without it
+  works. Report both results, not only the one you chose. `/simplify` runs after code exists;
+  this applies before it. An approach inherited from a spec, a research document or another
+  agent carries its author's assumptions: name the premise before you build on it.
 - **Spec before code for a feature.** The spec goes to the tracker as an issue — the owner runs
   `/to-spec`, which an agent cannot invoke. Then implement the logic with `/tdd`; then
   `/simplify`, re-run the tests, and `/code-review` the diff before asking to commit. Simplifying
