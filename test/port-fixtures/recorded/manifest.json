@@ -1,0 +1,77 @@
+{
+  "capturedAt": "2026-09-17T15:50:45.349Z",
+  "results": [
+    {
+      "family": "lumber",
+      "withStock": false,
+      "status": 200,
+      "ms": 117,
+      "jobsReturned": 50,
+      "rejectedCount": 0,
+      "ok": true
+    },
+    {
+      "family": "lumber",
+      "withStock": true,
+      "status": 200,
+      "ms": 74,
+      "jobsReturned": 50,
+      "rejectedCount": 0,
+      "ok": true
+    },
+    {
+      "family": "plates",
+      "withStock": false,
+      "status": 200,
+      "ms": 48,
+      "jobsReturned": 50,
+      "rejectedCount": 0,
+      "ok": true
+    },
+    {
+      "family": "plates",
+      "withStock": true,
+      "status": 200,
+      "ms": 32,
+      "jobsReturned": 50,
+      "rejectedCount": 0,
+      "ok": true
+    },
+    {
+      "family": "hangers",
+      "withStock": false,
+      "status": 200,
+      "ms": 23,
+      "jobsReturned": 50,
+      "rejectedCount": 0,
+      "ok": true
+    },
+    {
+      "family": "hangers",
+      "withStock": true,
+      "status": 200,
+      "ms": 19,
+      "jobsReturned": 50,
+      "rejectedCount": 0,
+      "ok": true
+    },
+    {
+      "family": "lvl",
+      "withStock": false,
+      "status": 200,
+      "ms": 24,
+      "jobsReturned": 50,
+      "rejectedCount": 0,
+      "ok": true
+    },
+    {
+      "family": "lvl",
+      "withStock": true,
+      "status": 200,
+      "ms": 21,
+      "jobsReturned": 50,
+      "rejectedCount": 0,
+      "ok": true
+    }
+  ]
+}

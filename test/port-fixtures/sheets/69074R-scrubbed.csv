@@ -1,0 +1,105 @@
+Material Summary,Riverbend Lumber Supply,P.O. Box 1347,Staunton VA 49742,Business:  (XXX) XXX-XXXX
+Quote Date:,8/13/2026,Job Number:,69074R
+Order Date:,8/11/2026,Product:,Roof
+Delivered Date:,,Customer P.O. #:,
+Invoiced Date:,,Sales Rep:,Betty Hernandez
+Estimator:,,Sales Area:,
+Designer,Anthony Lee,Customer ID:,40792
+,,,
+Delivery Date:,9/9/2026,,
+Mary Smith
+143 Ridgeview Blvd
+2671 Willow Bend Rd,S
+O
+L
+D 
+
+T
+O,
+
+9706 Pinecrest St,S
+H
+I
+P
+
+T
+O
+Address:,,Lot:,,Subdiv:,
+Job Name:,Apt 8C,Delivery Area,
+Delivery Notes: 
+Notes: 
+LUMBER SUMMARY,,,,,,,,
+SKU,Qty,LENGTH,MATERIAL NAME,USAGE,SQ. FEET,LINEAL FEET,BOARD FOOT,COST,COST PER,TOTAL
+,,,False,,,,,,,
+2z4spdss,2,7-00-00,2x4 SP DSS,Regular,,14.00,9.34,$7.87,$007.37,$2.64
+2z4spdss,36,8-00-00,2x4 SP DSS,Regular,,288.00,191.88,$6.68,$539.93,$815.36
+2z4spdss,8,14-00-00,2x4 SP DSS,Regular,,112.00,74.64,$3.61,$926.02,$69.37
+2z4spdss,32,16-00-00,2x4 SP DSS,Regular,,512.00,341.44,$4.05,$888.50,$690.47
+2z4spdss,78,,,,,926.00,617.30,,,$122.72
+,,,False,,,,,,,
+2x4sp1,8,7-00-00,2x4 SP No.1,Regular,,56.00,37.36,$5.93,$523.91,$21.07
+2x4sp1,20,12-00-00,2x4 SP No.1,Regular,,240.00,160.00,$6.95,$576.69,$150.72
+2x4sp1,16,14-00-00,2x4 SP No.1,Regular,,224.00,149.28,$1.65,$926.85,$744.74
+2x4sp1,2,16-00-00,2x4 SP No.1,Regular,,32.00,21.34,$4.64,$991.12,$34.03
+2x4sp1,46,,,,,552.00,367.98,,,$476.81
+,,,False,,,,,,,
+2x4sp2,13,1-00-00,2x4 SP No.2,Regular,,13.00,8.71,$7.77,$603.50,$6.34
+2x4sp2,22,2-00-00,2x4 SP No.2,Regular,,44.00,29.26,$6.21,$052.77,$56.14
+2x4sp2,21,3-00-00,2x4 SP No.2,Regular,,63.00,42.00,$0.08,$094.83,$99.27
+2x4sp2,20,4-00-00,2x4 SP No.2,Regular,,80.00,53.40,$2.73,$755.37,$81.78
+2x4sp2,21,5-00-00,2x4 SP No.2,Regular,,105.00,69.93,$0.70,$951.64,$63.46
+2x4sp2,28,6-00-00,2x4 SP No.2,Regular,,168.00,112.00,$4.47,$784.16,$20.71
+2x4sp2,40,7-00-00,2x4 SP No.2,Regular,,280.00,186.80,$5.64,$790.99,$835.25
+2x4sp2,16,8-00-00,2x4 SP No.2,Regular,,128.00,85.28,$5.91,$992.18,$44.38
+2x4sp2,49,10-00-00,2x4 SP No.2,Regular,,490.00,326.83,$9.29,$571.41,$097.76
+2x4sp2,18,12-00-00,2x4 SP No.2,Regular,,216.00,144.00,$4.58,$639.85,$950.56
+2x4sp2,4,16-00-00,2x4 SP No.2,Regular,,64.00,42.68,$2.96,$264.36,$64.28
+2x4sp2,252,,,,,1651.00,1100.89,,,$675.91
+,,,False,,,,,,,
+2x8spdss,5,2-00-00,2x8 SP DSS,Regular,,10.00,13.35,$3.75,$628.32,$71.99
+2x8spdss,5,,,,,10.00,13.35,,,$31.80
+,,,False,,,,,,,
+,13,2-00-00,2x8 SP No.1,Regular,,26.00,34.71,$3.62,$291.83,$44.62
+,13,,,,,26.00,34.71,,,$99.20
+,394,,,,0,3165,2134.23,,,"$3,461.86"
+PLATE SUMMARY,,,,
+SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES,UNIT COST,TOTAL
+,,,,,,
+,220,MT20  1.5x4,15.18,"1,320.00",$2.40,$28.32
+,16,MT20  2x4,1.47,128.00,$3.31,$5.28
+,44,MT20  3x4,6.07,528.00,$3.95,$33.50
+,80,MT20  3x6,16.56,"1,440.00",$7.11,$97.26
+,16,MT20  3x8,4.42,384.00,$2.57,$54.46
+,46,MT20  4x4,8.47,736.00,$7.29,$48.82
+,36,MT20  4x5,8.28,720.00,$2.12,$74.56
+,44,MT20  5x5,12.65,"1,100.00",$7.11,$82.52
+,42,MT20  5x6,14.49,"1,260.00",$1.56,$11.98
+,38,MT20  5x7,15.30,"1,330.00",$7.92,$89.21
+,52,MT20  5x8,23.92,"2,080.00",$5.29,$36.56
+,22,MT20  6x8,12.15,"1,056.00",$2.58,$66.63
+,38,MT20  8x8,27.97,"2,432.00",$6.20,$65.56
+,20,MT20  10x10,23.00,"2,000.00",$3.58,$38.65
+,714,,189.94,"16,514.00",,$935.34
+,714,,189.94,16514,,$375.41
+COST BREAKDOWN WORKSHEET!
+Total Board Feet,"2,133.95",,,Total Linear Feet,785.25,
+Component Cost Breakdown,,Sell Breakdown,
+Lumber Cost,"$6,147.22", (11%),,Total Component Sales,"$1,364.25", (128%)
+Plate Cost,$277.18, (58%),,    Total $/Ln Ft,$6.92,
+Labor Cost,$4.64, (7%),,    Total $/Bd Ft,$9.12,
+COGS,"$7,347.39", (04%),,Total Item Sales,$0.85, (5%)
+   COGS/Ln Ft,$4.60,,,  +Burried Adjustment,$3.89,
+   COGS/Bd Ft,$7.26,,,SubTotal:,"$5,229.98",
+Original Markup,"$7,822.19", (003%),,  +Delivery,$4.59,
+Discount,($8.33), (6%),,  +Additional Services,$8.08,
+Burried Delivery,$2.59,,,PreTax SubTotal:,"$7,267.01",
+Total Component Sale:,"$3,809.87",,,  +Tax (8.4%),$594.43,
+   Gross Profit (Margin %),"$2,165.55", (37%),,Total w/Taxes,"$0,516.96",
+Item Cost Breakdown,,,,
+COGS,$5.36, (1%),,,,
+Original Markup,$2.84, (1%),,,,
+Discount,($1.40), (5%),,,,
+Burried Delivery,$8.96,,,Grand Total,"$7,402.33",
+Total Item Sale:,$1.08,,,Total Discount (Avg. Disc. %),$5.89, (7%)
+   Gross Profit (Margin %),$5.92, (4%),,Total Gross Profit (Avg. Margin %),"$8,129.10", (30.48%)
+

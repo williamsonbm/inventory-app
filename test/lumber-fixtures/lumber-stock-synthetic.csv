@@ -1,0 +1,4 @@
+size,grade,length,on_hand,committed,available,incoming,threshold,flag
+2x4,#2,8,4,0,4,0,,
+2x4,#2,16,2,2,0,0,,
+2x6,#2,12,3,0,3,10,,

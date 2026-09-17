@@ -1,0 +1,91 @@
+Material Summary,Summit Components Inc.,P.O. Box 1347,Staunton MD 29236,Business:  (XXX) XXX-XXXX
+Quote Date:,5/27/2026,Job Number:,32199R
+Order Date:,7/7/2026,Product:,Roof
+Delivered Date:,,Customer P.O. #:,
+Invoiced Date:,,Sales Rep:,Mary Moore
+Estimator:,,Sales Area:,
+Designer,Sandra Jackson,Customer ID:,2055
+,,,
+Delivery Date:,1/8/2027,,
+Emily Jones,S
+O
+L
+D 
+
+T
+O,
+4449 Pinecrest Ln
+1122 Stonebridge Ave,S
+H
+I
+P
+
+T
+O
+Address:,4449 Pinecrest Ln,Lot:,,Subdiv:,
+Job Name:,Suite 29C,Delivery Area,
+Delivery Notes: 
+Notes: 
+LUMBER SUMMARY,,,,,,,,
+SKU,Qty,LENGTH,MATERIAL NAME,USAGE,SQ. FEET,LINEAL FEET,BOARD FOOT,COST,COST PER,TOTAL
+,,,False,,,,,,,
+2x4sp1,2,10-00-00,2x4 SP No.1,Regular,,20.00,13.34,$1.72,$719.97,$5.51
+2x4sp1,2,,,,,20.00,13.34,,,$3.72
+,,,False,,,,,,,
+2x4sp2,36,1-00-00,2x4 SP No.2,Regular,,36.00,24.12,$3.75,$410.01,$25.81
+2x4sp2,18,2-00-00,2x4 SP No.2,Regular,,36.00,23.94,$0.61,$754.30,$10.09
+2x4sp2,32,3-00-00,2x4 SP No.2,Regular,,96.00,64.00,$4.44,$473.20,$71.01
+2x4sp2,12,4-00-00,2x4 SP No.2,Regular,,48.00,32.04,$4.66,$672.72,$69.53
+2x4sp2,10,5-00-00,2x4 SP No.2,Regular,,50.00,33.30,$8.24,$571.77,$83.36
+2x4sp2,52,6-00-00,2x4 SP No.2,Regular,,312.00,208.00,$3.77,$756.92,$394.35
+2x4sp2,6,8-00-00,2x4 SP No.2,Regular,,48.00,31.98,$4.32,$079.06,$69.87
+2x4sp2,24,12-00-00,2x4 SP No.2,Regular,,288.00,192.00,$4.01,$564.44,$441.60
+2x4sp2,2,14-00-00,2x4 SP No.2,Regular,,28.00,18.66,$8.41,$701.59,$50.64
+2x4sp2,18,16-00-00,2x4 SP No.2,Regular,,288.00,192.06,$1.45,$041.19,$055.59
+2x4sp2,210,,,,,1230.00,820.10,,,$129.30
+,,,False,,,,,,,
+2x6sp2,2,12-00-00,2x6 SP No.2,Regular,,24.00,24.00,$8.61,$214.44,$81.78
+2x6sp2,2,,,,,24.00,24.00,,,$35.75
+,214,,,,0,1274,857.44,,,$110.71
+PLATE SUMMARY,,,,
+SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES,UNIT COST,TOTAL
+,,,,,,
+,104,MT20  1.5x4,7.18,624.00,$5.47,$94.57
+,36,MT20  2x6,4.97,432.00,$7.33,$05.23
+,100,MT20  3x4,13.80,"1,200.00",$2.39,$32.68
+,24,MT20  3x6,4.97,432.00,$8.26,$96.30
+,52,MT20  3x8,14.35,"1,248.00",$0.52,$42.38
+,68,MT20  4x4,12.51,"1,088.00",$3.52,$79.19
+,4,MT20  4x5,0.92,80.00,$6.76,$9.13
+,12,MT20  6x6,4.97,432.00,$7.93,$27.56
+,400,,63.68,"5,536.00",,$921.66
+,400,,63.68,5536,,$802.64
+Hangers,,,,,,
+,,,,,,UNIT,TOTAL
+QTY,TYPE,SIZE,LENGTH,,NOTE,SELL,SELL
+2,Hanger,LTHJA26,,,,$41.14,$57.77
+8,Hanger,LU24,,,,$1.81,$8.44
+52,Hanger,One H2.5A,,,,$3.73,$75.58
+Total Hangers:,,$60.89
+COST BREAKDOWN WORKSHEET!
+Total Board Feet,857.28,,,Total Linear Feet,305.85,
+Component Cost Breakdown,,Sell Breakdown,
+Lumber Cost,$323.88, (17%),,Total Component Sales,"$2,018.59", (79%)
+Plate Cost,$656.09, (9%),,    Total $/Ln Ft,$2.18,
+Labor Cost,$8.15, (5%),,    Total $/Bd Ft,$2.06,
+COGS,$463.71, (99%),,Total Item Sales,$70.18, (5%)
+   COGS/Ln Ft,$4.89,,,  +Burried Adjustment,$8.30,
+   COGS/Bd Ft,$3.05,,,SubTotal:,"$8,390.04",
+Original Markup,"$3,495.70", (778%),,  +Delivery,$4.45,
+Discount,($3.65), (9%),,  +Additional Services,$8.23,
+Burried Delivery,$6.85,,,PreTax SubTotal:,"$0,672.88",
+Total Component Sale:,"$0,018.87",,,  +Tax (1.3%),$177.03,
+   Gross Profit (Margin %),"$2,072.71", (99%),,Total w/Taxes,"$9,886.12",
+Item Cost Breakdown,,,,
+COGS,$71.68, (30%),,,,
+Original Markup,$31.20, (213%),,,,
+Discount,($9.08), (1%),,,,
+Burried Delivery,$9.31,,,Grand Total,"$7,730.77",
+Total Item Sale:,$12.71,,,Total Discount (Avg. Disc. %),$7.64, (5%)
+   Gross Profit (Margin %),$16.01, (62%),,Total Gross Profit (Avg. Margin %),"$9,862.11", (58.25%)
+
