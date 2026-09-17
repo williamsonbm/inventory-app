@@ -502,15 +502,19 @@
     window.PlannerUI = {
       esc, fmtInt, fmtNum, readFile, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
       wireSort, drilldowns, wireExpandAll, resetExpandAll, expandAllButtonHtml, dropZones, debounce,
-      stockProductHints, looksLikeAnyStock, looksLikePlateOrHangerStock, looksLikeItemSpanQtyStock,
+      stockProductHints, looksLikePlateOrHangerStock,
     };
   }
 
   // Node (tests): the pure CSV-sniffing helpers only — everything else here
   // (dropZones, drilldowns, sorting, …) touches the DOM and has no Node caller.
+  //
+  // looksLikeAnyStock and looksLikeItemSpanQtyStock are NOT published. Both stay
+  // in use inside this file; their only reader was planner.html, which the port
+  // deletes. An export with no reader does not ship (issue #39).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      stockProductHints, looksLikeAnyStock, looksLikePlateOrHangerStock, looksLikeItemSpanQtyStock,
+      stockProductHints, looksLikePlateOrHangerStock,
     };
   }
 })();

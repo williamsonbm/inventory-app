@@ -1,18 +1,17 @@
 // =============================================================
-// planner/server.js — the DB-FREE local entry point.
-// Run with: npm run planner   →  http://127.0.0.1:3000
-// (`npm start` runs the repo-root server.js, which wraps this same app.)
+// planner/server.js — the DB-FREE entry point.
+// Run with: npm start   →  http://127.0.0.1:3000
 // =============================================================
-// A standalone purchase planner for a laptop (Linux or Windows 11). Drop in one
-// or more MiTek "Material Summary" CSVs, say how many distinct stock lengths
-// you're willing to order, and get back the length sets that minimize what you
-// have to buy.
+// A purchase planner for four material families — plates, hangers, LVL and
+// lumber. Drop in one or more MiTek "Material Summary" CSVs and get back the
+// buy list for the batch, netted against what the yard already holds.
 //
 // HARD CONSTRAINT — this file must never reach for a database. No `pg`, no
-// `dotenv`, no require of the app's ../../server.js. It shares the ENGINE with
-// the web app (one copy of optimizeCuts.js, no drift) and nothing else. It also
-// binds 127.0.0.1 only: this is a personal tool, not a LAN service, and the
-// app's own auth/session layer is not in play here.
+// `dotenv`. test/port-guards.test.js asserts that over the loaded module graph.
+//
+// The EWP cut-length search does not live here. It stays in `materials-planner`,
+// where the owner still runs it locally; see issue #41 for why the exclusion
+// exists only in this copy.
 //
 // UPLOADS — the browser reads the CSVs with FileReader and POSTs them as JSON
 // text. That avoids a multipart parser (and a new npm dependency) entirely;
@@ -23,13 +22,7 @@
 const express = require('express');
 const path = require('node:path');
 
-const { parseJobCsv } = require('../ewp/parseCsv.js');
 const { parseStockCsv, looksLikeStockCsv } = require('../ewp/readStockCsv.js');
-const { applyStock, coverageOf } = require('../ewp/applyStock.js');
-const { analyzeBatch, productsOf, splitBatch } = require('../ewp/selectStockLengths.js');
-const {
-  IJOIST_LENGTH_MENU, DEFAULT_PURCHASE_LENGTHS_BY_CAT, DEFAULT_LVL_DROP_MIN_FT,
-} = require('../ewp/optimizeCuts.js');
 const { planPlates } = require('../plates/planPlates.js');
 const { parsePlateStockCsv, looksLikePlateStockCsv } = require('../plates/readPlateStockCsv.js');
 const { planHangers } = require('../hangers/planHangers.js');
@@ -42,45 +35,34 @@ const { DEFAULT_LUMBER_MENU, GRADE_STRENGTH_ORDER } = require('../lumber/lumberM
 const PORT = Number(process.env.PORT || process.env.PLANNER_PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 
-// How many ranked candidates to ship to the browser. The search can evaluate
-// ~969 sets at maxLengths:3; the buyer only ever looks at the head of that list,
-// and sending all of them is a slow response for no benefit.
-const RESULT_LIMIT = 25;
-
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
-// Never let a browser cache this tool. Without it, /api/menu is a plain GET with
-// no Cache-Control and no Last-Modified, so a browser may heuristically reuse an
-// older response — which is exactly what happened when the menu payload changed
-// shape between restarts: the page kept a stale body, blew up reading a field
-// that no longer existed, and silently rendered an empty pool editor. A dev tool
-// on localhost has nothing to gain from caching.
+// Never let a browser cache this tool. /api/lumber/menu is a plain GET with no
+// Cache-Control and no Last-Modified of its own, so a browser may heuristically
+// reuse an older response. That already bit the planner once: a menu payload
+// changed shape between restarts, the page kept the stale body, then threw
+// reading a field that no longer existed and rendered an empty editor.
+// test/port-guards.test.js holds this header in place.
 app.use((_req, res, next) => {
   res.set('Cache-Control', 'no-store, max-age=0');
   next();
 });
 
-// Deliberately NOT express.static(public/). Two reasons: the app's public/ has
-// its own index.html, which express.static would serve at "/" ahead of any
-// route here — you'd get the hanger app's dashboard firing DB calls at a server
-// that has no database. And planner.html is fully self-contained (inline CSS +
-// JS), so it lives next to this file rather than in the app's asset dir, where
-// the main server would otherwise publish a page whose /api/plan doesn't exist.
+// Deliberately NOT express.static(). Every served file is named by an explicit
+// route below, so this server can never publish a file nobody chose to publish.
+//
+// "/" is the front door and it serves the LUMBER page — decided by the owner,
+// 2026-09-14. Lumber is the tab the office opens first. /lumber stays registered
+// alongside it, because the other three pages link to it by name.
 app.get('/', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'planner.html'));
+  res.sendFile(path.join(__dirname, 'lumber.html'));
 });
 
-// The cut-list diagrams, shared verbatim with the web app's /optimize.html so
-// the office reads the same picture in both places. Served as THREE EXPLICIT
-// ROUTES rather than a static mount of public/ — mounting it would also publish
-// index.html, optimize.html and the rest of an app this server cannot back.
+// Served as EXPLICIT ROUTES rather than a static mount, per the reasoning above.
 const SHARED_ASSETS = {
-  '/cutListModel.js': [path.join(__dirname, '..', 'ewp', 'cutListModel.js'), 'application/javascript'],
-  '/cutList.js': [path.join(__dirname, '..', '..', 'public', 'cutList.js'), 'application/javascript'],
-  '/cutList.css': [path.join(__dirname, '..', '..', 'public', 'cutList.css'), 'text/css'],
-  // The one shared stylesheet + UI helper every planner tab links, so the five
-  // pages stay one tool instead of five drifting copies. Live next to the HTML.
+  // The one shared stylesheet + UI helper every planner tab links, so the four
+  // pages stay one tool instead of four drifting copies. Live next to the HTML.
   '/planner.css': [path.join(__dirname, 'planner.css'), 'text/css'],
   '/planner-ui.js': [path.join(__dirname, 'planner-ui.js'), 'application/javascript'],
   // The shared, durable CSV pile every tab reads from (drop once, use anywhere).
@@ -91,11 +73,10 @@ for (const [route, [file, type]] of Object.entries(SHARED_ASSETS)) {
 }
 
 // ── PLATES ──────────────────────────────────────────────────────────────────
-// A second, independent tool sharing this process. Deliberately its own page and
-// its own endpoint rather than a mode toggle on the EWP planner: the two answer
-// different questions (which lengths to buy vs how many boxes), and the EWP
-// page's pool editor and max-lengths controls are meaningless for plates.
-// Nothing below touches the EWP path.
+// One of four independent tools sharing this process. Each family gets its own
+// page and its own endpoint rather than one page with a family toggle: they
+// answer different questions — how many boxes of plates, how many hangers, how
+// many linear feet of LVL, how many boards of lumber — and share no controls.
 app.get('/plates', (_req, res) => {
   res.sendFile(path.join(__dirname, 'plates.html'));
 });
@@ -108,7 +89,7 @@ app.post('/api/plates/plan', (req, res) => {
 
   // Sniff the dropped files rather than trusting which zone they landed in — a
   // misfiled CSV is a two-second mistake that would otherwise cost a confusing
-  // error. Same reasoning as routeFiles() for the EWP side.
+  // error. All four family routes below sniff the same way.
   const jobFiles = [];
   let stockFile = stock && String(stock.text || '').trim() ? stock : null;
   const rerouted = [];
@@ -128,7 +109,7 @@ app.post('/api/plates/plan', (req, res) => {
     } catch (err) {
       // A bad stock file must not refuse the plan outright — losing the netting
       // is annoying; refusing to plan because an OPTIONAL second input was wrong
-      // is worse. Same call the EWP side makes in readStock().
+      // is worse. All four family routes make the same call.
       stockError = err.message;
     }
   }
@@ -208,11 +189,11 @@ app.post('/api/hangers/plan', (req, res) => {
 });
 
 // ── LVL (linear feet) ───────────────────────────────────────────────────────
-// A third, independent tool sharing this process. Not a cut-optimization
-// question at all — it's a linear-footage roll-up, so it reuses parseJobCsv
-// and readStockCsv.js's generic stock reader/sniffer as-is rather than
-// duplicating them. See src/lvl/planLvl.js for why qty × length already
-// accounts for plies without a separate multiplier.
+// Not a cut-optimization question at all — it is a linear-footage roll-up. It
+// reuses readStockCsv.js's generic stock reader and sniffer as-is rather than
+// duplicating them. It does NOT use parseJobCsv: src/lvl/parseLvlSheet.js says
+// why it parses the sheet itself. See src/lvl/planLvl.js for why qty × length
+// already accounts for plies without a separate multiplier.
 app.get('/lvl', (_req, res) => {
   res.sendFile(path.join(__dirname, 'lvl.html'));
 });
@@ -266,17 +247,17 @@ app.post('/api/lvl/plan', (req, res) => {
 });
 
 // ── LUMBER (linear feet + stock pieces) ──────────────────────────────────────
-// A fifth tool sharing this process. Unlike LVL, it answers two questions at
-// once — linear feet AND how many whole boards to buy (via cutMapLumber, a
-// SEPARATE cut-optimizer so the byte-locked EWP optimizeCuts.js can't drift) —
-// netted against on-hand. Its stock schema is size,grade,length, so it uses its
-// own reader/sniffer rather than the EWP item,span one. See src/lumber/planLumber.js.
+// The front door: "/" serves this page. Unlike LVL, it answers two questions at
+// once — linear feet AND how many whole boards to buy, via cutMapLumber, its own
+// cut-optimizer — netted against on-hand. Its stock schema is size,grade,length,
+// so it uses its own reader and sniffer rather than the generic item,span one.
+// See src/lumber/planLumber.js.
 app.get('/lumber', (_req, res) => {
   res.sendFile(path.join(__dirname, 'lumber.html'));
 });
 
 // The default carried-lengths menu the editor seeds from, straight from the
-// engine constant — same single-source-of-truth rule /api/menu follows.
+// engine constant, so the page and the planner cannot disagree about it.
 // gradeOrder rides along so the "Redirect to" picker's stronger-grade filter
 // reads the SAME ranking resolveRedirects enforces server-side, instead of
 // keeping its own copy that could drift from it.
@@ -332,278 +313,9 @@ app.post('/api/lumber/plan', (req, res) => {
   });
 });
 
-// Menu + defaults for the UI, read from the engine rather than re-typed here —
-// same single-source-of-truth rule server.js follows.
-app.get('/api/menu', (_req, res) => {
-  res.json({
-    ok: true,
-    lengthMenu: IJOIST_LENGTH_MENU,
-    supplierDefault: DEFAULT_PURCHASE_LENGTHS_BY_CAT['I-Joist'],
-    // Defaults for the LVL / Rim pools. These are SET by the user, not searched:
-    // the engine already opens the cheapest allowed length per board, so simply
-    // widening the list captures the benefit without any extra combinatorics.
-    byCat: {
-      LVL: DEFAULT_PURCHASE_LENGTHS_BY_CAT['LVL'],
-      RimBoard: DEFAULT_PURCHASE_LENGTHS_BY_CAT['RimBoard'],
-    },
-    lvlDropMinFt: DEFAULT_LVL_DROP_MIN_FT,
-  });
-});
-
-// Parse the uploaded CSVs once. Shared by /api/inspect and /api/plan so the two
-// never disagree about what is in a batch. parseJobCsv returns [] for a non-EWP
-// export, which is a user-facing mistake worth naming rather than silently
-// dropping.
-function readBatch(files) {
-  const jobs = [];
-  const rejected = [];
-  const cutItems = [];
-  for (const f of files) {
-    let items;
-    try {
-      items = parseJobCsv(String(f.text || ''));
-    } catch (err) {
-      rejected.push({ name: f.name, reason: `parse failed: ${err.message}` });
-      continue;
-    }
-    if (!items.length) {
-      rejected.push({ name: f.name, reason: 'not an EWP material summary (Product != "EWP")' });
-      continue;
-    }
-    const header = items.find((i) => i.kind === 'header') || {};
-    const materials = items.filter((i) => i.kind === 'material' && i.category !== 'Hanger');
-    if (!materials.length) {
-      rejected.push({ name: f.name, reason: 'no EWP cut material rows (hangers only?)' });
-      continue;
-    }
-    jobs.push({
-      file: f.name,
-      jobNumber: header.jobNumber || 'Unknown',
-      jobName: header.jobName || 'Unknown',
-      deliveryDate: header.deliveryDate || 'Unknown',
-      pieces: materials.reduce((s, m) => s + (m.qty || 0), 0),
-      categories: [...new Set(materials.map((m) => m.category))].sort(),
-    });
-    cutItems.push(...items);
-  }
-  return { jobs, rejected, cutItems };
-}
-
-// Sort the uploaded files into job summaries and the (single) stock list.
-//
-// The page has a drop zone for each, but a misfiled CSV is a two-second mistake
-// that would otherwise cost a confusing error — a stock file parsed as a job is
-// "not an EWP material summary", which says nothing useful. The two shapes are
-// unambiguous (a stock file's header carries item/span/qty; a MiTek summary's
-// does not), so sniff and re-file, and tell the caller it happened.
-function routeFiles(files, stockFile) {
-  const jobFiles = [];
-  const stockFiles = [];
-  const rerouted = [];
-
-  for (const f of files || []) {
-    if (looksLikeStockCsv(String(f.text || ''))) {
-      stockFiles.push(f);
-      rerouted.push({ name: f.name, to: 'stock' });
-    } else {
-      jobFiles.push(f);
-    }
-  }
-  if (stockFile && String(stockFile.text || '').trim()) {
-    if (looksLikeStockCsv(String(stockFile.text))) {
-      // An explicitly-dropped stock file wins over one sniffed out of the job pile.
-      stockFiles.unshift(stockFile);
-    } else {
-      jobFiles.push(stockFile);
-      rerouted.push({ name: stockFile.name, to: 'jobs' });
-    }
-  }
-  return { jobFiles, stockFile: stockFiles[0] || null, rerouted };
-}
-
-// Parse the stock CSV, if there is one. A malformed stock file is reported and
-// the plan still runs greenfield — losing the netting is annoying, but refusing
-// to plan at all because a second, optional input was wrong is worse.
-function readStock(file) {
-  if (!file) return { items: [], info: null };
-  try {
-    const r = parseStockCsv(String(file.text || ''));
-    return {
-      items: r.items,
-      info: {
-        name: file.name,
-        rows: r.rowCount,
-        qtyColumn: r.qtyColumn,
-        skipped: r.skipped.length,
-        warnings: r.warnings,
-      },
-    };
-  } catch (err) {
-    return { items: [], info: { name: file.name, error: err.message, rows: 0 } };
-  }
-}
-
-// What products are in this batch? The pool editor can only be drawn once we know,
-// and parsing lives here — so the UI asks on drop, before planning anything. Parse
-// only, no packing: this returns in milliseconds.
-app.post('/api/inspect', (req, res) => {
-  const { files, stock } = req.body || {};
-  if (!Array.isArray(files) || files.length === 0) {
-    return res.status(400).json({ ok: false, error: 'No CSV files were provided.' });
-  }
-  const routed = routeFiles(files, stock);
-  const { jobs, rejected, cutItems } = readBatch(routed.jobFiles);
-  if (!cutItems.length) {
-    return res.status(400).json({ ok: false, error: 'No usable EWP job data found.', rejected });
-  }
-  const { ijoistItems } = splitBatch(cutItems);
-  const stockRead = readStock(routed.stockFile);
-  res.json({
-    ok: true,
-    jobs,
-    rejected,
-    rerouted: routed.rerouted,
-    // One entry per I-Joist PRODUCT — each is an independent sourcing decision
-    // with its own supplier availability and its own length budget.
-    products: productsOf(ijoistItems).map((p) => ({
-      key: p.key, size: p.size, depth: p.depth, pieces: p.pieces, feet: p.feet,
-    })),
-    stock: stockRead.info,
-    // Which materials the stock file actually mentions. Worth showing BEFORE a
-    // plan that takes ~40s: "this file says nothing about TJI® 560" is a
-    // different problem from "there are none on hand", and only one of them is
-    // fixed by exporting the stock list again.
-    coverage: stockRead.items.length ? coverageOf(cutItems, stockRead.items) : null,
-  });
-});
-
-app.post('/api/plan', (req, res) => {
-  const {
-    files, stock, maxLengths, menu, topN,
-    purchaseLengthsByCat, lvlDropMinFt, poolBySize, maxLengthsBySize,
-  } = req.body || {};
-
-  if (!Array.isArray(files) || files.length === 0) {
-    return res.status(400).json({ ok: false, error: 'No CSV files were provided.' });
-  }
-
-  const routed = routeFiles(files, stock);
-  const { jobs, rejected, cutItems } = readBatch(routed.jobFiles);
-
-  if (!cutItems.length) {
-    return res.status(400).json({ ok: false, error: 'No usable EWP job data found.', rejected });
-  }
-
-  // Only the LVL / RimBoard pools are user-settable here. I-Joist sourcing is
-  // decided by the SEARCH (via `menu`), so letting it also arrive as a
-  // per-category override would give two competing answers for one question.
-  let byCat = null;
-  if (purchaseLengthsByCat && typeof purchaseLengthsByCat === 'object') {
-    byCat = {};
-    for (const cat of ['LVL', 'RimBoard']) {
-      const v = purchaseLengthsByCat[cat];
-      if (!Array.isArray(v)) continue;
-      const lens = v.map(Number).filter((n) => Number.isFinite(n) && n > 0);
-      if (!lens.length) {
-        return res.status(400).json({
-          ok: false, error: `${cat} must have at least one purchasable length.`,
-        });
-      }
-      byCat[cat] = lens;
-    }
-    if (!Object.keys(byCat).length) byCat = null;
-  }
-
-  // Per-product pools. An empty list is a real error worth naming — the UI should
-  // never send one, and if it does the buyer deserves to be told which product.
-  let pools = null;
-  if (poolBySize && typeof poolBySize === 'object') {
-    pools = {};
-    for (const [key, v] of Object.entries(poolBySize)) {
-      if (!Array.isArray(v)) continue;
-      const lens = v.map(Number).filter((n) => Number.isFinite(n) && n > 0);
-      if (!lens.length) {
-        return res.status(400).json({
-          ok: false, error: `No purchasable lengths are ticked for "${key}".`,
-        });
-      }
-      pools[key] = lens;
-    }
-  }
-
-  const t0 = Date.now();
-  let result;
-  try {
-    result = analyzeBatch(cutItems, {
-      maxLengths: Number(maxLengths) || 3,
-      maxLengthsBySize: maxLengthsBySize && typeof maxLengthsBySize === 'object'
-        ? maxLengthsBySize : undefined,
-      menu: Array.isArray(menu) && menu.length ? menu.map(Number) : undefined,
-      poolBySize: pools,
-      // Finalists refined at full budget for the WINNING length count. Each one
-      // is a full engine run, so this is the main runtime dial: 3 still lets a
-      // different length set overtake the sweep's leader after refinement.
-      topN: Number(topN) || 3,
-      purchaseLengthsByCat: byCat,
-      lvlDropMinFt: Number.isFinite(Number(lvlDropMinFt)) ? Number(lvlDropMinFt) : undefined,
-    });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err.message });
-  }
-
-  // ---- net the greenfield answer against the yard.
-  //
-  // Deliberately AFTER the search, never inside it: the search stays greenfield
-  // so its recommended lengths and the waste they're ranked on don't move with
-  // the stock snapshot. See the header of applyStock.js.
-  //
-  // With no stock file this stays null and every field above is byte-identical
-  // to what this endpoint returned before the feature existed.
-  const stockRead = readStock(routed.stockFile);
-  let stockView = null;
-  if (stockRead.items.length) {
-    try {
-      stockView = applyStock(cutItems, result, stockRead.items, {
-        purchaseLengthsByCat: byCat,
-        lvlDropMinFt: Number.isFinite(Number(lvlDropMinFt)) ? Number(lvlDropMinFt) : undefined,
-      });
-    } catch (err) {
-      // A failed netting must not throw away a plan that took ~40s to compute.
-      stockRead.info = { ...(stockRead.info || {}), error: `netting failed: ${err.message}` };
-    }
-  }
-
-  res.json({
-    ok: true,
-    jobs,
-    rejected,
-    rerouted: routed.rerouted,
-    ms: Date.now() - t0,
-    // One independent answer per I-Joist product…
-    products: result.products.map((p) => ({
-      ...p,
-      ranked: (p.ranked || []).slice(0, RESULT_LIMIT),
-      truncated: Math.max(0, (p.ranked || []).length - RESULT_LIMIT),
-    })),
-    // …and one order, one cut sheet, one set of totals across all of them.
-    totals: result.totals,
-    purchaseList: result.purchaseList,
-    cutPlan: result.cutPlan,
-    error: result.error,
-    // …plus, when a stock list was dropped, what the yard covers of it.
-    stockInfo: stockRead.info,
-    stock: stockView,
-  });
-});
-
-// Binds PORT/HOST and resolves once listening, or rejects with a
-// plain-language Error (never a raw EADDRINUSE) once it's clear the bind
-// failed. The one seam for "start the server" — both the CLI entry point
-// below and the Electron packaging's main.js (scripts/electron-windows/
-// main.js, which requires this module without running it as the main
-// script, so the require.main guard below never fires there) call this
-// instead of each separately calling app.listen() and each reinventing what
-// a failed bind should say.
+// Binds PORT/HOST and resolves once listening, or rejects with a plain-language
+// Error (never a raw EADDRINUSE) once it is clear the bind failed. The one seam
+// for "start the server", called by the CLI block below and by nothing else.
 function start() {
   return new Promise((resolve, reject) => {
     const server = app.listen(PORT, HOST);
@@ -629,4 +341,8 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, PORT, HOST, start };
+// `app` alone. PORT, HOST and start() are used by the CLI block above and by
+// nothing else in this repo: their only other caller was the Electron packaging
+// in `materials-planner`, which the port leaves behind. An export with no reader
+// does not ship (issue #39).
+module.exports = { app };
