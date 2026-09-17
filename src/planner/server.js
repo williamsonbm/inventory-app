@@ -55,9 +55,14 @@ app.use((_req, res, next) => {
 // "/" is the front door and it serves the LUMBER page — decided by the owner,
 // 2026-09-14. Lumber is the tab the office opens first. /lumber stays registered
 // alongside it, because the other three pages link to it by name.
-app.get('/', (_req, res) => {
+//
+// ONE handler serves both paths. Two handlers naming lumber.html separately
+// would stay in step only by hand, so a header or a redirect added to one would
+// silently miss the other.
+function sendLumberPage(_req, res) {
   res.sendFile(path.join(__dirname, 'lumber.html'));
-});
+}
+app.get('/', sendLumberPage);
 
 // Served as EXPLICIT ROUTES rather than a static mount, per the reasoning above.
 const SHARED_ASSETS = {
@@ -252,9 +257,7 @@ app.post('/api/lvl/plan', (req, res) => {
 // cut-optimizer — netted against on-hand. Its stock schema is size,grade,length,
 // so it uses its own reader and sniffer rather than the generic item,span one.
 // See src/lumber/planLumber.js.
-app.get('/lumber', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'lumber.html'));
-});
+app.get('/lumber', sendLumberPage);
 
 // The default carried-lengths menu the editor seeds from, straight from the
 // engine constant, so the page and the planner cannot disagree about it.

@@ -52,13 +52,29 @@ async function withServer(fn) {
 // would drag in `pg` and `dotenv` and the tool would demand a database on
 // startup. So the module graph is asserted here rather than left to a grep.
 
-test('the planner module graph contains no database or env dependency', () => {
+test('the planner reaches no database, in the graph or in the manifest', () => {
   const loaded = Object.keys(require.cache);
   const forbidden = ['node_modules/pg/', 'node_modules/pg-pool/', 'node_modules/dotenv/'];
   for (const f of forbidden) {
     const hit = loaded.find((m) => m.split(path.sep).join('/').includes(f));
     assert.equal(hit, undefined, `planner must not load ${f} (found ${hit})`);
   }
+
+  // The denylist above names the packages that already tried to come across. It
+  // cannot catch a driver nobody thought to type, and this repo is heading for
+  // Supabase Postgres, so `@supabase/supabase-js` would walk straight past it.
+  //
+  // docs/CODING-STANDARDS.md states the general rule the denylist only
+  // approximates: "A new dependency is a decision, named in the spec before it
+  // is added." Assert THAT, so any new runtime dependency fails here — database
+  // or not — until a spec names it and somebody updates this list on purpose.
+  //
+  // The two checks catch different mistakes and both are cheap. The manifest
+  // check misses a package required without being declared; the graph check
+  // above misses a package declared but not yet required.
+  const { dependencies } = require('../package.json');
+  assert.deepEqual(Object.keys(dependencies).sort(), ['express'],
+    'a new runtime dependency must be named in the spec before it is added');
 });
 
 // ---- 2. caching --------------------------------------------------------------
