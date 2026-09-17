@@ -1,0 +1,1645 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "jobs": [
+      {
+        "name": "11601J-scrubbed.csv",
+        "jobNumber": "11601J",
+        "jobName": "Suite 6B",
+        "deliveryDate": "2026-08-28",
+        "commitDate": "2026-08-14",
+        "category": "EWP",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 102,
+            "sku": "ITS2.56/11.88",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "11601R-scrubbed.csv",
+        "jobNumber": "11601R",
+        "jobName": "Bldg 13D",
+        "deliveryDate": "2026-09-07",
+        "commitDate": "2026-08-14",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 26,
+            "sku": "HUS26",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 1,
+            "sku": "LGT4-SDS3",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "12314F2-scrubbed.csv",
+        "jobNumber": "12314F2",
+        "jobName": "Apt 29D",
+        "deliveryDate": "2026-09-01",
+        "commitDate": "2025-07-01",
+        "category": "Floor",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 27,
+            "sku": "THA426",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "12314J1-scrubbed.csv",
+        "jobNumber": "12314J1",
+        "jobName": "Apt 26C",
+        "deliveryDate": "2026-08-25",
+        "commitDate": "2025-07-01",
+        "category": "EWP",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 5,
+            "sku": "ITS2.56/14",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "12314R-scrubbed.csv",
+        "jobNumber": "12314R",
+        "jobName": "Suite 1D",
+        "deliveryDate": "2026-09-08",
+        "commitDate": "2025-07-01",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 24,
+            "sku": "THA29",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 1,
+            "sku": "HGUS26-2",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "16874J-scrubbed.csv",
+        "jobNumber": "16874J",
+        "jobName": "Bldg 26A",
+        "deliveryDate": "2026-08-28",
+        "commitDate": "2026-05-21",
+        "category": "EWP",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 8,
+            "sku": "ITS2.56/11.88",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 2,
+            "sku": "IUS1.81/11.88",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "16874R-scrubbed.csv",
+        "jobNumber": "16874R",
+        "jobName": "Unit 26B",
+        "deliveryDate": "2026-09-04",
+        "commitDate": "2026-05-21",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 17,
+            "sku": "THA29",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "17305R-scrubbed.csv",
+        "jobNumber": "17305R",
+        "jobName": "Suite 17D",
+        "deliveryDate": "2026-09-09",
+        "commitDate": "2026-04-08",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "18330R-scrubbed.csv",
+        "jobNumber": "18330R",
+        "jobName": "Bldg 36D",
+        "deliveryDate": "2026-08-18",
+        "commitDate": "2025-11-19",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 3,
+            "sku": "HGUS26-2",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 18,
+            "sku": "HUS26",
+            "section": "Hangers"
+          },
+          {
+            "seq": 3,
+            "qty": 23,
+            "sku": "LU24",
+            "section": "Hangers"
+          },
+          {
+            "seq": 4,
+            "qty": 28,
+            "sku": "TBE4",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "27860F-scrubbed.csv",
+        "jobNumber": "27860F",
+        "jobName": "Bldg 9A",
+        "deliveryDate": "2026-09-02",
+        "commitDate": "2026-07-09",
+        "category": "Floor",
+        "lines": []
+      },
+      {
+        "name": "27860R-scrubbed.csv",
+        "jobNumber": "27860R",
+        "jobName": "Bldg 28B",
+        "deliveryDate": "2026-09-02",
+        "commitDate": "2026-07-09",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "31404R-scrubbed.csv",
+        "jobNumber": "31404R",
+        "jobName": "Apt 39C",
+        "deliveryDate": "2026-08-19",
+        "commitDate": "2026-06-26",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 12,
+            "sku": "HUS26",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 76,
+            "sku": "H2.5A",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "32199R-scrubbed.csv",
+        "jobNumber": "32199R",
+        "jobName": "Suite 29C",
+        "deliveryDate": "2027-01-08",
+        "commitDate": "2026-07-07",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 2,
+            "sku": "LTHJA26",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 8,
+            "sku": "LU24",
+            "section": "Hangers"
+          },
+          {
+            "seq": 3,
+            "qty": 52,
+            "sku": "H2.5A",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "32421R-scrubbed.csv",
+        "jobNumber": "32421R",
+        "jobName": "Apt 5D",
+        "deliveryDate": "2026-09-30",
+        "commitDate": "2026-07-02",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "35799F-scrubbed.csv",
+        "jobNumber": "35799F",
+        "jobName": "Apt 1B",
+        "deliveryDate": "2026-09-11",
+        "commitDate": "2025-04-01",
+        "category": "Floor",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 4,
+            "sku": "HUS412",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 6,
+            "sku": "LU24",
+            "section": "Hangers"
+          },
+          {
+            "seq": 3,
+            "qty": 45,
+            "sku": "THA426",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "35799R-scrubbed.csv",
+        "jobNumber": "35799R",
+        "jobName": "Unit 16D",
+        "deliveryDate": "2026-09-18",
+        "commitDate": "2025-04-01",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 1,
+            "sku": "HUS26-2",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 25,
+            "sku": "HUS26",
+            "section": "Hangers"
+          },
+          {
+            "seq": 3,
+            "qty": 6,
+            "sku": "LU24",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "36372H-scrubbed.csv",
+        "jobNumber": "36372H",
+        "jobName": "Suite 12A",
+        "deliveryDate": "2026-09-14",
+        "commitDate": "2026-08-14",
+        "category": "EWP",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 10,
+            "sku": "ATR1/2X48HDG",
+            "section": "Misc Items",
+            "mtype": ""
+          },
+          {
+            "seq": 2,
+            "qty": 20,
+            "sku": "DTT2Z",
+            "section": "Misc Items",
+            "mtype": ""
+          }
+        ]
+      },
+      {
+        "name": "38172R-scrubbed.csv",
+        "jobNumber": "38172R",
+        "jobName": "Bldg 18B",
+        "deliveryDate": "2026-09-17",
+        "commitDate": "2026-08-11",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "39106R-scrubbed.csv",
+        "jobNumber": "39106R",
+        "jobName": "Bldg 36D",
+        "deliveryDate": "2027-01-04",
+        "commitDate": "2026-07-07",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 12,
+            "sku": "H2.5A",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "42807R-scrubbed.csv",
+        "jobNumber": "42807R",
+        "jobName": "Apt 29D",
+        "deliveryDate": "2026-09-14",
+        "commitDate": "2026-08-10",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 24,
+            "sku": "HUS26",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 4,
+            "sku": "LGT4-SDS3",
+            "section": "Hangers"
+          },
+          {
+            "seq": 3,
+            "qty": 44,
+            "sku": "STC26",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "45341-scrubbed.csv",
+        "jobNumber": "45341",
+        "jobName": "Suite 13C",
+        "deliveryDate": "2026-09-10",
+        "commitDate": "2026-08-06",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "46983R-scrubbed.csv",
+        "jobNumber": "46983R",
+        "jobName": "Unit 21D",
+        "deliveryDate": "2026-08-22",
+        "commitDate": "2026-07-24",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 2,
+            "sku": "HUS26-2",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 12,
+            "sku": "LU26",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "50433R-scrubbed.csv",
+        "jobNumber": "50433R",
+        "jobName": "Apt 13B",
+        "deliveryDate": "2026-09-01",
+        "commitDate": "2026-07-22",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "51089R-scrubbed.csv",
+        "jobNumber": "51089R",
+        "jobName": "Suite 33D",
+        "deliveryDate": "2026-09-05",
+        "commitDate": "2025-12-01",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "51142R-scrubbed.csv",
+        "jobNumber": "51142R",
+        "jobName": "Suite 22D",
+        "deliveryDate": "2026-09-03",
+        "commitDate": "2026-06-26",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 90,
+            "sku": "H2.5A",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 16,
+            "sku": "TJC37",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "56308J-scrubbed.csv",
+        "jobNumber": "56308J",
+        "jobName": "Suite 24A",
+        "deliveryDate": "2026-08-24",
+        "commitDate": "2026-08-04",
+        "category": "EWP",
+        "lines": []
+      },
+      {
+        "name": "56308R-scrubbed.csv",
+        "jobNumber": "56308R",
+        "jobName": "Bldg 1B",
+        "deliveryDate": "2026-09-07",
+        "commitDate": "2026-08-04",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 54,
+            "sku": "TBE4",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "58716R-scrubbed.csv",
+        "jobNumber": "58716R",
+        "jobName": "Suite 18D",
+        "deliveryDate": "2026-09-08",
+        "commitDate": "2026-07-22",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "62450R-scrubbed.csv",
+        "jobNumber": "62450R",
+        "jobName": "Apt 29C",
+        "deliveryDate": "2026-08-24",
+        "commitDate": "2026-07-06",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "66059F-scrubbed.csv",
+        "jobNumber": "66059F",
+        "jobName": "Unit 35A",
+        "deliveryDate": "2026-08-19",
+        "commitDate": "2026-07-06",
+        "category": "Floor",
+        "lines": []
+      },
+      {
+        "name": "66059R-scrubbed.csv",
+        "jobNumber": "66059R",
+        "jobName": "Apt 29A",
+        "deliveryDate": "2026-08-26",
+        "commitDate": "2026-07-06",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 35,
+            "sku": "THA29",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "66881R-scrubbed.csv",
+        "jobNumber": "66881R",
+        "jobName": "Unit 8B",
+        "deliveryDate": "2027-01-08",
+        "commitDate": "2026-07-07",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 3,
+            "sku": "LTHJA26",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 6,
+            "sku": "LU24",
+            "section": "Hangers"
+          },
+          {
+            "seq": 3,
+            "qty": 72,
+            "sku": "H2.5A",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "67726R-scrubbed.csv",
+        "jobNumber": "67726R",
+        "jobName": "Unit 28B",
+        "deliveryDate": "2026-08-18",
+        "commitDate": "2026-03-04",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 18,
+            "sku": "LU24",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 70,
+            "sku": "H10A",
+            "section": "Hangers"
+          },
+          {
+            "seq": 3,
+            "qty": 6,
+            "sku": "LGT4-SDS3",
+            "section": "Hangers"
+          },
+          {
+            "seq": 4,
+            "qty": 2,
+            "sku": "HUS26-2",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "68643J-scrubbed.csv",
+        "jobNumber": "68643J",
+        "jobName": "Unit 30A",
+        "deliveryDate": "2026-08-20",
+        "commitDate": "2026-08-04",
+        "category": "EWP",
+        "lines": []
+      },
+      {
+        "name": "68643R-scrubbed.csv",
+        "jobNumber": "68643R",
+        "jobName": "Apt 23A",
+        "deliveryDate": "2026-08-26",
+        "commitDate": "2026-08-04",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "68702R-scrubbed.csv",
+        "jobNumber": "68702R",
+        "jobName": "Unit 24A",
+        "deliveryDate": "2026-08-19",
+        "commitDate": "2026-07-09",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "69074R-scrubbed.csv",
+        "jobNumber": "69074R",
+        "jobName": "Apt 8C",
+        "deliveryDate": "2026-09-09",
+        "commitDate": "2026-08-11",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "75709R-scrubbed.csv",
+        "jobNumber": "75709R",
+        "jobName": "Unit 34C",
+        "deliveryDate": "2026-08-22",
+        "commitDate": "2026-06-08",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "80391R-scrubbed.csv",
+        "jobNumber": "80391R",
+        "jobName": "Bldg 24D",
+        "deliveryDate": "2026-08-18",
+        "commitDate": "2026-07-30",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "82368J-scrubbed.csv",
+        "jobNumber": "82368J",
+        "jobName": "Bldg 32D",
+        "deliveryDate": "2026-08-31",
+        "commitDate": "2026-08-04",
+        "category": "EWP",
+        "lines": []
+      },
+      {
+        "name": "82368R-scrubbed.csv",
+        "jobNumber": "82368R",
+        "jobName": "Apt 40C",
+        "deliveryDate": "2026-09-09",
+        "commitDate": "2026-08-04",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "86234R-scrubbed.csv",
+        "jobNumber": "86234R",
+        "jobName": "Suite 7C",
+        "deliveryDate": "2026-09-03",
+        "commitDate": "2026-07-31",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "89329R-scrubbed.csv",
+        "jobNumber": "89329R",
+        "jobName": "Bldg 40D",
+        "deliveryDate": "2026-08-21",
+        "commitDate": "2026-07-08",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "90289R-scrubbed.csv",
+        "jobNumber": "90289R",
+        "jobName": "Apt 19B",
+        "deliveryDate": "2026-08-20",
+        "commitDate": "2026-07-28",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "90574R-scrubbed.csv",
+        "jobNumber": "90574R",
+        "jobName": "Apt 24B",
+        "deliveryDate": "2026-09-11",
+        "commitDate": "2026-08-13",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "92564R-scrubbed.csv",
+        "jobNumber": "92564R",
+        "jobName": "Apt 4B",
+        "deliveryDate": "2026-08-25",
+        "commitDate": "2026-05-28",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 4,
+            "sku": "HUS26-2",
+            "section": "Hangers"
+          },
+          {
+            "seq": 2,
+            "qty": 2,
+            "sku": "LU26",
+            "section": "Hangers"
+          },
+          {
+            "seq": 3,
+            "qty": 160,
+            "sku": "H2.5A",
+            "section": "Hangers"
+          },
+          {
+            "seq": 4,
+            "qty": 16,
+            "sku": "BA1.62XH=22.75",
+            "section": "Misc Items",
+            "mtype": ""
+          }
+        ]
+      },
+      {
+        "name": "97485R-scrubbed.csv",
+        "jobNumber": "97485R",
+        "jobName": "Bldg 6A",
+        "deliveryDate": "2026-08-19",
+        "commitDate": "2026-06-29",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "97779R-scrubbed.csv",
+        "jobNumber": "97779R",
+        "jobName": "Apt 4A",
+        "deliveryDate": "2026-09-09",
+        "commitDate": "2026-08-11",
+        "category": "Roof",
+        "lines": []
+      },
+      {
+        "name": "99750J-scrubbed.csv",
+        "jobNumber": "99750J",
+        "jobName": "Unit 35A",
+        "deliveryDate": "2026-08-29",
+        "commitDate": "2026-05-28",
+        "category": "EWP",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 4,
+            "sku": "ITS2.56/11.88",
+            "section": "Hangers"
+          }
+        ]
+      },
+      {
+        "name": "99750R-scrubbed.csv",
+        "jobNumber": "99750R",
+        "jobName": "Suite 29D",
+        "deliveryDate": "2026-08-29",
+        "commitDate": "2026-05-28",
+        "category": "Roof",
+        "lines": [
+          {
+            "seq": 1,
+            "qty": 6,
+            "sku": "HGUS48",
+            "section": "Hangers"
+          }
+        ]
+      }
+    ],
+    "buyList": [
+      {
+        "sku": "H2.5A",
+        "key": "H2.5A",
+        "demand": 462,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 462,
+        "buyPieces": 462,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "31404R",
+            "jobName": "Apt 39C",
+            "deliveryDate": "2026-08-19",
+            "qty": 76,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "32199R",
+            "jobName": "Suite 29C",
+            "deliveryDate": "2027-01-08",
+            "qty": 52,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "39106R",
+            "jobName": "Bldg 36D",
+            "deliveryDate": "2027-01-04",
+            "qty": 12,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "51142R",
+            "jobName": "Suite 22D",
+            "deliveryDate": "2026-09-03",
+            "qty": 90,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "66881R",
+            "jobName": "Unit 8B",
+            "deliveryDate": "2027-01-08",
+            "qty": 72,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "92564R",
+            "jobName": "Apt 4B",
+            "deliveryDate": "2026-08-25",
+            "qty": 160,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "ITS2.56/11.88",
+        "key": "ITS2.56/11.88",
+        "demand": 114,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 114,
+        "buyPieces": 114,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "11601J",
+            "jobName": "Suite 6B",
+            "deliveryDate": "2026-08-28",
+            "qty": 102,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "16874J",
+            "jobName": "Bldg 26A",
+            "deliveryDate": "2026-08-28",
+            "qty": 8,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "99750J",
+            "jobName": "Unit 35A",
+            "deliveryDate": "2026-08-29",
+            "qty": 4,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "HUS26",
+        "key": "HUS26",
+        "demand": 105,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 105,
+        "buyPieces": 105,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "11601R",
+            "jobName": "Bldg 13D",
+            "deliveryDate": "2026-09-07",
+            "qty": 26,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "18330R",
+            "jobName": "Bldg 36D",
+            "deliveryDate": "2026-08-18",
+            "qty": 18,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "31404R",
+            "jobName": "Apt 39C",
+            "deliveryDate": "2026-08-19",
+            "qty": 12,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "35799R",
+            "jobName": "Unit 16D",
+            "deliveryDate": "2026-09-18",
+            "qty": 25,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "42807R",
+            "jobName": "Apt 29D",
+            "deliveryDate": "2026-09-14",
+            "qty": 24,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "TBE4",
+        "key": "TBE4",
+        "demand": 82,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 82,
+        "buyPieces": 82,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "18330R",
+            "jobName": "Bldg 36D",
+            "deliveryDate": "2026-08-18",
+            "qty": 28,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "56308R",
+            "jobName": "Bldg 1B",
+            "deliveryDate": "2026-09-07",
+            "qty": 54,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "THA29",
+        "key": "THA29",
+        "demand": 76,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 76,
+        "buyPieces": 76,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "12314R",
+            "jobName": "Suite 1D",
+            "deliveryDate": "2026-09-08",
+            "qty": 24,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "16874R",
+            "jobName": "Unit 26B",
+            "deliveryDate": "2026-09-04",
+            "qty": 17,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "66059R",
+            "jobName": "Apt 29A",
+            "deliveryDate": "2026-08-26",
+            "qty": 35,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "THA426",
+        "key": "THA426",
+        "demand": 72,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 72,
+        "buyPieces": 72,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "12314F2",
+            "jobName": "Apt 29D",
+            "deliveryDate": "2026-09-01",
+            "qty": 27,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "35799F",
+            "jobName": "Apt 1B",
+            "deliveryDate": "2026-09-11",
+            "qty": 45,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "H10A",
+        "key": "H10A",
+        "demand": 70,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 70,
+        "buyPieces": 70,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "67726R",
+            "jobName": "Unit 28B",
+            "deliveryDate": "2026-08-18",
+            "qty": 70,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "LU24",
+        "key": "LU24",
+        "demand": 67,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 67,
+        "buyPieces": 67,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "18330R",
+            "jobName": "Bldg 36D",
+            "deliveryDate": "2026-08-18",
+            "qty": 23,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "32199R",
+            "jobName": "Suite 29C",
+            "deliveryDate": "2027-01-08",
+            "qty": 8,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "35799F",
+            "jobName": "Apt 1B",
+            "deliveryDate": "2026-09-11",
+            "qty": 6,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "35799R",
+            "jobName": "Unit 16D",
+            "deliveryDate": "2026-09-18",
+            "qty": 6,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "66881R",
+            "jobName": "Unit 8B",
+            "deliveryDate": "2027-01-08",
+            "qty": 6,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "67726R",
+            "jobName": "Unit 28B",
+            "deliveryDate": "2026-08-18",
+            "qty": 18,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "TC26",
+        "key": "TC26",
+        "demand": 44,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 44,
+        "buyPieces": 44,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "42807R",
+            "jobName": "Apt 29D",
+            "deliveryDate": "2026-09-14",
+            "qty": 44,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": "STC26"
+          }
+        ]
+      },
+      {
+        "sku": "DTT2Z",
+        "key": "DTT2Z",
+        "demand": 20,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 20,
+        "buyPieces": 20,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "36372H",
+            "jobName": "Suite 12A",
+            "deliveryDate": "2026-09-14",
+            "qty": 20,
+            "section": "Misc Items",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "BA1.62XH=22.75",
+        "key": "BA1.62XH=22.75",
+        "demand": 16,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 16,
+        "buyPieces": 16,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "92564R",
+            "jobName": "Apt 4B",
+            "deliveryDate": "2026-08-25",
+            "qty": 16,
+            "section": "Misc Items",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "TJC37",
+        "key": "TJC37",
+        "demand": 16,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 16,
+        "buyPieces": 16,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "51142R",
+            "jobName": "Suite 22D",
+            "deliveryDate": "2026-09-03",
+            "qty": 16,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "LU26",
+        "key": "LU26",
+        "demand": 14,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 14,
+        "buyPieces": 14,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "46983R",
+            "jobName": "Unit 21D",
+            "deliveryDate": "2026-08-22",
+            "qty": 12,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "92564R",
+            "jobName": "Apt 4B",
+            "deliveryDate": "2026-08-25",
+            "qty": 2,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "LGT4-SDS3",
+        "key": "LGT4-SDS3",
+        "demand": 11,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 11,
+        "buyPieces": 11,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "11601R",
+            "jobName": "Bldg 13D",
+            "deliveryDate": "2026-09-07",
+            "qty": 1,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "42807R",
+            "jobName": "Apt 29D",
+            "deliveryDate": "2026-09-14",
+            "qty": 4,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "67726R",
+            "jobName": "Unit 28B",
+            "deliveryDate": "2026-08-18",
+            "qty": 6,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "ATR1/2X48HDG",
+        "key": "ATR1/2X48HDG",
+        "demand": 10,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 10,
+        "buyPieces": 10,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "36372H",
+            "jobName": "Suite 12A",
+            "deliveryDate": "2026-09-14",
+            "qty": 10,
+            "section": "Misc Items",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "HUS26-2",
+        "key": "HUS26-2",
+        "demand": 9,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 9,
+        "buyPieces": 9,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "35799R",
+            "jobName": "Unit 16D",
+            "deliveryDate": "2026-09-18",
+            "qty": 1,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "46983R",
+            "jobName": "Unit 21D",
+            "deliveryDate": "2026-08-22",
+            "qty": 2,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "67726R",
+            "jobName": "Unit 28B",
+            "deliveryDate": "2026-08-18",
+            "qty": 2,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "92564R",
+            "jobName": "Apt 4B",
+            "deliveryDate": "2026-08-25",
+            "qty": 4,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "HGUS48",
+        "key": "HGUS48",
+        "demand": 6,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 6,
+        "buyPieces": 6,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "99750R",
+            "jobName": "Suite 29D",
+            "deliveryDate": "2026-08-29",
+            "qty": 6,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "ITS2.56/14",
+        "key": "ITS2.56/14",
+        "demand": 5,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 5,
+        "buyPieces": 5,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "12314J1",
+            "jobName": "Apt 26C",
+            "deliveryDate": "2026-08-25",
+            "qty": 5,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "LTHJA26",
+        "key": "LTHJA26",
+        "demand": 5,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 5,
+        "buyPieces": 5,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "32199R",
+            "jobName": "Suite 29C",
+            "deliveryDate": "2027-01-08",
+            "qty": 2,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "66881R",
+            "jobName": "Unit 8B",
+            "deliveryDate": "2027-01-08",
+            "qty": 3,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "HGUS26-2",
+        "key": "HGUS26-2",
+        "demand": 4,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 4,
+        "buyPieces": 4,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "12314R",
+            "jobName": "Suite 1D",
+            "deliveryDate": "2026-09-08",
+            "qty": 1,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          },
+          {
+            "jobNumber": "18330R",
+            "jobName": "Bldg 36D",
+            "deliveryDate": "2026-08-18",
+            "qty": 3,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "HUS412",
+        "key": "HUS412",
+        "demand": 4,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 4,
+        "buyPieces": 4,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "35799F",
+            "jobName": "Apt 1B",
+            "deliveryDate": "2026-09-11",
+            "qty": 4,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      },
+      {
+        "sku": "IUS1.81/11.88",
+        "key": "IUS1.81/11.88",
+        "demand": 2,
+        "available": null,
+        "availableRaw": null,
+        "onHand": null,
+        "committed": null,
+        "incoming": 0,
+        "threshold": 0,
+        "shortfall": 2,
+        "buyPieces": 2,
+        "isUnmatched": false,
+        "jobs": [
+          {
+            "jobNumber": "16874J",
+            "jobName": "Bldg 26A",
+            "deliveryDate": "2026-08-28",
+            "qty": 2,
+            "section": "Hangers",
+            "mtype": "",
+            "sourceSku": null
+          }
+        ]
+      }
+    ],
+    "covered": [],
+    "unmatched": [],
+    "summary": {
+      "jobsCount": 50,
+      "skusNeeded": 22,
+      "skusToBuy": 22,
+      "skusCovered": 0,
+      "skusUnmatched": 0,
+      "totalDemandPieces": 1214,
+      "totalBuyPieces": 1214,
+      "totalIncomingPieces": 0,
+      "hasStock": false
+    },
+    "hasStock": false,
+    "warnings": [
+      "[17305R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[27860F] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[27860R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[31404R] Row 107: \"One H2.5A\" ×76 → 76 × H2.5A (ply word \"One\" = 1 hanger per unit).",
+      "[32199R] Row 68: \"One H2.5A\" ×52 → 52 × H2.5A (ply word \"One\" = 1 hanger per unit).",
+      "[32421R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[35799F] Row 97: \"NAILED\" ×12 skipped — not a tracked material (site-supplied).",
+      "[36372H] 2 line(s) ingested from the 'Misc Items' section — the CMS doesn't class these as hangers; unknown SKUs land as special-order.",
+      "[38172R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[39106R] Row 49: \"One H2.5A\" ×12 → 12 × H2.5A (ply word \"One\" = 1 hanger per unit).",
+      "[45341] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[50433R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[51089R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[51142R] Row 85: \"One H2.5A\" ×90 → 90 × H2.5A (ply word \"One\" = 1 hanger per unit).",
+      "[56308J] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[58716R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[62450R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[66059F] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[66881R] Row 72: \"One H2.5A\" ×72 → 72 × H2.5A (ply word \"One\" = 1 hanger per unit).",
+      "[68643J] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[68643R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[68702R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[69074R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[75709R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[80391R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[82368J] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[82368R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[86234R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[89329R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[90289R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[90574R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[92564R] Row 127: \"One H2.5A\" ×160 → 160 × H2.5A (ply word \"One\" = 1 hanger per unit).",
+      "[92564R] 1 line(s) ingested from the 'Misc Items' section — the CMS doesn't class these as hangers; unknown SKUs land as special-order.",
+      "[97485R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "[97779R] No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.",
+      "STC26 ×44 → TC26: we stock TC26 in lieu of STC26, so this demand is counted against TC26 on hand. Different manufacturer's part number — confirm the substitution before ordering."
+    ],
+    "rejected": [],
+    "rerouted": [],
+    "stockFileName": null,
+    "stockError": null
+  }
+}

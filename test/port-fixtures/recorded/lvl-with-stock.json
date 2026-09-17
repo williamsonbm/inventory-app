@@ -1,0 +1,1071 @@
+{
+  "status": 200,
+  "body": {
+    "ok": true,
+    "jobs": [
+      {
+        "name": "11601J-scrubbed.csv",
+        "jobNumber": "11601J",
+        "jobName": "Suite 6B",
+        "deliveryDate": "8/28/2026",
+        "byDepth": [
+          {
+            "depth": "11-78",
+            "label": "11-7/8\"",
+            "lf": 216
+          }
+        ],
+        "totalLf": 216,
+        "items": [
+          {
+            "label": "1BM1-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "30-00-00"
+          },
+          {
+            "label": "1BM2-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "30-00-00"
+          },
+          {
+            "label": "1BM3-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "28-00-00"
+          },
+          {
+            "label": "1BM5-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "20-00-00"
+          }
+        ]
+      },
+      {
+        "name": "11601R-scrubbed.csv",
+        "jobNumber": "11601R",
+        "jobName": "Bldg 13D",
+        "deliveryDate": "9/7/2026",
+        "byDepth": [
+          {
+            "depth": "11-78",
+            "label": "11-7/8\"",
+            "lf": 78
+          }
+        ],
+        "totalLf": 78,
+        "items": [
+          {
+            "label": "2BM4-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 3,
+            "length": "26-00-00"
+          }
+        ]
+      },
+      {
+        "name": "12314F2-scrubbed.csv",
+        "jobNumber": "12314F2",
+        "jobName": "Apt 29D",
+        "deliveryDate": "9/1/2026",
+        "byDepth": [
+          {
+            "depth": "9-12",
+            "label": "9-1/2\"",
+            "lf": 172
+          },
+          {
+            "depth": "20",
+            "label": "20\"",
+            "lf": 48
+          }
+        ],
+        "totalLf": 220,
+        "items": [
+          {
+            "label": "2BM10-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 20",
+            "qty": 3,
+            "length": "16-00-00"
+          },
+          {
+            "label": "2BM13-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 3,
+            "length": "18-00-00"
+          },
+          {
+            "label": "2BM16-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 2,
+            "length": "10-00-00"
+          },
+          {
+            "label": "2GB1-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 9,
+            "length": "10-00-00"
+          },
+          {
+            "label": "2BM11-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 2,
+            "length": "4-00-00"
+          }
+        ]
+      },
+      {
+        "name": "12314J1-scrubbed.csv",
+        "jobNumber": "12314J1",
+        "jobName": "Apt 26C",
+        "deliveryDate": "8/25/2026",
+        "byDepth": [
+          {
+            "depth": "9-12",
+            "label": "9-1/2\"",
+            "lf": 552
+          }
+        ],
+        "totalLf": 552,
+        "items": [
+          {
+            "label": "1BM3-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 9,
+            "length": "48-00-00"
+          },
+          {
+            "label": "1BM1-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 3,
+            "length": "40-00-00"
+          }
+        ]
+      },
+      {
+        "name": "12314R-scrubbed.csv",
+        "jobNumber": "12314R",
+        "jobName": "Suite 1D",
+        "deliveryDate": "9/8/2026",
+        "byDepth": [
+          {
+            "depth": "9-12",
+            "label": "9-1/2\"",
+            "lf": 18
+          },
+          {
+            "depth": "11-78",
+            "label": "11-7/8\"",
+            "lf": 144
+          },
+          {
+            "depth": "14",
+            "label": "14\"",
+            "lf": 72
+          }
+        ],
+        "totalLf": 234,
+        "items": [
+          {
+            "label": "3BM6-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 3,
+            "length": "48-00-00"
+          },
+          {
+            "label": "3BM14-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 14",
+            "qty": 6,
+            "length": "12-00-00"
+          },
+          {
+            "label": "3BM12-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 3,
+            "length": "6-00-00"
+          }
+        ]
+      },
+      {
+        "name": "16874J-scrubbed.csv",
+        "jobNumber": "16874J",
+        "jobName": "Bldg 26A",
+        "deliveryDate": "8/28/2026",
+        "byDepth": [
+          {
+            "depth": "11-78",
+            "label": "11-7/8\"",
+            "lf": 260
+          }
+        ],
+        "totalLf": 260,
+        "items": [
+          {
+            "label": "1BM3-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "36-00-00"
+          },
+          {
+            "label": "1BM1-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "34-00-00"
+          },
+          {
+            "label": "1BM2-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "24-00-00"
+          },
+          {
+            "label": "1GBM6-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "18-00-00"
+          },
+          {
+            "label": "1BM4",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "12-00-00"
+          },
+          {
+            "label": "1BM5",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 1,
+            "length": "12-00-00"
+          }
+        ]
+      },
+      {
+        "name": "16874R-scrubbed.csv",
+        "jobNumber": "16874R",
+        "jobName": "Unit 26B",
+        "deliveryDate": "9/4/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "17305R-scrubbed.csv",
+        "jobNumber": "17305R",
+        "jobName": "Suite 17D",
+        "deliveryDate": "9/9/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "18330R-scrubbed.csv",
+        "jobNumber": "18330R",
+        "jobName": "Bldg 36D",
+        "deliveryDate": "8/18/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "27860F-scrubbed.csv",
+        "jobNumber": "27860F",
+        "jobName": "Bldg 9A",
+        "deliveryDate": "9/2/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "27860R-scrubbed.csv",
+        "jobNumber": "27860R",
+        "jobName": "Bldg 28B",
+        "deliveryDate": "9/2/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "31404R-scrubbed.csv",
+        "jobNumber": "31404R",
+        "jobName": "Apt 39C",
+        "deliveryDate": "8/19/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "32199R-scrubbed.csv",
+        "jobNumber": "32199R",
+        "jobName": "Suite 29C",
+        "deliveryDate": "1/8/2027",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "32421R-scrubbed.csv",
+        "jobNumber": "32421R",
+        "jobName": "Apt 5D",
+        "deliveryDate": "9/30/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "35799F-scrubbed.csv",
+        "jobNumber": "35799F",
+        "jobName": "Apt 1B",
+        "deliveryDate": "9/11/2026",
+        "byDepth": [
+          {
+            "depth": "16",
+            "label": "16\"",
+            "lf": 234
+          },
+          {
+            "depth": "18",
+            "label": "18\"",
+            "lf": 104
+          },
+          {
+            "depth": "24",
+            "label": "24\"",
+            "lf": 66
+          }
+        ],
+        "totalLf": 404,
+        "items": [
+          {
+            "label": "1BM1-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 16",
+            "qty": 3,
+            "length": "44-00-00"
+          },
+          {
+            "label": "1BM6-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 16",
+            "qty": 3,
+            "length": "34-00-00"
+          },
+          {
+            "label": "2BM4-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 18",
+            "qty": 2,
+            "length": "18-00-00"
+          },
+          {
+            "label": "2BM5-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 18",
+            "qty": 2,
+            "length": "18-00-00"
+          },
+          {
+            "label": "2BM2-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 18",
+            "qty": 2,
+            "length": "16-00-00"
+          },
+          {
+            "label": "2BM3-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 24",
+            "qty": 3,
+            "length": "22-00-00"
+          }
+        ]
+      },
+      {
+        "name": "35799R-scrubbed.csv",
+        "jobNumber": "35799R",
+        "jobName": "Unit 16D",
+        "deliveryDate": "9/18/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "36372H-scrubbed.csv",
+        "jobNumber": "36372H",
+        "jobName": "Suite 12A",
+        "deliveryDate": "9/14/2026",
+        "byDepth": [
+          {
+            "depth": "14",
+            "label": "14\"",
+            "lf": 20
+          }
+        ],
+        "totalLf": 20,
+        "items": [
+          {
+            "label": "2.1 RigidLam DF LVL 1-3/4 x 14",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 14",
+            "qty": 2,
+            "length": "10-00-00"
+          }
+        ]
+      },
+      {
+        "name": "38172R-scrubbed.csv",
+        "jobNumber": "38172R",
+        "jobName": "Bldg 18B",
+        "deliveryDate": "9/17/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "39106R-scrubbed.csv",
+        "jobNumber": "39106R",
+        "jobName": "Bldg 36D",
+        "deliveryDate": "1/4/2027",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "42807R-scrubbed.csv",
+        "jobNumber": "42807R",
+        "jobName": "Apt 29D",
+        "deliveryDate": "9/14/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "45341-scrubbed.csv",
+        "jobNumber": "45341",
+        "jobName": "Suite 13C",
+        "deliveryDate": "9/10/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "46983R-scrubbed.csv",
+        "jobNumber": "46983R",
+        "jobName": "Unit 21D",
+        "deliveryDate": "8/22/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "50433R-scrubbed.csv",
+        "jobNumber": "50433R",
+        "jobName": "Apt 13B",
+        "deliveryDate": "9/1/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "51089R-scrubbed.csv",
+        "jobNumber": "51089R",
+        "jobName": "Suite 33D",
+        "deliveryDate": "9/5/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "51142R-scrubbed.csv",
+        "jobNumber": "51142R",
+        "jobName": "Suite 22D",
+        "deliveryDate": "9/3/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "56308J-scrubbed.csv",
+        "jobNumber": "56308J",
+        "jobName": "Suite 24A",
+        "deliveryDate": "8/24/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "56308R-scrubbed.csv",
+        "jobNumber": "56308R",
+        "jobName": "Bldg 1B",
+        "deliveryDate": "9/7/2026",
+        "byDepth": [
+          {
+            "depth": "9-12",
+            "label": "9-1/2\"",
+            "lf": 12
+          },
+          {
+            "depth": "18",
+            "label": "18\"",
+            "lf": 40
+          }
+        ],
+        "totalLf": 52,
+        "items": [
+          {
+            "label": "2BM1-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 18",
+            "qty": 2,
+            "length": "20-00-00"
+          },
+          {
+            "label": "2BM2-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 2,
+            "length": "6-00-00"
+          }
+        ]
+      },
+      {
+        "name": "58716R-scrubbed.csv",
+        "jobNumber": "58716R",
+        "jobName": "Suite 18D",
+        "deliveryDate": "9/8/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "62450R-scrubbed.csv",
+        "jobNumber": "62450R",
+        "jobName": "Apt 29C",
+        "deliveryDate": "8/24/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "66059F-scrubbed.csv",
+        "jobNumber": "66059F",
+        "jobName": "Unit 35A",
+        "deliveryDate": "8/19/2026",
+        "byDepth": [
+          {
+            "depth": "11-78",
+            "label": "11-7/8\"",
+            "lf": 252
+          }
+        ],
+        "totalLf": 252,
+        "items": [
+          {
+            "label": "1BM1-3",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 21,
+            "length": "12-00-00"
+          }
+        ]
+      },
+      {
+        "name": "66059R-scrubbed.csv",
+        "jobNumber": "66059R",
+        "jobName": "Apt 29A",
+        "deliveryDate": "8/26/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "66881R-scrubbed.csv",
+        "jobNumber": "66881R",
+        "jobName": "Unit 8B",
+        "deliveryDate": "1/8/2027",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "67726R-scrubbed.csv",
+        "jobNumber": "67726R",
+        "jobName": "Unit 28B",
+        "deliveryDate": "8/18/2026",
+        "byDepth": [
+          {
+            "depth": "9-12",
+            "label": "9-1/2\"",
+            "lf": 20
+          }
+        ],
+        "totalLf": 20,
+        "items": [
+          {
+            "label": "2BM5-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 2,
+            "length": "10-00-00"
+          }
+        ]
+      },
+      {
+        "name": "68643J-scrubbed.csv",
+        "jobNumber": "68643J",
+        "jobName": "Unit 30A",
+        "deliveryDate": "8/20/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "68643R-scrubbed.csv",
+        "jobNumber": "68643R",
+        "jobName": "Apt 23A",
+        "deliveryDate": "8/26/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "68702R-scrubbed.csv",
+        "jobNumber": "68702R",
+        "jobName": "Unit 24A",
+        "deliveryDate": "8/19/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "69074R-scrubbed.csv",
+        "jobNumber": "69074R",
+        "jobName": "Apt 8C",
+        "deliveryDate": "9/9/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "75709R-scrubbed.csv",
+        "jobNumber": "75709R",
+        "jobName": "Unit 34C",
+        "deliveryDate": "8/22/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "80391R-scrubbed.csv",
+        "jobNumber": "80391R",
+        "jobName": "Bldg 24D",
+        "deliveryDate": "8/18/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "82368J-scrubbed.csv",
+        "jobNumber": "82368J",
+        "jobName": "Bldg 32D",
+        "deliveryDate": "8/31/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "82368R-scrubbed.csv",
+        "jobNumber": "82368R",
+        "jobName": "Apt 40C",
+        "deliveryDate": "9/9/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "86234R-scrubbed.csv",
+        "jobNumber": "86234R",
+        "jobName": "Suite 7C",
+        "deliveryDate": "9/3/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "89329R-scrubbed.csv",
+        "jobNumber": "89329R",
+        "jobName": "Bldg 40D",
+        "deliveryDate": "8/21/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "90289R-scrubbed.csv",
+        "jobNumber": "90289R",
+        "jobName": "Apt 19B",
+        "deliveryDate": "8/20/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "90574R-scrubbed.csv",
+        "jobNumber": "90574R",
+        "jobName": "Apt 24B",
+        "deliveryDate": "9/11/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "92564R-scrubbed.csv",
+        "jobNumber": "92564R",
+        "jobName": "Apt 4B",
+        "deliveryDate": "8/25/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "97485R-scrubbed.csv",
+        "jobNumber": "97485R",
+        "jobName": "Bldg 6A",
+        "deliveryDate": "8/19/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "97779R-scrubbed.csv",
+        "jobNumber": "97779R",
+        "jobName": "Apt 4A",
+        "deliveryDate": "9/9/2026",
+        "byDepth": [],
+        "totalLf": 0,
+        "items": []
+      },
+      {
+        "name": "99750J-scrubbed.csv",
+        "jobNumber": "99750J",
+        "jobName": "Unit 35A",
+        "deliveryDate": "8/29/2026",
+        "byDepth": [
+          {
+            "depth": "11-78",
+            "label": "11-7/8\"",
+            "lf": 96
+          }
+        ],
+        "totalLf": 96,
+        "items": [
+          {
+            "label": "1BM1-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 11-7/8",
+            "qty": 2,
+            "length": "48-00-00"
+          }
+        ]
+      },
+      {
+        "name": "99750R-scrubbed.csv",
+        "jobNumber": "99750R",
+        "jobName": "Suite 29D",
+        "deliveryDate": "8/29/2026",
+        "byDepth": [
+          {
+            "depth": "9-12",
+            "label": "9-1/2\"",
+            "lf": 24
+          }
+        ],
+        "totalLf": 24,
+        "items": [
+          {
+            "label": "2BM2-2",
+            "size": "2.1 RigidLam DF LVL 1-3/4 x 9-1/2",
+            "qty": 6,
+            "length": "4-00-00"
+          }
+        ]
+      }
+    ],
+    "byDepth": [
+      {
+        "depth": "9-12",
+        "label": "9-1/2\"",
+        "usedLf": 798,
+        "stockLf": 0,
+        "remainingLf": 0,
+        "neededLf": 798,
+        "incomingLf": 0,
+        "jobs": [
+          {
+            "jobNumber": "12314J1",
+            "jobName": "Apt 26C",
+            "deliveryDate": "8/25/2026",
+            "lf": 552
+          },
+          {
+            "jobNumber": "12314F2",
+            "jobName": "Apt 29D",
+            "deliveryDate": "9/1/2026",
+            "lf": 172
+          },
+          {
+            "jobNumber": "99750R",
+            "jobName": "Suite 29D",
+            "deliveryDate": "8/29/2026",
+            "lf": 24
+          },
+          {
+            "jobNumber": "67726R",
+            "jobName": "Unit 28B",
+            "deliveryDate": "8/18/2026",
+            "lf": 20
+          },
+          {
+            "jobNumber": "12314R",
+            "jobName": "Suite 1D",
+            "deliveryDate": "9/8/2026",
+            "lf": 18
+          },
+          {
+            "jobNumber": "56308R",
+            "jobName": "Bldg 1B",
+            "deliveryDate": "9/7/2026",
+            "lf": 12
+          }
+        ]
+      },
+      {
+        "depth": "11-78",
+        "label": "11-7/8\"",
+        "usedLf": 1046,
+        "stockLf": 0,
+        "remainingLf": 0,
+        "neededLf": 1046,
+        "incomingLf": 0,
+        "jobs": [
+          {
+            "jobNumber": "16874J",
+            "jobName": "Bldg 26A",
+            "deliveryDate": "8/28/2026",
+            "lf": 260
+          },
+          {
+            "jobNumber": "66059F",
+            "jobName": "Unit 35A",
+            "deliveryDate": "8/19/2026",
+            "lf": 252
+          },
+          {
+            "jobNumber": "11601J",
+            "jobName": "Suite 6B",
+            "deliveryDate": "8/28/2026",
+            "lf": 216
+          },
+          {
+            "jobNumber": "12314R",
+            "jobName": "Suite 1D",
+            "deliveryDate": "9/8/2026",
+            "lf": 144
+          },
+          {
+            "jobNumber": "99750J",
+            "jobName": "Unit 35A",
+            "deliveryDate": "8/29/2026",
+            "lf": 96
+          },
+          {
+            "jobNumber": "11601R",
+            "jobName": "Bldg 13D",
+            "deliveryDate": "9/7/2026",
+            "lf": 78
+          }
+        ]
+      },
+      {
+        "depth": "14",
+        "label": "14\"",
+        "usedLf": 92,
+        "stockLf": 0,
+        "remainingLf": 0,
+        "neededLf": 92,
+        "incomingLf": 0,
+        "jobs": [
+          {
+            "jobNumber": "12314R",
+            "jobName": "Suite 1D",
+            "deliveryDate": "9/8/2026",
+            "lf": 72
+          },
+          {
+            "jobNumber": "36372H",
+            "jobName": "Suite 12A",
+            "deliveryDate": "9/14/2026",
+            "lf": 20
+          }
+        ]
+      },
+      {
+        "depth": "16",
+        "label": "16\"",
+        "usedLf": 234,
+        "stockLf": 0,
+        "remainingLf": 0,
+        "neededLf": 234,
+        "incomingLf": 0,
+        "jobs": [
+          {
+            "jobNumber": "35799F",
+            "jobName": "Apt 1B",
+            "deliveryDate": "9/11/2026",
+            "lf": 234
+          }
+        ]
+      },
+      {
+        "depth": "18",
+        "label": "18\"",
+        "usedLf": 144,
+        "stockLf": 0,
+        "remainingLf": 0,
+        "neededLf": 144,
+        "incomingLf": 0,
+        "jobs": [
+          {
+            "jobNumber": "35799F",
+            "jobName": "Apt 1B",
+            "deliveryDate": "9/11/2026",
+            "lf": 104
+          },
+          {
+            "jobNumber": "56308R",
+            "jobName": "Bldg 1B",
+            "deliveryDate": "9/7/2026",
+            "lf": 40
+          }
+        ]
+      },
+      {
+        "depth": "20",
+        "label": "20\"",
+        "usedLf": 48,
+        "stockLf": 0,
+        "remainingLf": 0,
+        "neededLf": 48,
+        "incomingLf": 0,
+        "jobs": [
+          {
+            "jobNumber": "12314F2",
+            "jobName": "Apt 29D",
+            "deliveryDate": "9/1/2026",
+            "lf": 48
+          }
+        ]
+      },
+      {
+        "depth": "24",
+        "label": "24\"",
+        "usedLf": 66,
+        "stockLf": 0,
+        "remainingLf": 0,
+        "neededLf": 66,
+        "incomingLf": 0,
+        "jobs": [
+          {
+            "jobNumber": "35799F",
+            "jobName": "Apt 1B",
+            "deliveryDate": "9/11/2026",
+            "lf": 66
+          }
+        ]
+      }
+    ],
+    "summary": {
+      "jobsCount": 50,
+      "depthsCount": 7,
+      "totalUsedLf": 2428,
+      "totalStockLf": 0,
+      "totalNeededLf": 2428,
+      "hasStock": true
+    },
+    "hasStock": true,
+    "warnings": [
+      "[11601R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[12314F2] Product is \"Floor\", not EWP — reading its Rectangular EWP section anyway.",
+      "[12314R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[16874R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[16874R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[17305R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[17305R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[18330R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[18330R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[27860F] Product is \"Floor\", not EWP — reading its Rectangular EWP section anyway.",
+      "[27860F] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[27860R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[27860R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[31404R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[31404R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[32199R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[32199R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[32421R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[32421R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[35799F] Product is \"Floor\", not EWP — reading its Rectangular EWP section anyway.",
+      "[35799R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[35799R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[38172R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[38172R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[39106R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[39106R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[42807R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[42807R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[45341] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[45341] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[46983R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[46983R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[50433R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[50433R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[51089R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[51089R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[51142R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[51142R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[56308J] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[56308R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[58716R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[58716R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[62450R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[62450R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[66059F] Product is \"Floor\", not EWP — reading its Rectangular EWP section anyway.",
+      "[66059R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[66059R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[66881R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[66881R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[67726R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[68643J] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[68643R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[68643R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[68702R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[68702R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[69074R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[69074R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[75709R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[75709R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[80391R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[80391R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[82368J] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[82368R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[82368R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[86234R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[86234R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[89329R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[89329R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[90289R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[90289R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[90574R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[90574R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[92564R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[92564R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[97485R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[97485R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[97779R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "[97779R] No LVL rows found (no \"Rectangular EWP\" section, or it was empty).",
+      "[99750R] Product is \"Roof\", not EWP — reading its Rectangular EWP section anyway.",
+      "Stock file was read, but no LVL rows were found in it — every depth below shows as a full buy."
+    ],
+    "rejected": [],
+    "rerouted": [],
+    "stockFileName": "ewp-stock-20260902.csv",
+    "stockError": null
+  }
+}
