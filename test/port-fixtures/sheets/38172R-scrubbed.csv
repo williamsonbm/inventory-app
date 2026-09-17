@@ -1,0 +1,92 @@
+Material Summary,Ironwood Truss Co.,P.O. Box 1347,Waynesboro WV 41492,Business:  (XXX) XXX-XXXX
+Quote Date:,,Job Number:,38172R
+Order Date:,8/11/2026,Product:,Roof
+Delivered Date:,,Customer P.O. #:,CLM 1-2602055
+Invoiced Date:,,Sales Rep:,Richard Thomas
+Estimator:,,Sales Area:,
+Designer,Mary Robinson,Customer ID:,12976
+,,,
+Delivery Date:,9/17/2026,,
+Matthew Robinson,S
+O
+L
+D 
+
+T
+O,
+2878 Ridgeview Ln
+7518 Timber Creek Rd,S
+H
+I
+P
+
+T
+O
+Address:,2878 Ridgeview Ln,Lot:,,Subdiv:,
+Job Name:,Bldg 18B,Delivery Area,
+Delivery Notes: 
+Notes: 
+LUMBER SUMMARY,,,,,,,,
+SKU,Qty,LENGTH,MATERIAL NAME,USAGE,SQ. FEET,LINEAL FEET,BOARD FOOT,COST,COST PER,TOTAL
+,,,False,,,,,,,
+2x4spmsr,56,7-00-00,2x4 SP 2400F 2.0E,Regular,,392.00,261.52,$6.36,$292.25,$448.45
+2x4spmsr,56,,,,,392.00,261.52,,,$981.73
+,,,False,,,,,,,
+2x4sp1,112,12-00-00,2x4 SP No.1,Regular,,1344.00,896.00,$7.56,$690.25,$473.38
+2x4sp1,112,,,,,1344.00,896.00,,,$936.73
+,,,False,,,,,,,
+2x4sp2,112,5-00-00,2x4 SP No.2,Regular,,560.00,372.96,$3.13,$192.23,$249.34
+2x4sp2,112,10-00-00,2x4 SP No.2,Regular,,1120.00,747.04,$0.09,$832.49,$083.29
+2x4sp2,56,12-00-00,2x4 SP No.2,Regular,,672.00,448.00,$5.42,$337.32,$708.62
+2x4sp2,280,,,,,2352.00,1568.00,,,"$7,366.55"
+,,,False,,,,,,,
+2x6spmsr,56,10-00-00,2x6 SP 2400F 2.0E,Regular,,560.00,560.00,$7.32,$399.72,$318.10
+2x6spmsr,56,14-00-00,2x6 SP 2400F 2.0E,Regular,,784.00,784.00,$89.07,$197.73,$740.80
+2x6spmsr,112,,,,,1344.00,1344.00,,,"$3,544.67"
+,,,False,,,,,,,
+2x6spdss,56,8-00-00,2x6 SP DSS,Regular,,448.00,448.00,$5.41,$799.91,$901.52
+2x6spdss,56,10-00-00,2x6 SP DSS,Regular,,560.00,560.00,$2.64,$923.59,$901.49
+2x6spdss,56,12-00-00,2x6 SP DSS,Regular,,672.00,672.00,$92.83,$214.81,$592.11
+2x6spdss,112,14-00-00,2x6 SP DSS,Regular,,1568.00,1568.00,$66.33,$309.08,"$7,016.27"
+2x6spdss,168,16-00-00,2x6 SP DSS,Regular,,2688.00,2688.00,$92.28,$302.61,"$9,761.53"
+2x6spdss,448,,,,,5936.00,5936.00,,,"$9,036.99"
+,1008,,,,0,11368,10005.52,,,"$8,418.78"
+PLATE SUMMARY,,,,
+SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES,UNIT COST,TOTAL
+,,,,,,
+,112,M18AHS  6x14,140.84,"9,408.00",$1.80,$499.49
+,112,,140.84,"9,408.00",,$464.67
+,,,,,,
+,112,MT20  4x6,30.92,"2,688.00",$0.09,$14.06
+,112,MT20  5x7,45.09,"3,920.00",$1.87,$050.63
+,112,MT20  5x12,77.29,"6,720.00",$7.68,$531.37
+,112,MT20  6x8,61.83,"5,376.00",$2.68,$430.45
+,224,MT20  7x8,144.28,"12,544.00",$6.66,$561.32
+,112,MT20  8x8,82.45,"7,168.00",$1.20,$307.05
+,784,,441.86,"38,416.00",,"$7,844.45"
+,,,,,,
+,448,MT20HS  10x12,618.35,"53,760.00",$0.15,"$5,508.56"
+,448,,618.35,"53,760.00",,"$8,660.76"
+,1344,,1201.05,101584,,"$6,818.20"
+COST BREAKDOWN WORKSHEET!
+Total Board Feet,"10,005.52",,,Total Linear Feet,"3,042.67",
+Component Cost Breakdown,,Sell Breakdown,
+Lumber Cost,"$1,137.01", (85%),,Total Component Sales,"$57,621.44", (783%)
+Plate Cost,"$1,999.40", (38%),,    Total $/Ln Ft,$2.76,
+Labor Cost,$4.76, (6%),,    Total $/Bd Ft,$5.21,
+COGS,"$46,337.29", (25%),,Total Item Sales,$6.84, (0%)
+   COGS/Ln Ft,$2.09,,,  +Burried Adjustment,$2.38,
+   COGS/Bd Ft,$7.73,,,SubTotal:,"$87,916.40",
+Original Markup,"$2,242.92", (78%),,  +Delivery,$1.19,
+Discount,($5.17), (6%),,  +Additional Services,$4.41,
+Burried Delivery,$9.25,,,PreTax SubTotal:,"$72,057.82",
+Total Component Sale:,"$25,307.68",,,  +Tax (3%),$8.69,
+   Gross Profit (Margin %),"$7,495.69", (99%),,Total w/Taxes,"$68,177.17",
+Item Cost Breakdown,,,,
+COGS,$5.82, (3%),,,,
+Original Markup,$8.62, (6%),,,,
+Discount,($7.65), (6%),,,,
+Burried Delivery,$9.51,,,Grand Total,"$52,813.95",
+Total Item Sale:,$4.66,,,Total Discount (Avg. Disc. %),$6.44, (8%)
+   Gross Profit (Margin %),$6.36, (0%),,Total Gross Profit (Avg. Margin %),"$3,289.60", (72.50%)
+

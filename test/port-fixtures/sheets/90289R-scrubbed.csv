@@ -1,0 +1,109 @@
+Material Summary,Blue Ridge Builders Supply,P.O. Box 1347,Waynesboro TN 13843,Business:  (XXX) XXX-XXXX
+Quote Date:,7/6/2026,Job Number:,90289R
+Order Date:,7/28/2026,Product:,Roof
+Delivered Date:,,Customer P.O. #:,
+Invoiced Date:,,Sales Rep:,Emily Thompson
+Estimator:,,Sales Area:,
+Designer,Daniel Robinson,Customer ID:,41180
+,,,
+Delivery Date:,8/20/2026,,
+Richard Johnson
+6901 Meadowlark Ave
+4970 Pinecrest Way,S
+O
+L
+D 
+
+T
+O,
+6901 Meadowlark Ave
+4970 Pinecrest Way,S
+H
+I
+P
+
+T
+O
+Address:,6901 Meadowlark Ave,Lot:,,Subdiv:,
+Job Name:,Apt 19B,Delivery Area,
+Delivery Notes: 
+Notes: 
+LUMBER SUMMARY,,,,,,,,
+SKU,Qty,LENGTH,MATERIAL NAME,USAGE,SQ. FEET,LINEAL FEET,BOARD FOOT,COST,COST PER,TOTAL
+,,,False,,,,,,,
+2z4spdss,1,6-00-00,2x4 SP DSS,Regular,,6.00,4.00,$1.06,$187.79,$2.32
+2z4spdss,1,10-00-00,2x4 SP DSS,Regular,,10.00,6.67,$1.02,$108.89,$8.43
+2z4spdss,2,16-00-00,2x4 SP DSS,Regular,,32.00,21.34,$6.63,$912.01,$20.24
+2z4spdss,4,,,,,48.00,32.01,,,$31.97
+,,,False,,,,,,,
+2x4sp2,92,1-00-00,2x4 SP No.2,Regular,,92.00,61.64,$0.34,$211.91,$38.20
+2x4sp2,38,2-00-00,2x4 SP No.2,Regular,,76.00,50.54,$0.96,$675.22,$02.41
+2x4sp2,60,3-00-00,2x4 SP No.2,Regular,,180.00,120.00,$0.59,$022.55,$90.05
+2x4sp2,71,4-00-00,2x4 SP No.2,Regular,,284.00,189.57,$8.60,$099.97,$648.90
+2x4sp2,33,5-00-00,2x4 SP No.2,Regular,,165.00,109.89,$4.71,$742.31,$75.97
+2x4sp2,133,6-00-00,2x4 SP No.2,Regular,,798.00,532.00,$2.56,$442.20,$781.77
+2x4sp2,32,7-00-00,2x4 SP No.2,Regular,,224.00,149.44,$6.35,$718.29,$836.22
+2x4sp2,4,8-00-00,2x4 SP No.2,Regular,,32.00,21.32,$1.47,$112.79,$42.64
+2x4sp2,3,10-00-00,2x4 SP No.2,Regular,,30.00,20.01,$3.90,$220.39,$16.91
+2x4sp2,1,12-00-00,2x4 SP No.2,Regular,,12.00,8.00,$1.77,$336.21,$7.10
+2x4sp2,1,14-00-00,2x4 SP No.2,Regular,,14.00,9.33,$7.17,$008.74,$0.94
+2x4sp2,4,20-00-00,2x4 SP No.2,Regular,,80.00,53.32,$35.45,$933.06,$98.01
+2x4sp2,472,,,,,1987.00,1325.06,,,$169.49
+,,,False,,,,,,,
+2x6spdss,12,8-00-00,2x6 SP DSS,Regular,,96.00,96.00,$7.52,$295.88,$02.31
+2x6spdss,50,10-00-00,2x6 SP DSS,Regular,,500.00,500.00,$6.87,$483.15,$007.49
+2x6spdss,65,12-00-00,2x6 SP DSS,Regular,,780.00,780.00,$83.98,$498.23,$078.61
+2x6spdss,39,14-00-00,2x6 SP DSS,Regular,,546.00,546.00,$44.47,$056.20,$010.43
+2x6spdss,27,16-00-00,2x6 SP DSS,Regular,,432.00,432.00,$68.59,$414.56,$028.46
+2x6spdss,193,,,,,2354.00,2354.00,,,"$7,959.31"
+,,,False,,,,,,,
+2x6sp2,27,6-00-00,2x6 SP No.2,Regular,,162.00,162.00,$2.44,$143.55,$115.98
+2x6sp2,52,10-00-00,2x6 SP No.2,Regular,,520.00,520.00,$2.43,$123.04,$156.55
+2x6sp2,28,12-00-00,2x6 SP No.2,Regular,,336.00,336.00,$0.10,$905.42,$676.05
+2x6sp2,107,,,,,1018.00,1018.00,,,$000.09
+,776,,,,0,5407,4729.07,,,"$3,634.66"
+PLATE SUMMARY,,,,
+SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES,UNIT COST,TOTAL
+,,,,,,
+,148,MT20  1.5x4,10.21,888.00,$5.04,$17.54
+,350,MT20  2x4,32.21,"2,800.00",$9.70,$65.37
+,76,MT20  2x6,10.49,912.00,$2.12,$62.01
+,54,MT20  3x4,7.45,648.00,$7.88,$53.41
+,12,MT20  3x6,2.48,216.00,$2.57,$9.72
+,120,MT20  4x4,22.08,"1,920.00",$7.05,$14.52
+,160,MT20  4x5,36.81,"3,200.00",$0.63,$50.26
+,50,MT20  4x6,13.80,"1,200.00",$1.75,$36.78
+,48,MT20  4x7,15.46,"1,344.00",$9.45,$36.35
+,164,MT20  4x10,75.45,"6,560.00",$5.88,$914.34
+,4,MT20  5x5,1.15,100.00,$5.18,$1.69
+,202,MT20  5x6,69.70,"6,060.00",$7.14,$209.95
+,52,MT20  5x7,20.93,"1,820.00",$7.48,$33.50
+,206,MT20  6x6,85.30,"7,416.00",$6.21,$982.79
+,100,MT20  7x8,64.41,"5,600.00",$4.65,$694.63
+,"1,746",,467.95,"40,684.00",,"$4,346.81"
+,,,,,,
+,76,MT20HS  5x10,43.71,"3,800.00",$7.48,$346.61
+,76,,43.71,"3,800.00",,$243.22
+,1822,,511.65,44484,,"$9,893.25"
+COST BREAKDOWN WORKSHEET!
+Total Board Feet,"4,728.71",,,Total Linear Feet,"1,607.75",
+Component Cost Breakdown,,Sell Breakdown,
+Lumber Cost,"$4,380.02", (66%),,Total Component Sales,"$26,670.13", (824%)
+Plate Cost,"$8,968.75", (49%),,    Total $/Ln Ft,$6.55,
+Labor Cost,$9.75, (6%),,    Total $/Bd Ft,$0.57,
+COGS,"$8,780.72", (08%),,Total Item Sales,$9.21, (1%)
+   COGS/Ln Ft,$3.77,,,  +Burried Adjustment,$5.77,
+   COGS/Bd Ft,$7.74,,,SubTotal:,"$15,796.36",
+Original Markup,"$3,514.22", (480%),,  +Delivery,$2.00,
+Discount,($7.89), (7%),,  +Additional Services,$5.98,
+Burried Delivery,$6.81,,,PreTax SubTotal:,"$35,540.63",
+Total Component Sale:,"$89,837.81",,,  +Tax (7.5%),$137.98,
+   Gross Profit (Margin %),"$2,129.39", (69%),,Total w/Taxes,"$73,630.55",
+Item Cost Breakdown,,,,
+COGS,$3.36, (6%),,,,
+Original Markup,$0.84, (3%),,,,
+Discount,($9.12), (3%),,,,
+Burried Delivery,$9.78,,,Grand Total,"$46,682.08",
+Total Item Sale:,$5.83,,,Total Discount (Avg. Disc. %),$8.65, (7%)
+   Gross Profit (Margin %),$8.43, (2%),,Total Gross Profit (Avg. Margin %),"$2,075.61", (31.11%)
+

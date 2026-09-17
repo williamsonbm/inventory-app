@@ -1,0 +1,92 @@
+Material Summary,Bluestone Building Materials,P.O. Box 1347,Staunton VA 95243,Business:  (XXX) XXX-XXXX
+Quote Date:,6/2/2026,Job Number:,86234R
+Order Date:,7/31/2026,Product:,Roof
+Delivered Date:,,Customer P.O. #:,PO1-2602037
+Invoiced Date:,,Sales Rep:,Richard Walker
+Estimator:,,Sales Area:,
+Designer,Mark Hernandez,Customer ID:,12976
+,,,
+Delivery Date:,9/3/2026,,
+William Martin,S
+O
+L
+D 
+
+T
+O,
+159 Cedar Hollow Dr
+1116 Harvest Ave,S
+H
+I
+P
+
+T
+O
+Address:,159 Cedar Hollow Dr,Lot:,,Subdiv:,
+Job Name:,Suite 7C,Delivery Area,
+Delivery Notes: 
+Notes: 
+LUMBER SUMMARY,,,,,,,,
+SKU,Qty,LENGTH,MATERIAL NAME,USAGE,SQ. FEET,LINEAL FEET,BOARD FOOT,COST,COST PER,TOTAL
+,,,False,,,,,,,
+2x4spmsr,56,7-00-00,2x4 SP 2400F 2.0E,Regular,,392.00,261.52,$1.71,$272.60,$114.49
+2x4spmsr,56,,,,,392.00,261.52,,,$049.94
+,,,False,,,,,,,
+2x4sp1,112,12-00-00,2x4 SP No.1,Regular,,1344.00,896.00,$8.55,$711.14,$896.02
+2x4sp1,112,,,,,1344.00,896.00,,,$087.11
+,,,False,,,,,,,
+2x4sp2,112,5-00-00,2x4 SP No.2,Regular,,560.00,372.96,$2.19,$494.78,$489.47
+2x4sp2,112,10-00-00,2x4 SP No.2,Regular,,1120.00,747.04,$8.73,$848.33,$154.58
+2x4sp2,56,12-00-00,2x4 SP No.2,Regular,,672.00,448.00,$7.94,$193.43,$794.73
+2x4sp2,280,,,,,2352.00,1568.00,,,$570.68
+,,,False,,,,,,,
+2x6spmsr,56,10-00-00,2x6 SP 2400F 2.0E,Regular,,560.00,560.00,$8.00,$510.31,$199.96
+2x6spmsr,56,14-00-00,2x6 SP 2400F 2.0E,Regular,,784.00,784.00,$67.80,$198.08,$470.37
+2x6spmsr,112,,,,,1344.00,1344.00,,,"$7,475.67"
+,,,False,,,,,,,
+2x6spdss,56,8-00-00,2x6 SP DSS,Regular,,448.00,448.00,$5.39,$845.90,$342.96
+2x6spdss,56,10-00-00,2x6 SP DSS,Regular,,560.00,560.00,$6.20,$508.70,$142.29
+2x6spdss,56,12-00-00,2x6 SP DSS,Regular,,672.00,672.00,$7.42,$220.65,$143.11
+2x6spdss,112,14-00-00,2x6 SP DSS,Regular,,1568.00,1568.00,$2.39,$154.54,$861.53
+2x6spdss,168,16-00-00,2x6 SP DSS,Regular,,2688.00,2688.00,$10.44,$190.55,"$2,194.41"
+2x6spdss,448,,,,,5936.00,5936.00,,,"$9,101.54"
+,1008,,,,0,11368,10005.52,,,"$2,390.47"
+PLATE SUMMARY,,,,
+SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES,UNIT COST,TOTAL
+,,,,,,
+,112,M18AHS  6x14,140.84,"9,408.00",$4.95,$350.96
+,112,,140.84,"9,408.00",,$891.39
+,,,,,,
+,112,MT20  4x6,30.92,"2,688.00",$8.54,$36.41
+,112,MT20  5x7,45.09,"3,920.00",$6.45,$885.35
+,112,MT20  5x12,77.29,"6,720.00",$3.45,$849.25
+,112,MT20  6x8,61.83,"5,376.00",$8.35,$321.64
+,224,MT20  7x8,144.28,"12,544.00",$1.05,$981.91
+,112,MT20  8x8,82.45,"7,168.00",$3.16,$455.23
+,784,,441.86,"38,416.00",,"$0,175.37"
+,,,,,,
+,448,MT20HS  10x12,618.35,"53,760.00",$1.40,"$1,791.62"
+,448,,618.35,"53,760.00",,"$1,421.75"
+,1344,,1201.05,101584,,"$8,178.66"
+COST BREAKDOWN WORKSHEET!
+Total Board Feet,"10,005.52",,,Total Linear Feet,"3,042.67",
+Component Cost Breakdown,,Sell Breakdown,
+Lumber Cost,"$4,694.08", (62%),,Total Component Sales,"$39,548.80", (746%)
+Plate Cost,"$0,737.45", (98%),,    Total $/Ln Ft,$2.82,
+Labor Cost,$7.29, (5%),,    Total $/Bd Ft,$3.71,
+COGS,"$3,461.88", (55%),,Total Item Sales,$3.61, (8%)
+   COGS/Ln Ft,$1.68,,,  +Burried Adjustment,$0.00,
+   COGS/Bd Ft,$6.61,,,SubTotal:,"$74,357.77",
+Original Markup,"$4,656.75", (53%),,  +Delivery,$4.14,
+Discount,($1.42), (1%),,  +Additional Services,$9.75,
+Burried Delivery,$5.78,,,PreTax SubTotal:,"$29,063.47",
+Total Component Sale:,"$75,140.04",,,  +Tax (3%),$6.18,
+   Gross Profit (Margin %),"$5,757.22", (89%),,Total w/Taxes,"$79,970.83",
+Item Cost Breakdown,,,,
+COGS,$0.16, (2%),,,,
+Original Markup,$6.22, (0%),,,,
+Discount,($2.57), (5%),,,,
+Burried Delivery,$3.43,,,Grand Total,"$94,303.81",
+Total Item Sale:,$6.14,,,Total Discount (Avg. Disc. %),$2.55, (0%)
+   Gross Profit (Margin %),$1.15, (4%),,Total Gross Profit (Avg. Margin %),"$2,997.62", (36.26%)
+
