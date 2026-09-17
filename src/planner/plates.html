@@ -1,0 +1,376 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Plate purchase planner</title>
+<link rel="stylesheet" href="/planner.css">
+<style>
+  /* Plate-specific only — everything else is in /planner.css. */
+  table.buy{table-layout:fixed}
+  table.buy col.c-sku{width:220px}
+  table.buy col.c-need{width:80px}
+  table.buy col.c-have{width:80px}
+  table.buy col.c-buy{width:190px}
+  table.buy col.c-order{width:auto}
+  table.buy col.c-inc{width:90px}
+  tr.buy td:first-child{border-left:3px solid var(--warn)}
+  tr.buy.non-stock td{background:var(--bad-bg);color:var(--ink)}
+  tr.buy.non-stock td:first-child{border-left:3px solid var(--bad)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div>
+    <nav class="nav" aria-label="Planner selector"><a href="/">EWP</a><a href="/plates" class="on">Plates</a><a href="/hangers">Hangers</a><a href="/lvl">LVL</a><a href="/lumber">Lumber</a></nav>
+    <h1 style="margin-top:14px">Truss Plate Planner</h1>
+    <p class="sub">Multi-job plate demand consolidated and converted to orderable units.</p>
+  </div>
+
+  <div id="drop-mount"></div>
+
+  <div class="row">
+    <button id="go" disabled>Work out what to buy</button>
+    <button class="ghost" id="clear" style="display:none">Clear</button>
+    <span class="sub" id="msg"></span>
+  </div>
+
+  <div id="out" style="display:flex;flex-direction:column;gap:14px"></div>
+</div>
+
+<script src="/csvPile.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+const { esc, fmtInt: n, renderStats, renderWarnings, renderRejected, expandAllButtonHtml } = PlannerUI;
+const $ = (s) => document.querySelector(s);
+// Delegated listener for the Included Jobs drilldowns (see PlannerUI.drilldowns).
+// The Buy List's own row-click wiring is separate — see the note on tr[data-key]
+// in planner.css.
+const drills = PlannerUI.drilldowns($('#out'));
+let currentPlanData = null;
+let sortCol = 'buy';   // 'sku' | 'need' | 'buy'
+let sortDir = 'desc';  // 'asc' | 'desc'
+const openDrills = new Set();
+// Included Jobs table sort — separate from the buy-list sort above.
+// col null = drop order; 'num' sorts Job # numerically, 'name' sorts Job Name.
+let jobSort = { col: null, dir: 'asc' };
+
+// NOTE: the stocked-plate list lives in ONE place — STOCKED_PLATES in
+// src/plates/planPlates.js — and reaches this page as `isStocked` on every buy
+// row. Do not reintroduce a browser-side copy: if a plate is miscategorized,
+// the list to fix is the one on the server.
+
+// "box" -> "boxes", not "boxs". Only the units that actually occur.
+const plural = (w, k) => k === 1 ? w : (w === 'box' ? 'boxes' : w + 's');
+
+function isStockFile(text) {
+  if (!PlannerUI.looksLikePlateOrHangerStock(text)) return false;
+  // A hanger stock file shares this exact header; reject it so the Hangers tab
+  // keeps it. (A file with no recognisable hints stays claimable here.)
+  const hints = PlannerUI.stockProductHints(text);
+  return !(hints.hanger && !hints.plate);
+}
+
+const dz = PlannerUI.dropZones({
+  mount: $('#drop-mount'),
+  jobsTitle: 'Material summaries',
+  jobsHint: 'Drop several, or click to choose. One per job.',
+  stockTitle: 'Plate stock CSV',
+  stockHint: 'Stock → Plates → Export CSV.',
+  isStockFile,
+  onChange() {
+    $('#go').disabled = dz.isEmpty();
+    $('#clear').style.display = (!dz.isEmpty() || dz.getStock()) ? 'inline-block' : 'none';
+    autoRun();
+  },
+});
+
+$('#clear').addEventListener('click', () => {
+  dz.clear();
+  currentPlanData = null; openDrills.clear();
+  sortCol = 'buy'; sortDir = 'desc';
+  $('#out').innerHTML = ''; $('#msg').textContent = '';
+});
+
+async function runPlan() {
+  if (dz.isEmpty()) { currentPlanData = null; $('#out').innerHTML = ''; $('#msg').textContent = ''; $('#go').disabled = true; return; }
+  $('#go').disabled = true; $('#msg').textContent = 'Working…';
+  try {
+    const res = await fetch('/api/plates/plan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: dz.getJobs(), stock: dz.getStock() }),
+    });
+    const d = await res.json();
+    $('#msg').textContent = '';
+    if (!d.ok) {
+      currentPlanData = null;
+      $('#out').innerHTML = '<div class="note bad"><b>Couldn\'t plan.</b> ' + esc(d.error) +
+        (d.rejected && d.rejected.length
+          ? '<br>' + d.rejected.map((r) => esc(r.name) + ' — ' + esc(r.reason)).join('<br>') : '') +
+        '</div>';
+      return;
+    }
+    currentPlanData = d;
+    render(d);
+  } catch (err) {
+    $('#msg').textContent = '';
+    currentPlanData = null;
+    $('#out').innerHTML = '<div class="note bad">' + esc(err.message) + '</div>';
+  } finally {
+    $('#go').disabled = dz.isEmpty();
+  }
+}
+// Auto-recompute: any pile change (a drop, a remove, Clear all, or a change
+// from another tab) reruns; a multi-file drop debounces to one run.
+const autoRun = PlannerUI.debounce(runPlan, 80);
+$('#go').addEventListener('click', runPlan);
+autoRun();   // on load: run from the shared pile (or clear if it's empty)
+
+function optionsHtml(p) {
+  if (!p) return '<span class="spare">no pack factor</span>';
+  return p.map((o, i) =>
+    '<span class="opt' + (i === 0 ? ' best' : '') + '">' + n(o.units) + ' ' + plural(o.unit, o.units) +
+    ' of ' + n(o.eachesPerUnit) +
+    (o.productLine ? ' <span class="spare">(' + esc(o.productLine) + ')</span>' : '') +
+    ' <span class="spare">' + n(o.leftover) + ' spare</span></span>').join('');
+}
+
+function sortIndicator(col) {
+  if (sortCol !== col) return '<span class="sort-icon inactive" title="Click to sort">↕</span>';
+  return sortDir === 'asc'
+    ? '<span class="sort-icon active" title="Sorted least to most (ascending)">▲</span>'
+    : '<span class="sort-icon active" title="Sorted most to least (descending)">▼</span>';
+}
+
+function getSortedBuyList(buyList) {
+  if (!buyList) return [];
+  const list = [...buyList];
+  list.sort((a, b) => {
+    if (sortCol === 'sku') {
+      const cmp = a.sku.localeCompare(b.sku, undefined, { numeric: true, sensitivity: 'base' });
+      return sortDir === 'asc' ? cmp : -cmp;
+    }
+    if (sortCol === 'need') {
+      const diff = a.needEaches - b.needEaches;
+      return (sortDir === 'asc' ? diff : -diff) || a.sku.localeCompare(b.sku);
+    }
+    if (sortCol === 'buy') {
+      const diff = a.shortEaches - b.shortEaches;
+      return (sortDir === 'asc' ? diff : -diff) || a.sku.localeCompare(b.sku);
+    }
+    return 0;
+  });
+  return list;
+}
+
+function render(d) {
+  if (!d) return;
+  const hasStock = !!d.stockInfo;
+  let h = '';
+
+  // Staleness first. The stock file is a manual export, so it can be old — and a
+  // planner quietly costing out last week's stock is worse than no planner.
+  if (d.stockError) {
+    h += '<div class="note bad"><b>Stock file not read:</b> ' + esc(d.stockError) +
+      '<br>Planned as if the yard were empty — every plate shows as a buy.</div>';
+  } else if (!hasStock) {
+    h += '<div class="note"><b>No stock file.</b> Everything below is a full buy, ' +
+      'not a shortfall.</div>';
+  } else {
+    h += '<div class="note ok"><b>Stock:</b> ' + esc(d.stockFileName || 'file') + ' · ' +
+      n(d.stockInfo.rows) + ' rows · comparing against <span class="mono">' +
+      esc(d.stockInfo.qtyColumn) + '</span>' +
+      (d.stockInfo.lastCounted ? ' · last counted ' + esc(d.stockInfo.lastCounted) : '') +
+      '</div>';
+  }
+  h += renderWarnings((d.stockInfo && d.stockInfo.warnings) || [], 'bad');
+
+  h += renderStats([
+    { label: 'Jobs', value: n(d.totals.jobs) },
+    { label: 'Plate SKUs', value: n(d.totals.skusDemanded) },
+    { label: 'Short', value: n(d.totals.skusShort) },
+    { label: 'Eaches needed', value: n(d.totals.eachesDemanded) },
+    { label: 'Eaches to buy', value: n(d.totals.eachesShort) },
+  ]);
+
+  const rawBuy = d.toBuy || [];
+  const buy = getSortedBuyList(rawBuy);
+
+  if (buy.length) {
+    h += '<div class="row" style="justify-content:space-between;margin-top:0">' +
+      '<p class="eyebrow" style="margin:0">Buy list — ' + n(buy.length) + ' SKU(s)</p>' +
+      '<button class="ghost" id="btn-toggle-drills" style="padding:4px 12px;font-size:12.5px">' +
+      (buy.every((r) => openDrills.has(r.key)) ? 'Collapse all' : 'Expand all') + '</button></div>';
+  } else {
+    h += '<p class="eyebrow" style="margin-top:0">Buy list — ' + n(buy.length) + ' SKU(s)</p>';
+  }
+  if (!buy.length) {
+    h += '<div class="note ok">Nothing to buy — stock covers every plate in these jobs.</div>';
+  } else {
+    // Have and Incoming are stock-derived; they only appear with a stock file.
+    const colgroup = hasStock
+      ? '<col class="c-sku"><col class="c-need"><col class="c-have"><col class="c-buy"><col class="c-order"><col class="c-inc">'
+      : '<col class="c-sku"><col class="c-need"><col class="c-buy"><col class="c-order">';
+    const span = hasStock ? 6 : 4;
+    h += '<div class="tw"><table class="buy">' +
+      '<colgroup>' + colgroup + '</colgroup>' +
+      '<thead><tr>' +
+      '<th class="sortable" data-col="sku">SKU ' + sortIndicator('sku') + '</th>' +
+      '<th class="sortable" data-col="need">Need ' + sortIndicator('need') + '</th>' +
+      (hasStock ? '<th>Have</th>' : '') +
+      '<th class="sortable" data-col="buy">Buy (eaches) ' + sortIndicator('buy') + '</th>' +
+      '<th>Order as</th>' +
+      (hasStock ? '<th class="n">Incoming</th>' : '') +
+      '</tr></thead><tbody>';
+
+    buy.forEach((r) => {
+      const isStocked = r.isStocked;
+      const isExpanded = openDrills.has(r.key);
+
+      h += '<tr class="buy' + (!isStocked ? ' non-stock' : '') + '" data-key="' + esc(r.key) + '">' +
+        '<td><span class="caret">' + (isExpanded ? '▾' : '▸') + '</span>' +
+        '<span class="mono"><b>' + esc(r.sku) + '</b></span>' +
+        (!isStocked ? '<span class="chip bad">Non-Stock</span>' : '') +
+        '</td>' +
+        '<td>' + n(r.needEaches) + '</td>' +
+        (hasStock ? '<td' + (r.negativeStock ? ' style="color:var(--bad)"' : '') + '>' +
+          n(r.availableEaches) + '</td>' : '') +
+        '<td><b>' + n(r.shortEaches) + '</b>' +
+        (r.shortFromLedger > 0
+          ? '<br><span class="spare" title="This SKU is already below zero in the stock file, so '
+            + 'the buy figure covers that existing shortfall as well as these jobs. Count it '
+            + 'before ordering.">' + n(r.shortFromJobs) + ' jobs + ' + n(r.shortFromLedger)
+            + ' short</span>'
+          : '') + '</td>' +
+        '<td>' + optionsHtml(r.purchase) + '</td>' +
+        (hasStock ? '<td class="n">' + (r.incoming ? n(r.incoming) : '<span class="spare">—</span>') + '</td>' : '') +
+        '</tr>';
+
+      h += '<tr class="jobs' + (isExpanded ? '' : ' hide') + '" id="j-' + esc(r.key) + '"><td colspan="' + span + '"><div class="drill">' +
+        '<h4>Driving demand — ' + n(r.byJob.length) + ' job(s) for ' + esc(r.sku) + '</h4>' +
+        '<table class="drill-t"><thead><tr><th>Job #</th><th>Name</th>' +
+        '<th class="n">Qty</th><th>Delivery</th></tr></thead><tbody>' +
+        r.byJob.map((j) => '<tr><td>' + esc(j.job) + '</td>' +
+          '<td><span class="spare">' + esc(j.jobName || '') + '</span></td>' +
+          '<td class="n">' + n(j.qty) + '</td>' +
+          '<td><span class="spare">' + esc(j.deliveryDate || '—') + '</span></td></tr>').join('') +
+        '</tbody></table></div></td></tr>';
+    });
+    h += '</tbody></table></div>';
+    if (hasStock) {
+      h += '<p class="sub" style="font-size:13px;margin-top:6px">Incoming is shown, never subtracted — whether an ' +
+        'open order lands in time is your call, not the tool\'s.</p>';
+    }
+    h += '<div class="note bad" style="margin-top:10px;font-size:13.5px">' +
+      '<b>Non-Stock Plate Notice:</b> Any non-stocked plates should be identified and redesigned to use stocked plates.</div>';
+  }
+
+  if (d.jobs && d.jobs.length) {
+    // Job # and Job Name are sortable; each job with plate lines expands to its
+    // material list. paintJobs() fills this shell after mount, so sorting jobs
+    // repaints only this table and leaves the rest of the page untouched.
+    h += '<details class="sec"><summary>Included Jobs (' + n(d.jobs.length) + ' files)</summary>' +
+      expandAllButtonHtml('btn-toggle-jobs') +
+      '<div class="tw" style="margin-top:10px"><table id="plates-jobs-table"></table></div></details>';
+  }
+
+  h += renderRejected(d.rejected);
+
+  $('#out').innerHTML = h;
+  if (d.jobs && d.jobs.length) {
+    PlannerUI.wireExpandAll($('#out'), drills, 'job', 'btn-toggle-jobs');
+    paintJobs(d.jobs);
+  }
+
+  // Buy-list column sort. Scoped to headers with data-col so it never fires on
+  // the Included Jobs headers (which use data-jobsort and sort in place).
+  $('#out').querySelectorAll('th.sortable[data-col]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.col;
+      if (sortCol === col) {
+        sortDir = sortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortCol = col;
+        sortDir = (col === 'sku') ? 'asc' : 'desc';
+      }
+      render(currentPlanData);
+    });
+  });
+
+  // Paint (or repaint) the Included Jobs table for the current sort. Sorting a
+  // column repaints only this table, so the panel stays open and the buy list
+  // above is undisturbed.
+  function paintJobs(jobList) {
+    const table = document.getElementById('plates-jobs-table');
+    if (!table) return;
+    const jobs = PlannerUI.sortRows(jobList, jobSort,
+      { num: (j) => j.jobNumber, name: (j) => j.jobName });
+
+    let s = '<thead><tr><th></th>' +
+      '<th class="sortable" data-jobsort="num">Job # ' + PlannerUI.sortIcon(jobSort.col === 'num', jobSort.dir) + '</th>' +
+      '<th class="sortable" data-jobsort="name">Job Name ' + PlannerUI.sortIcon(jobSort.col === 'name', jobSort.dir) + '</th>' +
+      '<th class="n">Plate Lines</th><th class="n">Eaches</th><th>Notes</th></tr></thead><tbody>';
+    jobs.forEach((j, idx) => {
+      const items = j.items || [];
+      const hasItems = items.length > 0;
+      s += '<tr' + (hasItems ? ' data-group="job" data-toggle="' + idx + '"' : '') + '>' +
+        '<td>' + (hasItems ? '<span class="caret">▸</span>' : '') + '</td>' +
+        '<td class="mono"><b>' + esc(j.jobNumber) + '</b></td>' +
+        '<td>' + esc(j.jobName) + '</td>' +
+        '<td class="n">' + n(j.plateLines) + '</td><td class="n">' + n(j.eaches) + '</td>' +
+        '<td>' + (j.plateLines === 0 ? '<span class="spare">no plates in this job</span>' : '') + '</td></tr>';
+      if (hasItems) {
+        s += '<tr class="jobs" id="drill-job-' + idx + '" style="display:none"><td colspan="6"><div class="drill">' +
+          '<h4>Material list — ' + n(items.length) + ' plate line(s) on ' + esc(j.jobNumber) + '\'s sheet</h4>' +
+          '<table class="drill-t"><thead><tr><th>SKU</th><th class="n">Qty</th></tr></thead><tbody>' +
+          items.map((it) => '<tr><td class="mono">' + esc(it.sku) + '</td><td class="n">' + n(it.qty) + '</td></tr>').join('') +
+          '</tbody></table></div></td></tr>';
+      }
+    });
+    s += '</tbody>';
+    table.innerHTML = s;
+
+    table.querySelectorAll('th.sortable[data-jobsort]').forEach((th) => {
+      th.addEventListener('click', () => {
+        const col = th.dataset.jobsort;
+        if (jobSort.col === col) jobSort.dir = jobSort.dir === 'asc' ? 'desc' : 'asc';
+        else { jobSort.col = col; jobSort.dir = 'asc'; }
+        paintJobs(jobList);
+      });
+    });
+
+    // Row expansion is handled by the delegated `drills` listener (see the
+    // top-level `const drills` and PlannerUI.drilldowns).
+    PlannerUI.resetExpandAll('btn-toggle-jobs');
+  }
+
+  $('#out').querySelectorAll('tr.buy[data-key]').forEach((row) => row.addEventListener('click', () => {
+    const key = row.dataset.key;
+    const r = document.getElementById('j-' + key);
+    if (!r) return;
+    const caret = row.querySelector('.caret');
+    const isClosed = r.classList.contains('hide');
+    if (isClosed) {
+      r.classList.remove('hide');
+      if (caret) caret.textContent = '▾';
+      openDrills.add(key);
+    } else {
+      r.classList.add('hide');
+      if (caret) caret.textContent = '▸';
+      openDrills.delete(key);
+    }
+  }));
+
+  const btnToggleDrills = document.getElementById('btn-toggle-drills');
+  if (btnToggleDrills) {
+    btnToggleDrills.addEventListener('click', () => {
+      const expanding = buy.some((r) => !openDrills.has(r.key));
+      buy.forEach((r) => (expanding ? openDrills.add(r.key) : openDrills.delete(r.key)));
+      render(currentPlanData);
+    });
+  }
+}
+</script>
+</body>
+</html>
