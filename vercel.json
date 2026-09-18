@@ -1,10 +1,7 @@
 {
   "functions": {
-    "api/index.js": {
+    "index.js": {
       "includeFiles": "src/planner/**"
     }
-  },
-  "rewrites": [
-    { "source": "/(.*)", "destination": "/api/index" }
-  ]
+  }
 }
