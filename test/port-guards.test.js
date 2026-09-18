@@ -10,6 +10,7 @@
 //   1. the module graph reaches no database and no .env
 //   2. every response is marked no-store
 //   3. "/" serves the lumber page
+//   4. a request body over the size cap is refused before any handler runs
 //
 // node --test runs each test FILE in its own process, so require.cache below
 // reflects only what this file pulled in.
@@ -122,5 +123,33 @@ test('GET / serves the lumber page', async () => {
     // The page must be the real thing, not an empty shell that happens to carry
     // the right title: it posts to the lumber route.
     assert.match(html, /\/api\/lumber\/plan/);
+  });
+});
+
+// ---- 4. the request-size cap -------------------------------------------------
+// The browser POSTs its CSVs as JSON text (see server.js), so express.json's
+// limit is the only thing between a runaway or hostile upload and the process.
+// The real corpus is small — all 50 sheets and a stock file measure about
+// 0.22 MB — and the cap is 1 MB, comfortable headroom and well under Vercel's
+// own 4.5 MB body ceiling (docs/CODING-STANDARDS.md §Platform). This asserts the
+// cap is enforced: a body over it is refused with 413 before any route runs, so
+// raising the cap back up or dropping it altogether fails here. A body UNDER the
+// cap is exercised by the recorded-output proof and the no-store test above.
+
+test('a request body over the size cap is refused with 413', async () => {
+  // ~1.2 MB of valid JSON, so its size is the ONLY reason it can be refused: a
+  // smaller body would parse and reach the plates route. The text is not a plate
+  // sheet, but the request never gets that far.
+  const oversized = JSON.stringify({
+    files: [{ name: 'huge.csv', text: 'x'.repeat(1_200_000) }],
+  });
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/plates/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: oversized,
+    });
+    assert.equal(res.status, 413,
+      'a body over the 1 MB cap must be refused with 413, not parsed');
   });
 });
