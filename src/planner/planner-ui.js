@@ -299,8 +299,14 @@
     summarize();
     if (typeof CsvPile !== 'undefined') CsvPile.subscribe(() => { rebuild(); changed(); });
     return {
-      getJobs: () => Array.from(jobs.values()),
-      getStock: () => stock,
+      // Redact on READ, never at intake: the shared pile keeps the raw text so
+      // the panel badges, the client sniffers and the server all classify the
+      // real sheet, and a pile written before this change shipped is redacted
+      // the first time autoRun() reads it (spec #41 §5 constraint 2/3). The file
+      // name is left as-is: it is the job number, which travels by design, and
+      // the recorded baseline echoes it back.
+      getJobs: () => Array.from(jobs.values()).map((j) => ({ name: j.name, text: redact(j.text) })),
+      getStock: () => (stock ? { name: stock.name, text: redact(stock.text) } : null),
       isEmpty: () => jobs.size === 0,
       // Clears the whole shared pile (the pile is global — there is no per-tab
       // slice to clear). The subscription rebuilds/repaints and fires onChange.
@@ -498,6 +504,52 @@
     };
   }
 
+  // ── Redaction: strip the sensitive values before a sheet leaves the browser ─
+  // The four pages POST getJobs()/getStock() to a hosted server, so the sheet
+  // now leaves the office machine. A MiTek summary carries per-line and per-job
+  // costs, the job-site address, phone numbers, the sales representative and the
+  // designer — none of which any surviving parser reads (spec #41 §5). Remove
+  // them here, at the single chokepoint every request body is built from.
+  //
+  // The mechanism is find-and-replace on the RAW text: it never parses the sheet
+  // and never rebuilds it, so it cannot re-quote a cell and silently corrupt a
+  // buy list (the round-trip hazard in docs/research/browser-side-redaction-…).
+  // Every byte a pass does not match reaches the server exactly as it arrived.
+  // The passes port the owner's scrub-mats.py blocklist; MiTek's export format
+  // is fixed, so the blocklist stays enumerated.
+  //
+  // Applied per line, so no pass can span a newline: the row count, the column
+  // count and every `Total` section-marker are preserved, which is what keeps
+  // the buy list identical (proven by test/redaction-invariance.test.js).
+  const REDACT_STRUCTURAL = /^[\s,"']*$/;
+  function redactLine(line) {
+    // A number is a digit run, optionally thousands-grouped and/or decimal:
+    // 42, 865.13, 1,871.56, 9,701.59. It must START with a digit — a class like
+    // [\d,]+ would also match a run of empty cells (their commas), eating column
+    // separators off a row such as `,,,,,,,,,,42.5%` and dropping its columns.
+    const out = line
+      .replace(/\$[ \t]?\d+(?:,\d{3})*(?:\.\d+)?/g, '')         // money
+      .replace(/-?\d+(?:,\d{3})*(?:\.\d+)?%/g, '')              // percentages
+      .replace(/(Sales Rep:,)[^,]*/g, '$1')                     // sales rep
+      .replace(/^(Designer,)[^,]*/g, '$1')                      // designer
+      .replace(/(Address:,)[^,]*/g, '$1')                       // job-site address
+      .replace(/\(?\d{3}\)?[ \t.\-]?\d{3}[ \t.\-]?\d{4}/g, ''); // phone
+    // Constraint 1 (spec #41 §5): never empty a row completely. A fully blank
+    // row TERMINATES the hangers section (parseHangerSheet.js isBlankRow→break),
+    // so a cost-only subtotal row like `,,,,,,,"$1,871.56"` must not collapse to
+    // all-commas. If it would, keep the original line untouched.
+    if (REDACT_STRUCTURAL.test(out) && !REDACT_STRUCTURAL.test(line)) return line;
+    return out;
+  }
+  function redact(text) {
+    if (typeof text !== 'string' || text === '') return text;
+    // Split keeping the terminators (even indices = content, odd = the newline)
+    // so the exact newline style survives the rejoin.
+    const parts = text.split(/(\r\n|\n|\r)/);
+    for (let i = 0; i < parts.length; i += 2) parts[i] = redactLine(parts[i]);
+    return parts.join('');
+  }
+
   if (typeof window !== 'undefined') {
     window.PlannerUI = {
       esc, fmtInt, fmtNum, readFile, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
@@ -506,15 +558,16 @@
     };
   }
 
-  // Node (tests): the pure CSV-sniffing helpers only — everything else here
-  // (dropZones, drilldowns, sorting, …) touches the DOM and has no Node caller.
-  //
-  // looksLikeAnyStock and looksLikeItemSpanQtyStock are NOT published. Both stay
-  // in use inside this file; their only reader was planner.html, which the port
-  // deletes. An export with no reader does not ship (issue #39).
+  // Node (tests): the pure helpers only — the CSV sniffers and redact(), which
+  // its own test drives directly. Everything else here (dropZones, drilldowns,
+  // sorting, …) touches the DOM and has no Node caller. redact() is NOT put on
+  // window.PlannerUI: getJobs()/getStock() call it from this closure, so a
+  // browser export would have no reader — and an export with no reader does not
+  // ship (issue #39). looksLikeAnyStock and looksLikeItemSpanQtyStock are held
+  // back for the same reason: their only reader was planner.html, now deleted.
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      stockProductHints, looksLikePlateOrHangerStock,
+      stockProductHints, looksLikePlateOrHangerStock, redact,
     };
   }
 })();
