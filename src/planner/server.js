@@ -36,7 +36,10 @@ const PORT = Number(process.env.PORT || process.env.PLANNER_PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 
 const app = express();
-app.use(express.json({ limit: '5mb' }));
+// 1mb, not the inherited 5mb: the real batch (50 sheets and a stock file)
+// measures ~0.22 MB, and Vercel caps a body at 4.5 MB regardless
+// (docs/CODING-STANDARDS.md §Platform). Guarded in test/port-guards.test.js.
+app.use(express.json({ limit: '1mb' }));
 
 // Never let a browser cache this tool. /api/lumber/menu is a plain GET with no
 // Cache-Control and no Last-Modified of its own, so a browser may heuristically
