@@ -2,6 +2,7 @@
   "name": "inventory-app",
   "version": "1.0.0",
   "private": true,
+  "type": "commonjs",
   "description": "Materials purchase planner — lumber, plates, hangers and LVL buy lists for a batch of jobs. No database.",
   "scripts": {
     "start": "node src/planner/server.js",
