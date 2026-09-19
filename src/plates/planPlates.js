@@ -1,7 +1,9 @@
 // =============================================================
 // planPlates.js — "across these jobs, what plates do we need to buy?"
 // =============================================================
-// The plate counterpart of selectStockLengths.js, and far simpler, because
+// The plate counterpart of the EWP length-search engine (selectStockLengths,
+// which is excluded from this port and lives in the sibling materials-planner),
+// and far simpler, because
 // PLATES ARE NOT CUT. There is no packing, no length search, no combinatorics:
 // demand is a sum, stock is a subtraction. What the tool actually adds is the
 // last step — converting a shortfall in EACHES into something orderable.

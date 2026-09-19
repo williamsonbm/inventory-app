@@ -6,9 +6,10 @@
 // Ported byte-for-byte in behavior from the hanger-web-app's src/lumberCutMap.js
 // (a pure function, no DB access — stockedLengths is passed in as data), so the
 // two stay in sync. This is the "how many boards to buy" engine for the Lumber
-// tab; it is deliberately SEPARATE from src/ewp/optimizeCuts.js, which CLAUDE.md
-// keeps byte-identical to the sibling app and category-locked to EWP. Lumber
-// packs here instead, so the EWP engine can't drift.
+// tab; it is deliberately SEPARATE from the EWP length-search optimizer, which
+// is excluded from this port (it lives in the sibling materials-planner). That
+// optimizer runs a combinatorial cut search; lumber instead draws from a fixed
+// per-yard menu, so the two answer different questions and share no code.
 //
 // Given normalized demand lines (required_length_ft + qty per size/grade) plus
 // the stocked lengths available for each (size, grade), decide which stock
