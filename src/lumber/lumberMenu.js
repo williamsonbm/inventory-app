@@ -1,7 +1,9 @@
 // =============================================================
 // lumberMenu.js — the default menu of purchasable stock lengths, per size+grade.
 // =============================================================
-// This is the lumber analog of optimizeCuts.js's DEFAULT_PURCHASE_LENGTHS_BY_CAT:
+// This is the lumber analog of the EWP engine's DEFAULT_PURCHASE_LENGTHS_BY_CAT
+// (that engine, optimizeCuts, is excluded from this port and lives in the
+// sibling materials-planner):
 // the single source of truth for "which stock lengths may the cut-optimizer draw
 // from" when the user hasn't overridden them. It is SET by the yard, not searched
 // — the packer simply opens the cheapest allowed length per board, so the menu is

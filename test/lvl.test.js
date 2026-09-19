@@ -144,7 +144,7 @@ Total: 2.1 RigidLam DF LVL 1-3/4 x 11-7/8,-2,40-00-00 - L/F,
   const plan = planLvl([{ name: 'd.csv', text: JOB_ROOF_WITH_LVL }], null);
   assert.equal(plan.jobs.length, 1);
   assert.equal(plan.jobs[0].totalLf, 40);
-  assert.ok(plan.warnings.some((w) => /Product is "Roof"/.test(w)));
+  assert.ok(plan.warnings.some((w) => /Product is "Roof"/.test(w)), 'a Roof/Floor job carrying LVL must warn that it was read despite Product != EWP');
 });
 
 test('planLvl nets usage against stock, filtering non-LVL stock rows and grouping by depth only', () => {
@@ -182,7 +182,7 @@ test('planLvl nets usage against stock, filtering non-LVL stock rows and groupin
 
 test('planLvl matches MiTek\'s own printed linear-foot totals against a real fixture', () => {
   const csv = fs.readFileSync(
-    path.join(__dirname, 'ewp-fixtures', '33591J-materials.csv'), 'utf8',
+    path.join(__dirname, 'lvl-fixtures', '33591J-materials.csv'), 'utf8',
   );
   const plan = planLvl([{ name: '33591J-materials.csv', text: csv }], null);
   assert.equal(plan.jobs.length, 1);

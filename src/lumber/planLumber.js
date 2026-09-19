@@ -11,8 +11,9 @@
 //   2. STOCK PIECES — how many boards to buy, via cutMapLumber (the ported
 //      cut-optimizer). On-hand boards are consumed FIRST (a small first-fit-
 //      decreasing pass), so pieces split into "from on-hand" vs "to purchase" —
-//      the same on-hand-first / purchase split the EWP engine reports, without
-//      touching optimizeCuts.js.
+//      the same on-hand-first / purchase split the EWP engine reports, but with
+//      its own optimizer — the EWP engine (optimizeCuts) is excluded from this
+//      port and lives in the sibling materials-planner.
 //
 // Grouping key is (size, grade): you cannot cut a #1 board from a #2 stick, and
 // the yard stocks different lengths per grade. Material names are normalized to

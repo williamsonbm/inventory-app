@@ -102,18 +102,18 @@ test('parseHangerStockCsv parses columns and calculates available stock', () => 
   assert.equal(parsed.rows.length, 4);
 
   const hus = parsed.byKey.get('HUS26');
-  assert.ok(hus);
+  assert.ok(hus, 'HUS26 must be present in the parsed stock byKey map');
   assert.equal(hus.onHand, 20);
   assert.equal(hus.committed, 5);
   assert.equal(hus.available, 15);
   assert.equal(hus.availableRaw, 15);
 
   const lu = parsed.byKey.get('LU24');
-  assert.ok(lu);
+  assert.ok(lu, 'LU24 must be present in the parsed stock byKey map');
   assert.equal(lu.incoming, 10);
 
   const h25 = parsed.byKey.get('H2.5A');
-  assert.ok(h25);
+  assert.ok(h25, 'H2.5A must be present in the parsed stock byKey map');
   assert.equal(h25.availableRaw, -10);
   assert.equal(h25.available, 0);
 });
@@ -133,14 +133,14 @@ test('planHangers nets demand against stock and surfaces buy quantities and inco
 
   // HUS26: demand 9, available 15 -> covered (0 buy)
   const hus = plan.covered.find((r) => r.sku === 'HUS26');
-  assert.ok(hus);
+  assert.ok(hus, 'HUS26 must land on the covered list');
   assert.equal(hus.demand, 9);
   assert.equal(hus.available, 15);
   assert.equal(hus.shortfall, 0);
 
   // LU24: demand 10, available 4 -> buy 6 (incoming 10 reported)
   const lu = plan.buyList.find((r) => r.sku === 'LU24');
-  assert.ok(lu);
+  assert.ok(lu, 'LU24 must land on the buy list');
   assert.equal(lu.demand, 10);
   assert.equal(lu.available, 4);
   assert.equal(lu.buyPieces, 6);
@@ -148,23 +148,23 @@ test('planHangers nets demand against stock and surfaces buy quantities and inco
 
   // ITS2.56/11.88: demand 8, available 0 -> buy 8 (incoming 5 reported)
   const its = plan.buyList.find((r) => r.sku === 'ITS2.56/11.88');
-  assert.ok(its);
+  assert.ok(its, 'ITS2.56/11.88 must land on the buy list');
   assert.equal(its.demand, 8);
   assert.equal(its.buyPieces, 8);
   assert.equal(its.incoming, 5);
 
   // H2.5A: demand 10, availableRaw -10 -> buy 20 (demand 10 + 10 deficit)
   const h25 = plan.buyList.find((r) => r.sku === 'H2.5A');
-  assert.ok(h25);
+  assert.ok(h25, 'H2.5A must land on the buy list');
   assert.equal(h25.demand, 10);
   assert.equal(h25.buyPieces, 20);
 
   // H1A: demand 12, not in stock -> unmatched, buy 12
   const h1a = plan.buyList.find((r) => r.sku === 'H1A');
-  assert.ok(h1a);
+  assert.ok(h1a, 'H1A must land on the buy list');
   assert.equal(h1a.isUnmatched, true);
   assert.equal(h1a.buyPieces, 12);
-  assert.ok(plan.unmatched.some((r) => r.sku === 'H1A'));
+  assert.ok(plan.unmatched.some((r) => r.sku === 'H1A'), 'H1A must also be reported as unmatched — it is not in the stock file');
 });
 
 test('planHangers works without stock file (greenfield)', () => {
@@ -221,7 +221,7 @@ test('POST /api/hangers/plan plans a batch via HTTP API', async () => {
     assert.equal(data.jobs.length, 1);
     assert.equal(data.rerouted.length, 1); // stock.csv auto-rerouted
     assert.equal(data.rerouted[0].to, 'stock');
-    assert.ok(data.buyList.some((r) => r.sku === 'LU24' && r.buyPieces === 6));
+    assert.ok(data.buyList.some((r) => r.sku === 'LU24' && r.buyPieces === 6), 'the API buy list must carry LU24 with 6 to buy');
   });
 });
 
@@ -338,18 +338,18 @@ test('the fold is reported, never silent, once per spelling per batch', () => {
 
   const substitutions = r.warnings.filter((w) => /confirm the substitution/.test(w));
   assert.equal(substitutions.length, 3, 'STC26, "STC 26" and STC24 — one line each');
-  assert.ok(substitutions.some((w) => /STC26 ×6 → TC26/.test(w)));
-  assert.ok(substitutions.some((w) => /STC24 ×3 → TC24/.test(w)));
+  assert.ok(substitutions.some((w) => /STC26 ×6 → TC26/.test(w)), 'the STC26 → TC26 substitution must be reported');
+  assert.ok(substitutions.some((w) => /STC24 ×3 → TC24/.test(w)), 'the STC24 → TC24 substitution must be reported');
 
   // A Z→2 typo is the SAME part keyed wrong — it must NOT read as a
   // manufacturer substitution, or a buyer goes looking for a Simpson "H2A2".
   const spellings = r.warnings.filter((w) => /misspelling/.test(w));
   assert.equal(spellings.length, 2);
-  assert.ok(spellings.some((w) => /H2A2 ×7 → H2AZ/.test(w)));
-  assert.ok(!spellings.some((w) => /in lieu of/.test(w)));
+  assert.ok(spellings.some((w) => /H2A2 ×7 → H2AZ/.test(w)), 'the H2A2 → H2AZ misspelling must be reported');
+  assert.ok(!spellings.some((w) => /in lieu of/.test(w)), 'a misspelling must not read as a manufacturer substitution');
 
   // A sheet already written our way produces no noise at all.
-  assert.ok(!r.warnings.some((w) => /TC26 ×5/.test(w)));
+  assert.ok(!r.warnings.some((w) => /TC26 ×5/.test(w)), 'an as-written TC26 line must produce no substitution warning');
 });
 
 test('the as-written spelling survives on the job row for the drill-down', () => {

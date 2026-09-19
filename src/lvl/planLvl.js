@@ -3,9 +3,9 @@
 // need, and what does the yard already cover?"
 // =============================================================
 // Standalone, DB-free LVL linear-footage planner. Unlike the EWP cut planner,
-// this is NOT a length-optimization problem — there is no bin-packing here,
-// and optimizeCuts.js is deliberately not touched (see CLAUDE.md: it is kept
-// byte-identical to the sibling hanger-web-app on purpose).
+// this is NOT a length-optimization problem — there is no bin-packing here and
+// no cut optimizer involved. (The EWP optimizer, optimizeCuts, is excluded from
+// this port; it lives in the sibling materials-planner.)
 //
 // Core behaviors:
 //   * Uses parseLvlSheet (src/lvl/parseLvlSheet.js), NOT parseJobCsv — that

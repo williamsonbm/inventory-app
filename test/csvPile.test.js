@@ -35,7 +35,7 @@ test('mergeFiles: a new file always stamps newer than everything present', () =>
   // added file must sort last — pickStock depends on it.
   const existing = [{ name: 'a.csv', text: 'a', addedAt: 5000 }];
   const merged = mergeFiles(existing, [{ name: 'b.csv', text: 'b' }], 100);
-  assert.ok(merged.find((f) => f.name === 'b.csv').addedAt > 5000);
+  assert.ok(merged.find((f) => f.name === 'b.csv').addedAt > 5000, 'a newly added file must sort after existing stamps even under clock skew');
 });
 
 test('mergeFiles: skips entries with no filename', () => {

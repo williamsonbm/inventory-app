@@ -183,7 +183,7 @@ test('a covered SKU is not on the buy list', () => {
   const x = row(r, 'MT20 3x3');            // need 2124, available 3000
   assert.strictEqual(x.shortEaches, 0);
   assert.strictEqual(x.purchase, null);
-  assert.ok(!r.toBuy.some((b) => b.key === x.key));
+  assert.ok(!r.toBuy.some((b) => b.key === x.key), 'a covered SKU must not appear on the buy list');
 });
 
 test('a short SKU gets the right buy figure in eaches AND units', () => {
@@ -213,7 +213,7 @@ test('a SKU absent from the stock file is treated as zero on hand and flagged', 
   assert.strictEqual(x.shortEaches, 930);
   assert.strictEqual(x.purchase[0].units, 1);    // 936-each box
   assert.strictEqual(x.purchase[0].leftover, 6);
-  assert.ok(r.unmatched.some((u) => skuKey(u.sku) === x.key));
+  assert.ok(r.unmatched.some((u) => skuKey(u.sku) === x.key), 'a SKU absent from the stock file must be flagged as unmatched');
 });
 
 test('a negative-stock SKU shows the real figure and BUYS the existing shortfall too', () => {
@@ -250,14 +250,14 @@ test('every job row carries what the drill-down needs', () => {
 test('the buy list is ordered biggest shortfall first', () => {
   const r = planPlates(JOB_FILES, STOCK);
   for (let i = 1; i < r.toBuy.length; i++) {
-    assert.ok(r.toBuy[i - 1].shortEaches >= r.toBuy[i].shortEaches);
+    assert.ok(r.toBuy[i - 1].shortEaches >= r.toBuy[i].shortEaches, `buy list must be ordered by shortfall descending, but row ${i} has a larger shortfall than row ${i - 1}`);
   }
 });
 
 test('every row can be traced back to the jobs that drove it', () => {
   const r = planPlates(JOB_FILES, STOCK);
   const x = row(r, 'MT20 3x3');
-  assert.ok(x.byJob.length >= 1);
+  assert.ok(x.byJob.length >= 1, 'every plan row must carry at least one contributing job');
   assert.strictEqual(x.byJob.reduce((s, j) => s + j.qty, 0), x.needEaches,
     'per-job quantities must sum to the aggregate, or the expansion lies');
 });

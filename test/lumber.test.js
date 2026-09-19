@@ -101,7 +101,7 @@ SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES,UNIT COST,TOTAL
   const res = parseLumberSheet(noLumber);
   assert.equal(res.ok, true);
   assert.equal(res.lines.length, 0);
-  assert.ok(res.warnings.some((w) => /No "LUMBER SUMMARY"/.test(w)));
+  assert.ok(res.warnings.some((w) => /No "LUMBER SUMMARY"/.test(w)), 'a sheet with no LUMBER SUMMARY must warn about it');
 });
 
 // ---- cutMapLumber ----------------------------------------------------------
@@ -210,7 +210,7 @@ test('cutMapLumber: commodity override draws never feed Tier-2 consolidation', (
   assert.equal(overrideDraws[0].stock_length_ft, 20);
   // No mixed/consolidated bin absorbed the 1' pieces.
   const mixed = draws.filter((d) => d.rule === 'mixed');
-  for (const m of mixed) assert.ok(!m.contents.includes(1));
+  for (const m of mixed) assert.ok(!m.contents.includes(1), 'no consolidated bin may absorb the 1ft commodity-override pieces');
 });
 
 // ---- planLumber ------------------------------------------------------------
@@ -260,7 +260,7 @@ test('planLumber accumulates the same size/grade across jobs and surfaces an unk
 
   // "2x4 SP Sel Str" has a real size but an unmapped grade: its footage is still
   // counted, and it's reported in unmatched rather than silently priced.
-  assert.ok(plan.unmatched.some((u) => /Sel Str/.test(u.material) || u.grade !== '#1'));
+  assert.ok(plan.unmatched.some((u) => /Sel Str/.test(u.material) || u.grade !== '#1'), 'the unmapped "Sel Str" grade must be reported in unmatched, not silently priced');
   const gss = plan.bySizeGrade.find((g) => g.key.startsWith('2x4|') && g.key !== '2x4|#2');
   assert.ok(gss, 'the unmapped-grade group is still listed');
   assert.equal(gss.inMenu, false);
@@ -378,7 +378,7 @@ test('planLumber redirect moves all of one grade\'s demand onto a stronger carri
   const jg = plan.jobs[0].byGroup.find((x) => x.key === '2x6|DSS');
   assert.ok(jg, 'job A\'s 2x6 demand is filed under DSS after the redirect');
   assert.equal(jg.lf, 36);
-  assert.ok(!plan.jobs[0].byGroup.some((x) => x.key === '2x6|#2'));
+  assert.ok(!plan.jobs[0].byGroup.some((x) => x.key === '2x6|#2'), 'the source grade 2x6|#2 must not remain in the per-job breakdown after the redirect');
 });
 
 test('planLumber redirect leaves on-hand stock grade-locked', () => {
@@ -503,13 +503,13 @@ test('planLumber drops an invalid redirect and warns, without touching demand', 
   assert.equal(g26.redirect, null);
   assert.ok(!plan.bySizeGrade.some((g) => g.redirect), 'no row anywhere carries a redirect');
 
-  assert.ok(plan.warnings.some((w) => /BogusGrade/.test(w) && /not a recognized grade/.test(w)));
-  assert.ok(plan.warnings.some((w) => /isn't stronger than/.test(w)));
-  assert.ok(plan.warnings.some((w) => /isn't a carried grade/.test(w)));
+  assert.ok(plan.warnings.some((w) => /BogusGrade/.test(w) && /not a recognized grade/.test(w)), 'an unrecognized redirect target must warn');
+  assert.ok(plan.warnings.some((w) => /isn't stronger than/.test(w)), 'a redirect to a grade that does not outrank the source must warn');
+  assert.ok(plan.warnings.some((w) => /isn't a carried grade/.test(w)), 'a redirect to a grade not carried for that size must warn');
   // A grade redirected to itself is never silently dropped — every invalid
   // entry surfaces a warning, none just vanish.
-  assert.ok(plan.warnings.some((w) => /2x4 #2 → #2 skipped: #2 isn't stronger than #2/.test(w)));
-  assert.ok(plan.warnings.some((w) => /malformed redirect entry/.test(w)));
+  assert.ok(plan.warnings.some((w) => /2x4 #2 → #2 skipped: #2 isn't stronger than #2/.test(w)), 'a grade redirected to itself must warn, never silently drop');
+  assert.ok(plan.warnings.some((w) => /malformed redirect entry/.test(w)), 'a malformed redirect key must warn');
 });
 
 test('planLumber is pure — same inputs, identical output, inputs untouched', () => {

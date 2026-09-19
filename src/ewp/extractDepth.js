@@ -1,16 +1,19 @@
 // =============================================================
 // extractDepth — SHARED module (single source of truth)
 // =============================================================
-// Ported byte-for-byte from the identical extractDepth helpers that lived
-// in BOTH optimizeCuts.txt and shapeCommittedRows.txt (an intentional n8n
-// "drift canary"). Extracting it to one module makes drift structurally
-// impossible — there is now exactly one copy and one KNOWN_DEPTHS list,
-// imported by both optimizeCuts.js and shapeCommittedRows.js.
+// Ported byte-for-byte from the identical extractDepth helpers that lived in
+// BOTH optimizeCuts.txt and shapeCommittedRows.txt in the original n8n workflow
+// (an intentional "drift canary"). Extracting it to one module makes drift
+// structurally impossible — there is now exactly one copy and one KNOWN_DEPTHS
+// list. In this repo it is imported by readStockCsv.js and planLvl.js. (The EWP
+// optimizer that first consumed it is excluded from this port and lives in the
+// sibling materials-planner.)
 //
-// The function body is unchanged from the verified n8n source. The signature
-// is (size, category): the optimizer's pre-flight calls it as extractDepth(size)
-// (category undefined — unused by the body), shapeCommittedRows calls it as
-// extractDepth(size, category). Both work against the same body.
+// The function body is unchanged from the verified n8n source. The signature is
+// (size, category), and both call styles are still in use here: readStockCsv
+// calls it as extractDepth(size) (category undefined — unused by the body), and
+// planLvl calls it as extractDepth(size, category). Both work against the same
+// body.
 //
 // 22 and 24 ARE real stock depths (ewp-actual-inventory.xlsx has populated
 // "22" and "24" depth tabs), so they are included here — otherwise any 22/24

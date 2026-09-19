@@ -1,8 +1,8 @@
 // =============================================================
 // readStockCsv.js — on-hand stock CSV → engine inventory items
 // =============================================================
-// The planner's second input: what is already on the yard. Emits exactly the
-// shape optimizeCuts consumes as inventory —
+// The planner's second input: what is already on the yard. Emits the on-hand
+// inventory-item shape the LVL planner (planLvl) consumes —
 //
 //   { source: "inventory", item, depth, span, qty, threshold? }
 //
@@ -16,9 +16,9 @@
 //     (plus a quantity column) — anything else is rejected by name rather than
 //     silently misparsed into an empty inventory, which reads as "no stock" and
 //     quietly prices the whole batch as a purchase.
-//   * DO NOT de-duplicate (item, span) pairs. Emit every row and let the engine
-//     sum them with `+=` (optimizeCuts builds inventoryBySize that way).
-//     De-duplicating was a real undercount bug.
+//   * DO NOT de-duplicate (item, span) pairs. Emit every row and let the
+//     consumer sum them with `+=` (planLvl accumulates on-hand stock by depth
+//     that way). De-duplicating was a real undercount bug.
 //   * skip rows with a blank item or a non-numeric span/qty — those are the
 //     subtotal and spacer rows every real export carries, not data.
 //   * clamp negative quantities to 0 (from dbAdapters.inventoryItemsFromRows).

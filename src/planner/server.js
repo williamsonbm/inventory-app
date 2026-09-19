@@ -80,186 +80,24 @@ for (const [route, [file, type]] of Object.entries(SHARED_ASSETS)) {
   app.get(route, (_req, res) => res.type(type).sendFile(file));
 }
 
-// ── PLATES ──────────────────────────────────────────────────────────────────
-// One of four independent tools sharing this process. Each family gets its own
-// page and its own endpoint rather than one page with a family toggle: they
-// answer different questions — how many boxes of plates, how many hangers, how
-// many linear feet of LVL, how many boards of lumber — and share no controls.
-app.get('/plates', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'plates.html'));
-});
-
-app.post('/api/plates/plan', (req, res) => {
-  const { files, stock } = req.body || {};
-  if (!Array.isArray(files) || files.length === 0) {
-    return res.status(400).json({ ok: false, error: 'No CSV files were provided.' });
-  }
-
-  // Sniff the dropped files rather than trusting which zone they landed in — a
-  // misfiled CSV is a two-second mistake that would otherwise cost a confusing
-  // error. All four family routes below sniff the same way.
-  const jobFiles = [];
-  let stockFile = stock && String(stock.text || '').trim() ? stock : null;
-  const rerouted = [];
-  for (const f of files) {
-    if (looksLikePlateStockCsv(String(f.text || ''))) {
-      if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
-    } else {
-      jobFiles.push(f);
-    }
-  }
-
-  let parsedStock = null;
-  let stockError = null;
-  if (stockFile) {
-    try {
-      parsedStock = parsePlateStockCsv(String(stockFile.text || ''));
-    } catch (err) {
-      // A bad stock file must not refuse the plan outright — losing the netting
-      // is annoying; refusing to plan because an OPTIONAL second input was wrong
-      // is worse. All four family routes make the same call.
-      stockError = err.message;
-    }
-  }
-
-  let plan;
-  try {
-    plan = planPlates(jobFiles, parsedStock);
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err.message });
-  }
-  if (!plan.jobs.length) {
-    return res.status(400).json({
-      ok: false, error: 'No usable plate material summaries found.', rejected: plan.rejected,
-    });
-  }
-
-  res.json({
-    ok: true,
-    ...plan,
-    rerouted,
-    stockFileName: stockFile ? stockFile.name : null,
-    stockError,
-  });
-});
-
-// ── HANGERS ─────────────────────────────────────────────────────────────────
-app.get('/hangers', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'hangers.html'));
-});
-
-app.post('/api/hangers/plan', (req, res) => {
-  const { files, stock } = req.body || {};
-  if (!Array.isArray(files) || files.length === 0) {
-    return res.status(400).json({ ok: false, error: 'No CSV files were provided.' });
-  }
-
-  const jobFiles = [];
-  let stockFile = stock && String(stock.text || '').trim() ? stock : null;
-  const rerouted = [];
-  for (const f of files) {
-    if (looksLikeHangerStockCsv(String(f.text || ''))) {
-      if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
-    } else {
-      jobFiles.push(f);
-    }
-  }
-
-  let parsedStock = null;
-  let stockError = null;
-  if (stockFile) {
-    try {
-      parsedStock = parseHangerStockCsv(String(stockFile.text || ''));
-    } catch (err) {
-      stockError = err.message;
-    }
-  }
-
-  let plan;
-  try {
-    plan = planHangers(jobFiles, parsedStock);
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err.message });
-  }
-  if (!plan.jobs.length) {
-    return res.status(400).json({
-      ok: false, error: 'No usable hanger material summaries found.', rejected: plan.rejected,
-    });
-  }
-
-  res.json({
-    ok: true,
-    ...plan,
-    rerouted,
-    stockFileName: stockFile ? stockFile.name : null,
-    stockError,
-  });
-});
-
-// ── LVL (linear feet) ───────────────────────────────────────────────────────
-// Not a cut-optimization question at all — it is a linear-footage roll-up. It
-// reuses readStockCsv.js's generic stock reader and sniffer as-is rather than
-// duplicating them. It does NOT use parseJobCsv: src/lvl/parseLvlSheet.js says
-// why it parses the sheet itself. See src/lvl/planLvl.js for why qty × length
-// already accounts for plies without a separate multiplier.
-app.get('/lvl', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'lvl.html'));
-});
-
-app.post('/api/lvl/plan', (req, res) => {
-  const { files, stock } = req.body || {};
-  if (!Array.isArray(files) || files.length === 0) {
-    return res.status(400).json({ ok: false, error: 'No CSV files were provided.' });
-  }
-
-  const jobFiles = [];
-  let stockFile = stock && String(stock.text || '').trim() ? stock : null;
-  const rerouted = [];
-  for (const f of files) {
-    if (looksLikeStockCsv(String(f.text || ''))) {
-      if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
-    } else {
-      jobFiles.push(f);
-    }
-  }
-
-  let parsedStock = null;
-  let stockError = null;
-  if (stockFile) {
-    try {
-      parsedStock = parseStockCsv(String(stockFile.text || ''));
-    } catch (err) {
-      stockError = err.message;
-    }
-  }
-
-  let plan;
-  try {
-    plan = planLvl(jobFiles, parsedStock);
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err.message });
-  }
-  if (!plan.jobs.length) {
-    return res.status(400).json({
-      ok: false, error: 'No usable LVL material summaries found.', rejected: plan.rejected,
-    });
-  }
-
-  res.json({
-    ok: true,
-    ...plan,
-    rerouted,
-    stockFileName: stockFile ? stockFile.name : null,
-    stockError,
-  });
-});
-
-// ── LUMBER (linear feet + stock pieces) ──────────────────────────────────────
-// The front door: "/" serves this page. Unlike LVL, it answers two questions at
-// once — linear feet AND how many whole boards to buy, via cutMapLumber, its own
-// cut-optimizer — netted against on-hand. Its stock schema is size,grade,length,
-// so it uses its own reader and sniffer rather than the generic item,span one.
-// See src/lumber/planLumber.js.
+// ── The four family pages ─────────────────────────────────────────────────────
+// One process serves four independent tools. Each family gets its own page and
+// its own endpoint rather than one page with a family toggle: they answer
+// different questions — how many boxes of plates, how many hangers, how many
+// linear feet of LVL, how many boards of lumber — and share no controls.
+app.get('/plates', (_req, res) => res.sendFile(path.join(__dirname, 'plates.html')));
+app.get('/hangers', (_req, res) => res.sendFile(path.join(__dirname, 'hangers.html')));
+// LVL is not a cut-optimization question at all — it is a linear-footage roll-up.
+// Its plan route reuses readStockCsv.js's generic stock reader and sniffer as-is
+// rather than duplicating them (see PLAN_ROUTES below). It does NOT use
+// parseJobCsv: src/lvl/parseLvlSheet.js says why it parses the sheet itself, and
+// src/lvl/planLvl.js says why qty × length already accounts for plies.
+app.get('/lvl', (_req, res) => res.sendFile(path.join(__dirname, 'lvl.html')));
+// LUMBER is the front door — "/" serves this page too (see sendLumberPage above).
+// Unlike LVL it answers two questions at once: linear feet AND how many whole
+// boards to buy, via its own cut-optimizer, netted against on-hand. Its stock
+// schema is size,grade,length, so it uses its own reader and sniffer rather than
+// the generic item,span one. See src/lumber/planLumber.js.
 app.get('/lumber', sendLumberPage);
 
 // The default carried-lengths menu the editor seeds from, straight from the
@@ -271,53 +109,88 @@ app.get('/api/lumber/menu', (_req, res) => {
   res.json({ ok: true, menu: DEFAULT_LUMBER_MENU, gradeOrder: GRADE_STRENGTH_ORDER });
 });
 
-app.post('/api/lumber/plan', (req, res) => {
-  const { files, stock, menu, redirects } = req.body || {};
-  if (!Array.isArray(files) || files.length === 0) {
-    return res.status(400).json({ ok: false, error: 'No CSV files were provided.' });
-  }
+// ── The plan endpoint — one code path for all four families ───────────────────
+// The four families differ only in DATA — which sniffer routes a dropped stock
+// file, which reader parses it, which planner runs, and the noun in the "nothing
+// usable" message — never in the shape of the operation. So the operation lives
+// once in planHandler, and PLAN_ROUTES keys that data by the family's route
+// (docs/CODING-STANDARDS.md §Seams). The key is the full literal path, so a grep
+// for "/api/plates/plan" still lands on its registration (§Readers). Lumber
+// alone carries page-editable options — an edited menu and grade redirects — so
+// it supplies `readOptions`; the other three pass none.
+const PLAN_ROUTES = {
+  '/api/plates/plan': { sniff: looksLikePlateStockCsv, parseStock: parsePlateStockCsv, plan: planPlates, noun: 'plate' },
+  '/api/hangers/plan': { sniff: looksLikeHangerStockCsv, parseStock: parseHangerStockCsv, plan: planHangers, noun: 'hanger' },
+  '/api/lvl/plan': { sniff: looksLikeStockCsv, parseStock: parseStockCsv, plan: planLvl, noun: 'LVL' },
+  '/api/lumber/plan': {
+    sniff: looksLikeLumberStockCsv, parseStock: parseLumberStockCsv, plan: planLumber, noun: 'lumber',
+    readOptions: (body) => ({ menu: body.menu, redirects: body.redirects }),
+  },
+};
 
-  const jobFiles = [];
-  let stockFile = stock && String(stock.text || '').trim() ? stock : null;
-  const rerouted = [];
-  for (const f of files) {
-    if (looksLikeLumberStockCsv(String(f.text || ''))) {
-      if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
-    } else {
-      jobFiles.push(f);
+function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
+  return (req, res) => {
+    const body = req.body || {};
+    const { files, stock } = body;
+    if (!Array.isArray(files) || files.length === 0) {
+      return res.status(400).json({ ok: false, error: 'No CSV files were provided.' });
     }
-  }
 
-  let parsedStock = null;
-  let stockError = null;
-  if (stockFile) {
+    // Sniff the dropped files rather than trusting which zone they landed in — a
+    // misfiled CSV is a two-second mistake that would otherwise cost a confusing
+    // error. A file that reads as stock, when none was named outright, is
+    // rerouted to the stock slot and reported back in `rerouted`.
+    const jobFiles = [];
+    let stockFile = stock && String(stock.text || '').trim() ? stock : null;
+    const rerouted = [];
+    for (const f of files) {
+      if (sniff(String(f.text || ''))) {
+        if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
+      } else {
+        jobFiles.push(f);
+      }
+    }
+
+    // A bad stock file must not refuse the plan outright — losing the netting is
+    // annoying; refusing to plan because an OPTIONAL second input was wrong is
+    // worse. Surface the failure as `stockError` rather than throwing.
+    let parsedStock = null;
+    let stockError = null;
+    if (stockFile) {
+      try {
+        parsedStock = parseStock(String(stockFile.text || ''));
+      } catch (err) {
+        stockError = err.message;
+      }
+    }
+
+    let result;
     try {
-      parsedStock = parseLumberStockCsv(String(stockFile.text || ''));
+      result = readOptions
+        ? plan(jobFiles, parsedStock, readOptions(body))
+        : plan(jobFiles, parsedStock);
     } catch (err) {
-      stockError = err.message;
+      return res.status(400).json({ ok: false, error: err.message });
     }
-  }
+    if (!result.jobs.length) {
+      return res.status(400).json({
+        ok: false, error: `No usable ${noun} material summaries found.`, rejected: result.rejected,
+      });
+    }
 
-  let plan;
-  try {
-    plan = planLumber(jobFiles, parsedStock, { menu, redirects });
-  } catch (err) {
-    return res.status(400).json({ ok: false, error: err.message });
-  }
-  if (!plan.jobs.length) {
-    return res.status(400).json({
-      ok: false, error: 'No usable lumber material summaries found.', rejected: plan.rejected,
+    res.json({
+      ok: true,
+      ...result,
+      rerouted,
+      stockFileName: stockFile ? stockFile.name : null,
+      stockError,
     });
-  }
+  };
+}
 
-  res.json({
-    ok: true,
-    ...plan,
-    rerouted,
-    stockFileName: stockFile ? stockFile.name : null,
-    stockError,
-  });
-});
+for (const [route, spec] of Object.entries(PLAN_ROUTES)) {
+  app.post(route, planHandler(spec));
+}
 
 // Binds PORT/HOST and resolves once listening, or rejects with a plain-language
 // Error (never a raw EADDRINUSE) once it is clear the bind failed. The one seam

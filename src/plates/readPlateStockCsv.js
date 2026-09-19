@@ -225,4 +225,4 @@ function looksLikePlateStockCsv(text) {
   }
 }
 
-module.exports = { parsePlateStockCsv, looksLikePlateStockCsv, skuKey, plateCanon };
+module.exports = { parsePlateStockCsv, looksLikePlateStockCsv, skuKey };

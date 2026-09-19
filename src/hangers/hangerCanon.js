@@ -90,7 +90,4 @@ function aliasOf(raw) {
   return hit;
 }
 
-/** True when hangerCanon(raw) would return something other than `raw`. */
-const isAliased = (raw) => aliasOf(raw) !== null;
-
-module.exports = { hangerCanon, aliasOf, isAliased, canonNorm, ALIASES };
+module.exports = { hangerCanon, aliasOf, canonNorm, ALIASES };
