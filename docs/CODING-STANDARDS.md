@@ -17,8 +17,13 @@ repo rule is the sharper one and is meant to bind; the baseline still applies ev
   request-wide policy, consistent error shaping. Applied once.
 - **A transaction wraps the business operation whose writes must be atomic**, not the request.
   Several routes may call that one operation.
-- **A failure reports itself.** Queued is not delivered, and a discarded HTTP status is a silent
-  failure.
+- **A failure reports itself.** Handle failures at database, file and API boundaries explicitly;
+  never turn them into success or empty data. Name timeout and retry behavior where applicable;
+  a timed-out write may have succeeded. Queued is not delivered, and a discarded HTTP status is
+  a silent failure.
+- **Retrying a mutation does not repeat its effect.** Reuse the same operation identity on retry;
+  enforce deduplication durably and atomically with quantity or commitment changes, including
+  concurrent attempts. Process memory is not the guard.
 
 ## Readers
 
@@ -82,6 +87,9 @@ const assert = require('node:assert/strict');
   deducts, and on hand stays overstated.
 - **A change to purchasing data or to a seed constant is its own commit**, with a message that
   says so.
+- **A material change names its reach and recovery before it runs.** For destructive migrations,
+  bulk writes or permission changes, state what can be affected and how to restore it. Reverting
+  code is not a data rollback.
 - **Numbers state their unit, precision and rounding** — quantities and money alike. Decide the
   rounding; do not inherit whatever floating point does.
 - **A port lands byte-identical** in its behaviour-bearing modules, so the change that moves
