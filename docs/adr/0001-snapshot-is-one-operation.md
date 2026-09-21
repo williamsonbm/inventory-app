@@ -42,9 +42,21 @@ list chosen for you rather than dropped by hand.
 4. **Already-optimized jobs are excluded**, unless their material content has changed, and are
    listed in a section of their own rather than dropped without explanation. Material content means
    quantities, lengths, and which lines exist. A wording change is not a revision.
-5. **For EWP the length search stays, and a non-stock flag is added.** The search answers which
-   stock lengths to buy across a batch of jobs. The flag marks items that are not restocked. These
-   are different questions for different people and neither replaces the other.
+5. **For i-joists the length search stays, and a non-stock flag is added.** The search chooses
+   which stock lengths to buy for a single job, or for a small batch of same-series, same-depth
+   jobs. The search keys on series and depth. Arbitrary or mixed-series batching is not required,
+   and the batch stays small enough for the hosting limit. The flag marks items that are not
+   restocked, also keyed by series and depth. LVL and rim board are fixed-length buys, not
+   searched. These are different questions for different people and neither replaces the other.
+
+   > **Superseded 2026-09-21 by #9 ("For each material family, which implementation wins?").**
+   > This item first read: "For EWP the length search stays. The search answers which stock
+   > lengths to buy across a batch of jobs." The owner confirmed that planning is one job at a
+   > time, with an occasional small same-series batch, so the multi-job sweep is retired. Two
+   > facts from the grilling narrow the search: i-joists carry many series that share depths
+   > (PJI-40, PJI-65, PJI-80, TJI and more), so the search and the flag key on series and depth;
+   > and LVL is a single series, so it is not searched. The optimizer's integration is deferred
+   > to its own later spec. This record sets the policy only. It does not schedule that build.
 
 ## Alternatives considered
 
