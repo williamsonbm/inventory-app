@@ -30,7 +30,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { app } = require('../src/planner/server.js');
+const { app, jsonError } = require('../src/planner/server.js');
 
 // A real lumber sheet, so the no-store probe below can assert a 200 rather than
 // settling for an error response that carries the header just as well.
@@ -209,4 +209,27 @@ test('a malformed plan body is refused with a JSON 400 before any file is read',
       assert.equal(typeof data.error, 'string', `${label} must carry a message`);
     }
   });
+});
+
+// No route can reach the 500 branch on purpose, and a route added after the
+// handler sits past it in the stack, so the seam is called directly.
+test('an unknown handler error leaves as a JSON 500 that carries no request data', () => {
+  const sent = {};
+  const res = {
+    headersSent: false,
+    status(code) { sent.status = code; return this; },
+    json(body) { sent.body = body; return this; },
+  };
+  const logged = [];
+  const original = console.error;
+  console.error = (line) => logged.push(line);
+  try {
+    jsonError(new Error('boom in a handler'), {}, res, () => assert.fail('next must not run'));
+  } finally {
+    console.error = original;
+  }
+  assert.equal(sent.status, 500);
+  assert.deepEqual(sent.body, { ok: false, error: 'The planner hit an unexpected error.' });
+  assert.equal(logged.length, 1, 'the error is logged once');
+  assert.match(logged[0], /boom in a handler/, 'the log carries the stack');
 });

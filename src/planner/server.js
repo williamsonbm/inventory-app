@@ -36,10 +36,12 @@ const PORT = Number(process.env.PORT || process.env.PLANNER_PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 
 const app = express();
-// 1mb, not the inherited 5mb: the real batch (50 sheets and a stock file)
+// 1 MB, not the inherited 5 MB: the real batch (50 sheets and an on-hand file)
 // measures ~0.22 MB, and Vercel caps a body at 4.5 MB regardless
 // (docs/CODING-STANDARDS.md §Platform). Guarded in test/port-guards.test.js.
-app.use(express.json({ limit: '1mb' }));
+// The same number feeds the 413 message below, so the two cannot drift.
+const BODY_LIMIT_MB = 1;
+app.use(express.json({ limit: `${BODY_LIMIT_MB}mb` }));
 
 // Never let a browser cache this tool. /api/lumber/menu is a plain GET with no
 // Cache-Control and no Last-Modified of its own, so a browser may heuristically
@@ -210,17 +212,18 @@ for (const [route, spec] of Object.entries(PLAN_ROUTES)) {
 // carries the raw body, and a sheet never reaches a log or an error message.
 // An unknown error is logged, stack only.
 const BODY_ERROR_MESSAGES = {
-  'entity.too.large': 'The upload is too big. The limit is 1 MB per request.',
+  'entity.too.large': `The upload is too big. The limit is ${BODY_LIMIT_MB} MB per request.`,
   'entity.parse.failed': 'The request body is not valid JSON.',
 };
-app.use((err, _req, res, next) => {
+function jsonError(err, _req, res, next) {
   if (res.headersSent) return next(err);
   if (err.status) {
     return res.status(err.status).json({ ok: false, error: BODY_ERROR_MESSAGES[err.type] || 'The request was refused.' });
   }
   console.error(err.stack || String(err));
   res.status(500).json({ ok: false, error: 'The planner hit an unexpected error.' });
-});
+}
+app.use(jsonError);
 
 // Binds PORT/HOST and resolves once listening, or rejects with a plain-language
 // Error (never a raw EADDRINUSE) once it is clear the bind failed. The one seam
@@ -250,8 +253,9 @@ if (require.main === module) {
     });
 }
 
-// `app` alone. PORT, HOST and start() are used by the CLI block above and by
-// nothing else in this repo: their only other caller was the Electron packaging
-// in `materials-planner`, which the port leaves behind. An export with no reader
-// does not ship (issue #39).
-module.exports = { app };
+// `app`, plus jsonError as a test-only seam: no route can reach its 500 branch
+// on purpose, so test/port-guards.test.js calls it directly. PORT, HOST and
+// start() are used by the CLI block above and by nothing else in this repo:
+// their only other caller was the Electron packaging in `materials-planner`,
+// which the port leaves behind. An export with no reader does not ship (#39).
+module.exports = { app, jsonError };

@@ -60,8 +60,8 @@ function boardsByLength(draws) {
 // @returns { boardsUsed, residual: number[] }
 //
 // A board exists only once a piece opens it, so work is bounded by demand, not
-// by on_hand. Placement order: an open board first, in stock-row order, then
-// the first row with an unopened board long enough.
+// by on_hand. Placement order: an open board first, in on-hand file row order,
+// then the first row with an unopened board long enough.
 function consumeOnHand(pieces, boards) {
   const rows = boards.map((b) => ({ span: b.span, unopened: b.qty, open: [] }));
   const sorted = [...pieces].sort((a, b) => b - a);
