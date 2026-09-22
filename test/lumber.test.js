@@ -630,3 +630,28 @@ test('POST /api/lumber/plan applies a redirect sent from the browser', async () 
     assert.equal(toRow.usedLf, 36);
   });
 });
+
+// ---- On-hand netting is bounded by demand, not by the on-hand file ----------
+// A billion boards against this 13-piece sheet must finish at once.
+
+test('a huge on-hand board count does not blow up the netting pass', () => {
+  const stock = parseLumberStockCsv(`size,grade,length,on_hand
+2x4,#2,8,1000000000
+2x6,#2,12,1000000000
+`);
+  const started = Date.now();
+  const plan = planLumber([{ name: 'a.csv', text: JOB_A }], stock);
+  assert.ok(Date.now() - started < 2000, 'netting must not scale with the on-hand count');
+  const row = plan.bySizeGrade.find((g) => g.key === '2x4|#2');
+  assert.equal(row.piecesOnHand, 10, 'ten 8ft pieces take ten 8ft boards');
+  assert.equal(row.piecesToBuy, 0);
+});
+
+// Demand side: a QTY typo past the netting ceiling is refused by name.
+
+test('a demand group over the netting ceiling is refused by name', () => {
+  const sheet = JOB_A.replace('2x4sp2,10,8-00-00', '2x4sp2,100000000,8-00-00');
+  const stock = parseLumberStockCsv(STOCK_CSV);
+  assert.throws(() => planLumber([{ name: 'a.csv', text: sheet }], stock),
+    /2x4 #2.*100,000,000 pieces.*1,000,000/);
+});

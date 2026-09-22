@@ -58,28 +58,39 @@ function boardsByLength(draws) {
 // @param pieces  individual required cut lengths (feet)
 // @param boards  [{ span, qty }] on-hand boards for this size/grade
 // @returns { boardsUsed, residual: number[] }
+//
+// A board exists only once a piece opens it, so work is bounded by demand, not
+// by on_hand. Placement order: an open board first, in stock-row order, then
+// the first row with an unopened board long enough.
 function consumeOnHand(pieces, boards) {
-  const bins = [];
-  for (const b of boards) {
-    for (let i = 0; i < b.qty; i++) bins.push({ cap: b.span, rem: b.span, open: false });
-  }
+  const rows = boards.map((b) => ({ span: b.span, unopened: b.qty, open: [] }));
   const sorted = [...pieces].sort((a, b) => b - a);
   const residual = [];
+  let boardsUsed = 0;
 
   for (const p of sorted) {
-    let placed = false;
-    for (const bin of bins) {                       // prefer an already-opened board
-      if (bin.open && bin.rem - p >= -TOL_FT) { bin.rem -= p; placed = true; break; }
+    let bin = null;
+    for (const row of rows) {
+      bin = row.open.find((b) => b.rem - p >= -TOL_FT);
+      if (bin) break;
     }
-    if (!placed) {
-      for (const bin of bins) {                     // else break open a fresh board
-        if (!bin.open && bin.cap - p >= -TOL_FT) { bin.open = true; bin.rem = bin.cap - p; placed = true; break; }
-      }
+    if (bin) { bin.rem -= p; continue; }
+    const row = rows.find((r) => r.unopened > 0 && r.span - p >= -TOL_FT);
+    if (row) {
+      row.unopened -= 1;
+      row.open.push({ rem: row.span - p });
+      boardsUsed += 1;
+      continue;
     }
-    if (!placed) residual.push(p);
+    residual.push(p);
   }
-  return { boardsUsed: bins.filter((b) => b.open).length, residual };
+  return { boardsUsed, residual };
 }
+
+// Netting expands a group into one entry per piece. Deliberately capped: the
+// 50-sheet corpus peaks at ~18,700 pieces in one group, so past a million is a
+// QTY typo, and expanding it would crash the request instead of naming the group.
+const MAX_NETTING_PIECES = 1_000_000;
 
 /**
  * Plan lumber across a batch of job files against optional stock and a purchase
@@ -306,6 +317,11 @@ function planLumber(jobFiles, parsedStock = null, opts = {}) {
     let boardsUsed = 0;
     let residualLines = pieceLines;
     if (stockGroup && stockGroup.boards.length) {
+      const pieceCount = pieceLines.reduce((s, l) => s + l.qty, 0);
+      if (pieceCount > MAX_NETTING_PIECES) {
+        throw new Error(`${g.label}: ${pieceCount.toLocaleString('en-US')} pieces across the batch is over the `
+          + `${MAX_NETTING_PIECES.toLocaleString('en-US')}-piece limit for netting against on-hand. Check the QTY column.`);
+      }
       const expanded = [];
       for (const { length, qty } of pieceLines) for (let i = 0; i < qty; i++) expanded.push(length);
       const consumed = consumeOnHand(expanded, stockGroup.boards);
