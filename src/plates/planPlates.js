@@ -140,6 +140,8 @@ function toPurchaseUnits(eaches, packs) {
 function planPlates(files, stock) {
   const jobs = [];
   const rejected = [];
+  // Parser notices for every job, one list, job-prefixed.
+  const warnings = [];
   // key → { sku, eaches, byJob: [{job, qty}] }
   const demand = new Map();
 
@@ -157,6 +159,7 @@ function planPlates(files, stock) {
     }
     const meta = parsed.meta || {};
     const job = meta.job_number || f.name;
+    for (const w of parsed.warnings) warnings.push(`[${job}] ${w}`);
 
     // A job with zero plate lines is NOT an error — an EWP-only or hanger-only
     // job legitimately has none. It is listed with 0 so the buyer can see the
@@ -171,7 +174,6 @@ function planPlates(files, stock) {
       // The raw plate lines as they appear on this job's sheet ({ seq, qty, sku }),
       // so the Included Jobs panel can expand a job to show its material list.
       items: parsed.lines,
-      warnings: parsed.warnings || [],
     });
 
     for (const line of parsed.lines) {
@@ -249,6 +251,7 @@ function planPlates(files, stock) {
     rows,
     toBuy,
     unmatched,
+    warnings,
     totals: {
       jobs: jobs.length,
       skusDemanded: rows.length,

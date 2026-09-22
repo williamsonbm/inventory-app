@@ -62,7 +62,7 @@ function parseLvlSheet(csvText) {
   let currentCategory = null;
   const items = [];
 
-  for (const cols of rows) {
+  for (const [i, cols] of rows.entries()) {
     const firstCol = (cols[0] || '').trim();
 
     if (firstCol === 'I-Shape EWP')     { currentCategory = 'I-Joist';  continue; }
@@ -78,15 +78,20 @@ function parseLvlSheet(csvText) {
     // LABEL,SIZE,QTY,LENGTH
     const label = firstCol;
     const size = (cols[1] || '').trim();
-    const qty = parseInt(cols[2]);
+    const rawQty = (cols[2] || '').trim();
+    const qty = parseInt(rawQty);
     const rawLength = (cols[3] || '').trim();
 
-    if (!rawLength.includes('-')) continue;
-    if (!qty || qty < 1) continue;
-    if (!size) continue;
+    if (!label && !size) continue;                      // spacer row
+    // A label alone is the next section's title ("Misc Items"), as in the
+    // plate and lumber parsers.
+    if (label && !size && !rawQty && !rawLength) { currentCategory = null; continue; }
 
     const decimalFeet = parseLength(rawLength);
-    if (decimalFeet === null) continue;
+    if (!size || !qty || qty < 1 || decimalFeet === null) {
+      warnings.push(`[${jobNumber}] Row ${i + 1} skipped: "${label}" SIZE "${size}", QTY "${rawQty}", LENGTH "${rawLength}"`);
+      continue;
+    }
 
     items.push({ label, size, qty, rawLength, decimalFeet });
   }

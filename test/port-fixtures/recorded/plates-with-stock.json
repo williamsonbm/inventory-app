@@ -10,10 +10,7 @@
         "deliveryDate": "2026-08-28",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "11601R-scrubbed.csv",
@@ -143,8 +140,7 @@
             "qty": 12,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "12314F2-scrubbed.csv",
@@ -244,8 +240,7 @@
             "qty": 6,
             "sku": "MT20  7x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "12314J1-scrubbed.csv",
@@ -254,10 +249,7 @@
         "deliveryDate": "2026-08-25",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "12314R-scrubbed.csv",
@@ -417,8 +409,7 @@
             "qty": 42,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "16874J-scrubbed.csv",
@@ -427,10 +418,7 @@
         "deliveryDate": "2026-08-28",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "16874R-scrubbed.csv",
@@ -530,8 +518,7 @@
             "qty": 10,
             "sku": "MT20  10x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "17305R-scrubbed.csv",
@@ -540,10 +527,7 @@
         "deliveryDate": "2026-09-09",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "18330R-scrubbed.csv",
@@ -683,8 +667,7 @@
             "qty": 10,
             "sku": "MT20HS  7x8"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "27860F-scrubbed.csv",
@@ -739,8 +722,7 @@
             "qty": 76,
             "sku": "MT20  5x7"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "27860R-scrubbed.csv",
@@ -835,8 +817,7 @@
             "qty": 2,
             "sku": "MT20HS  7x8"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "31404R-scrubbed.csv",
@@ -971,8 +952,7 @@
             "qty": 68,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "32199R-scrubbed.csv",
@@ -1022,8 +1002,7 @@
             "qty": 12,
             "sku": "MT20  6x6"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "32421R-scrubbed.csv",
@@ -1118,8 +1097,7 @@
             "qty": 1416,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "35799F-scrubbed.csv",
@@ -1189,8 +1167,7 @@
             "qty": 2,
             "sku": "MT20  10x14"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "35799R-scrubbed.csv",
@@ -1375,8 +1352,7 @@
             "qty": 6,
             "sku": "MT20HS  6x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "36372H-scrubbed.csv",
@@ -1385,10 +1361,7 @@
         "deliveryDate": "2026-09-14",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "38172R-scrubbed.csv",
@@ -1438,8 +1411,7 @@
             "qty": 448,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "39106R-scrubbed.csv",
@@ -1464,8 +1436,7 @@
             "qty": 12,
             "sku": "MT20  4x4"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "42807R-scrubbed.csv",
@@ -1610,8 +1581,7 @@
             "qty": 176,
             "sku": "MT20HS  7x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "45341-scrubbed.csv",
@@ -1736,8 +1706,7 @@
             "qty": 32,
             "sku": "MT20HS  5x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "46983R-scrubbed.csv",
@@ -1852,8 +1821,7 @@
             "qty": 8,
             "sku": "MT20  7x14"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "50433R-scrubbed.csv",
@@ -1893,8 +1861,7 @@
             "qty": 1088,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "51089R-scrubbed.csv",
@@ -1929,8 +1896,7 @@
             "qty": 14,
             "sku": "MT20  5x8"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "51142R-scrubbed.csv",
@@ -2000,8 +1966,7 @@
             "qty": 12,
             "sku": "MT20HS  5x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "56308J-scrubbed.csv",
@@ -2010,10 +1975,7 @@
         "deliveryDate": "2026-08-24",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "56308R-scrubbed.csv",
@@ -2173,8 +2135,7 @@
             "qty": 14,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "58716R-scrubbed.csv",
@@ -2214,8 +2175,7 @@
             "qty": 808,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "62450R-scrubbed.csv",
@@ -2270,8 +2230,7 @@
             "qty": 164,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "66059F-scrubbed.csv",
@@ -2346,8 +2305,7 @@
             "qty": 112,
             "sku": "MT20  5x8"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "66059R-scrubbed.csv",
@@ -2457,8 +2415,7 @@
             "qty": 16,
             "sku": "MT20  8x8"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "66881R-scrubbed.csv",
@@ -2523,8 +2480,7 @@
             "qty": 24,
             "sku": "MT20  7x8"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "67726R-scrubbed.csv",
@@ -2644,8 +2600,7 @@
             "qty": 50,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "68643J-scrubbed.csv",
@@ -2654,10 +2609,7 @@
         "deliveryDate": "2026-08-20",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "68643R-scrubbed.csv",
@@ -2787,8 +2739,7 @@
             "qty": 24,
             "sku": "MT20HS  7x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "68702R-scrubbed.csv",
@@ -2828,8 +2779,7 @@
             "qty": 40,
             "sku": "MT20HS  7x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "69074R-scrubbed.csv",
@@ -2909,8 +2859,7 @@
             "qty": 20,
             "sku": "MT20  10x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "75709R-scrubbed.csv",
@@ -2955,8 +2904,7 @@
             "qty": 36,
             "sku": "MT20  5x8"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "80391R-scrubbed.csv",
@@ -2981,8 +2929,7 @@
             "qty": 8,
             "sku": "MT20  4x4"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "82368J-scrubbed.csv",
@@ -2991,10 +2938,7 @@
         "deliveryDate": "2026-08-31",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "82368R-scrubbed.csv",
@@ -3124,8 +3068,7 @@
             "qty": 24,
             "sku": "MT20HS  7x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "86234R-scrubbed.csv",
@@ -3175,8 +3118,7 @@
             "qty": 448,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "89329R-scrubbed.csv",
@@ -3256,8 +3198,7 @@
             "qty": 50,
             "sku": "MT20HS  10x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "90289R-scrubbed.csv",
@@ -3347,8 +3288,7 @@
             "qty": 76,
             "sku": "MT20HS  5x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "90574R-scrubbed.csv",
@@ -3448,8 +3388,7 @@
             "qty": 24,
             "sku": "MT20HS  6x12"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "92564R-scrubbed.csv",
@@ -3604,8 +3543,7 @@
             "qty": 32,
             "sku": "MT20HS  7x8"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "97485R-scrubbed.csv",
@@ -3710,8 +3648,7 @@
             "qty": 36,
             "sku": "MT20HS  5x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "97779R-scrubbed.csv",
@@ -3791,8 +3728,7 @@
             "qty": 20,
             "sku": "MT20  10x10"
           }
-        ],
-        "warnings": []
+        ]
       },
       {
         "file": "99750J-scrubbed.csv",
@@ -3801,10 +3737,7 @@
         "deliveryDate": "2026-08-29",
         "plateLines": 0,
         "eaches": 0,
-        "items": [],
-        "warnings": [
-          "No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
-        ]
+        "items": []
       },
       {
         "file": "99750R-scrubbed.csv",
@@ -3914,8 +3847,7 @@
             "qty": 106,
             "sku": "MT20  10x10"
           }
-        ],
-        "warnings": []
+        ]
       }
     ],
     "rejected": [],
@@ -9400,6 +9332,17 @@
         "inStockFile": true,
         "packKnown": false
       }
+    ],
+    "warnings": [
+      "[11601J] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.",
+      "[12314J1] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.",
+      "[16874J] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.",
+      "[17305R] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.",
+      "[36372H] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.",
+      "[56308J] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.",
+      "[68643J] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.",
+      "[82368J] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.",
+      "[99750J] No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job."
     ],
     "totals": {
       "jobs": 50,

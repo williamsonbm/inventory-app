@@ -154,13 +154,17 @@ function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
     // Sniff the dropped files rather than trusting which zone they landed in — a
     // misfiled CSV is a two-second mistake that would otherwise cost a confusing
     // error. A file that reads as stock, when none was named outright, is
-    // rerouted to the stock slot and reported back in `rerouted`.
+    // rerouted to the stock slot and reported back in `rerouted`. A second such
+    // file is ignored and named in `warnings`.
     const jobFiles = [];
     let stockFile = stock && stock.text.trim() ? stock : null;
     const rerouted = [];
+    const ignored = [];
     for (const f of files) {
       if (sniff(f.text)) {
         if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
+        // Same name in both slots is one file, not two.
+        else if (f.name !== stockFile.name) ignored.push(`"${f.name}" ignored: "${stockFile.name}" is already the on-hand file.`);
       } else {
         jobFiles.push(f);
       }
@@ -196,6 +200,7 @@ function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
     res.json({
       ok: true,
       ...result,
+      warnings: [...result.warnings, ...ignored],
       rerouted,
       stockFileName: stockFile ? stockFile.name : null,
       stockError,

@@ -355,3 +355,22 @@ test('the plate modules require no database, no fs, no network', () => {
     }
   }
 });
+
+// ── dropped rows report themselves ─────────────────────────────────────────
+
+test('a plate row with a bad QUANTITY is reported in the plan warnings, not dropped in silence', () => {
+  const good = read('10001R-materials.csv');
+  const text = good.text.replace(',930,MT20  1.5x4,', ',abc,MT20  1.5x4,');
+  assert.notStrictEqual(text, good.text, 'the fixture row must exist for this test to mean anything');
+  const r = planPlates([{ name: 'bad.csv', text }], null);
+  const goodLines = planPlates([good], null).jobs[0].plateLines;
+  assert.strictEqual(r.jobs[0].plateLines, goodLines - 1, 'only the bad row is lost');
+  assert.ok(r.warnings.some((w) => /^\[10001R\] Row 80 skipped: QUANTITY not a positive integer: "abc"$/.test(w)),
+    `expected a skipped-row warning, got ${JSON.stringify(r.warnings)}`);
+});
+
+test('a job with no PLATE SUMMARY surfaces its parser warning at the top level', () => {
+  const r = planPlates(JOB_FILES, null);
+  assert.ok(r.warnings.some((w) => /^\[10002J\] No 'PLATE SUMMARY' section/.test(w)),
+    `expected the EWP job's warning, got ${JSON.stringify(r.warnings)}`);
+});
