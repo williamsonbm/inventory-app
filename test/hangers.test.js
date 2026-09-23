@@ -368,3 +368,10 @@ test('a stock file written in Simpson spelling still sniffs as hangers', () => {
   // \b will not match TC24 inside STC24, so the sniffer needs STC* explicitly.
   assert.equal(looksLikeHangerStockCsv('sku,available\nSTC26,10\nSTC24,4\n'), true);
 });
+
+test('a hanger row with a bad QTY is reported in the plan warnings, not dropped in silence', () => {
+  const sheet = SAMPLE_JOB_ROOF.replace('10,Hanger,LU24,,,,,', 'x,Hanger,LU24,,,,,');
+  const r = planHangers([{ name: 'bad.csv', text: sheet }], null);
+  assert.ok(r.warnings.some((w) => /^\[10001R\] Row 12 skipped: QTY not a positive integer: "x"$/.test(w)),
+    `expected a skipped-row warning, got ${JSON.stringify(r.warnings)}`);
+});

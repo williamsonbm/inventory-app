@@ -36,10 +36,12 @@ const PORT = Number(process.env.PORT || process.env.PLANNER_PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 
 const app = express();
-// 1mb, not the inherited 5mb: the real batch (50 sheets and a stock file)
+// 1 MB, not the inherited 5 MB: the real batch (50 sheets and an on-hand file)
 // measures ~0.22 MB, and Vercel caps a body at 4.5 MB regardless
 // (docs/CODING-STANDARDS.md §Platform). Guarded in test/port-guards.test.js.
-app.use(express.json({ limit: '1mb' }));
+// The same number feeds the 413 message below, so the two cannot drift.
+const BODY_LIMIT_MB = 1;
+app.use(express.json({ limit: `${BODY_LIMIT_MB}mb` }));
 
 // Never let a browser cache this tool. /api/lumber/menu is a plain GET with no
 // Cache-Control and no Last-Modified of its own, so a browser may heuristically
@@ -128,24 +130,41 @@ const PLAN_ROUTES = {
   },
 };
 
+// A dropped file as the browser sends it: name and text, both strings.
+function isCsvFile(f) {
+  return typeof f?.name === 'string' && typeof f?.text === 'string';
+}
+
+// Shape check for every plan route, before any file is read. Valid JSON can
+// still be a null entry or a numeric text; each used to throw past the
+// handler's try/catch. Returns the refusal message, or null.
+function planBodyError({ files, stock }) {
+  if (!Array.isArray(files) || files.length === 0) return 'No CSV files were provided.';
+  if (!files.every(isCsvFile)) return 'Each file must carry a name and its text.';
+  if (stock != null && !isCsvFile(stock)) return 'The on-hand file must carry a name and its text.';
+  return null;
+}
+
 function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
   return (req, res) => {
-    const body = req.body || {};
-    const { files, stock } = body;
-    if (!Array.isArray(files) || files.length === 0) {
-      return res.status(400).json({ ok: false, error: 'No CSV files were provided.' });
-    }
+    const bodyError = planBodyError(req.body);
+    if (bodyError) return res.status(400).json({ ok: false, error: bodyError });
+    const { files, stock } = req.body;
 
     // Sniff the dropped files rather than trusting which zone they landed in — a
     // misfiled CSV is a two-second mistake that would otherwise cost a confusing
     // error. A file that reads as stock, when none was named outright, is
-    // rerouted to the stock slot and reported back in `rerouted`.
+    // rerouted to the stock slot and reported back in `rerouted`. A second such
+    // file is ignored and named in `warnings`.
     const jobFiles = [];
-    let stockFile = stock && String(stock.text || '').trim() ? stock : null;
+    let stockFile = stock && stock.text.trim() ? stock : null;
     const rerouted = [];
+    const ignored = [];
     for (const f of files) {
-      if (sniff(String(f.text || ''))) {
+      if (sniff(f.text)) {
         if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
+        // Same name in both slots is one file, not two.
+        else if (f.name !== stockFile.name) ignored.push(`"${f.name}" ignored: "${stockFile.name}" is already the on-hand file.`);
       } else {
         jobFiles.push(f);
       }
@@ -158,7 +177,7 @@ function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
     let stockError = null;
     if (stockFile) {
       try {
-        parsedStock = parseStock(String(stockFile.text || ''));
+        parsedStock = parseStock(stockFile.text);
       } catch (err) {
         stockError = err.message;
       }
@@ -167,7 +186,7 @@ function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
     let result;
     try {
       result = readOptions
-        ? plan(jobFiles, parsedStock, readOptions(body))
+        ? plan(jobFiles, parsedStock, readOptions(req.body))
         : plan(jobFiles, parsedStock);
     } catch (err) {
       return res.status(400).json({ ok: false, error: err.message });
@@ -181,6 +200,7 @@ function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
     res.json({
       ok: true,
       ...result,
+      warnings: [...result.warnings, ...ignored],
       rerouted,
       stockFileName: stockFile ? stockFile.name : null,
       stockError,
@@ -191,6 +211,24 @@ function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
 for (const [route, spec] of Object.entries(PLAN_ROUTES)) {
   app.post(route, planHandler(spec));
 }
+
+// Error shaping, applied once: every failure leaves as { ok: false, error },
+// the one shape the pages can show. Fixed text only: a body-parser error
+// carries the raw body, and a sheet never reaches a log or an error message.
+// An unknown error is logged, stack only.
+const BODY_ERROR_MESSAGES = {
+  'entity.too.large': `The upload is too big. The limit is ${BODY_LIMIT_MB} MB per request.`,
+  'entity.parse.failed': 'The request body is not valid JSON.',
+};
+function jsonError(err, _req, res, next) {
+  if (res.headersSent) return next(err);
+  if (err.status) {
+    return res.status(err.status).json({ ok: false, error: BODY_ERROR_MESSAGES[err.type] || 'The request was refused.' });
+  }
+  console.error(err.stack || String(err));
+  res.status(500).json({ ok: false, error: 'The planner hit an unexpected error.' });
+}
+app.use(jsonError);
 
 // Binds PORT/HOST and resolves once listening, or rejects with a plain-language
 // Error (never a raw EADDRINUSE) once it is clear the bind failed. The one seam
@@ -220,8 +258,9 @@ if (require.main === module) {
     });
 }
 
-// `app` alone. PORT, HOST and start() are used by the CLI block above and by
-// nothing else in this repo: their only other caller was the Electron packaging
-// in `materials-planner`, which the port leaves behind. An export with no reader
-// does not ship (issue #39).
-module.exports = { app };
+// `app`, plus jsonError as a test-only seam: no route can reach its 500 branch
+// on purpose, so test/port-guards.test.js calls it directly. PORT, HOST and
+// start() are used by the CLI block above and by nothing else in this repo:
+// their only other caller was the Electron packaging in `materials-planner`,
+// which the port leaves behind. An export with no reader does not ship (#39).
+module.exports = { app, jsonError };

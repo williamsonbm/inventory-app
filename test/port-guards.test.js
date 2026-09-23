@@ -11,6 +11,7 @@
 //   2. every response is marked no-store
 //   3. "/" serves the lumber page
 //   4. a request body over the size cap is refused before any handler runs
+//   5. every refusal leaves as JSON the page can show, never Express's HTML
 //
 // node --test runs each test FILE in its own process, so require.cache below
 // reflects only what this file pulled in.
@@ -29,7 +30,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { app } = require('../src/planner/server.js');
+const { app, jsonError } = require('../src/planner/server.js');
 
 // A real lumber sheet, so the no-store probe below can assert a 200 rather than
 // settling for an error response that carries the header just as well.
@@ -151,5 +152,84 @@ test('a request body over the size cap is refused with 413', async () => {
     });
     assert.equal(res.status, 413,
       'a body over the 1 MB cap must be refused with 413, not parsed');
+    // The page reads every response with res.json(); the default HTML page
+    // made that throw and show "Unexpected token <".
+    assert.match(res.headers.get('content-type') || '', /application\/json/,
+      'the 413 must be JSON, not the default HTML page');
+    const data = await res.json();
+    assert.equal(data.ok, false);
+    assert.match(data.error, /1 MB/, 'the message names the limit');
   });
+});
+
+// ---- 5. error shaping ---------------------------------------------------------
+// Every failure leaves as { ok: false, error }, the only shape the pages can
+// show. Malformed JSON and a malformed file entry both used to fall through to
+// Express's default HTML page.
+
+test('malformed JSON is refused with a JSON 400, not the default HTML page', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/lumber/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{"files": [',
+    });
+    assert.equal(res.status, 400);
+    assert.match(res.headers.get('content-type') || '', /application\/json/,
+      'a parse failure must be JSON');
+    const data = await res.json();
+    assert.equal(data.ok, false);
+    assert.match(data.error, /JSON/, 'the message says the body was not JSON');
+  });
+});
+
+// One shape check guards all four routes (planHandler), so one route proves it.
+// Each body below is valid JSON and used to reach the handler, where a null
+// entry threw a TypeError outside any try/catch.
+test('a malformed plan body is refused with a JSON 400 before any file is read', async () => {
+  const bad = [
+    ['a null file entry', { files: [null] }],
+    ['a file whose text is not a string', { files: [{ name: 'a.csv', text: 42 }] }],
+    ['a file with no name', { files: [{ text: 'x' }] }],
+    ['an on-hand file that is a bare string', { files: [{ name: 'a.csv', text: 'x' }], stock: 'x' }],
+    ['a body that is a JSON array', [{ name: 'a.csv', text: 'x' }]],
+  ];
+  await withServer(async (base) => {
+    for (const [label, body] of bad) {
+      const res = await fetch(`${base}/api/lvl/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      assert.equal(res.status, 400, `${label} must be refused with 400`);
+      assert.match(res.headers.get('content-type') || '', /application\/json/,
+        `${label} must be refused as JSON`);
+      const data = await res.json();
+      assert.equal(data.ok, false, `${label} must report ok: false`);
+      assert.equal(typeof data.error, 'string', `${label} must carry a message`);
+    }
+  });
+});
+
+// No route can reach the 500 branch on purpose, and a route added after the
+// handler sits past it in the stack, so the seam is called directly.
+test('an unknown handler error leaves as a JSON 500 that carries no request data', () => {
+  const sent = {};
+  const res = {
+    headersSent: false,
+    status(code) { sent.status = code; return this; },
+    json(body) { sent.body = body; return this; },
+  };
+  const logged = [];
+  const original = console.error;
+  console.error = (line) => logged.push(line);
+  try {
+    jsonError(new Error('boom in a handler'), {}, res, () => assert.fail('next must not run'));
+  } finally {
+    console.error = original;
+  }
+  assert.equal(sent.status, 500);
+  assert.deepEqual(sent.body, { ok: false, error: 'The planner hit an unexpected error.' });
+  assert.equal(logged.length, 1, 'the error is logged once');
+  assert.match(logged[0], /boom in a handler/, 'the log carries the stack');
 });

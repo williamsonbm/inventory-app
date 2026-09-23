@@ -23,6 +23,14 @@
 // clause of spec #41 section 5. Every other clause of section 5 is
 // provable against it.
 //
+// Divergence, 2026-09-22: plates-no-stock.json and plates-with-stock.json
+// were re-recorded from this repo after planPlates gained a top-level
+// `warnings` list and lost the unread per-job `warnings` field on jobs[].
+// Proven at re-record time: with those two keys removed from both, the new
+// and the captured bodies are deep-equal, and the nine new top-level
+// warnings are the nine old per-job warnings, job-prefixed. Every other
+// recorded file is still the pre-port capture.
+//
 // This test boots the LOCAL src/planner/server.js and compares its
 // response, for all 50 sheets, against the recorded JSON above. It cannot
 // pass until that file exists (build order step 2) — that is expected, not

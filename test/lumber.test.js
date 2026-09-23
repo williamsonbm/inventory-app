@@ -630,3 +630,68 @@ test('POST /api/lumber/plan applies a redirect sent from the browser', async () 
     assert.equal(toRow.usedLf, 36);
   });
 });
+
+// ---- On-hand netting is bounded by demand, not by the on-hand file ----------
+// A billion boards against this 13-piece sheet: before the fix this exhausted
+// the heap, so no clock is needed.
+
+test('a huge on-hand board count does not blow up the netting pass', () => {
+  const stock = parseLumberStockCsv(`size,grade,length,on_hand
+2x4,#2,8,1000000000
+2x6,#2,12,1000000000
+`);
+  const plan = planLumber([{ name: 'a.csv', text: JOB_A }], stock);
+  const row = plan.bySizeGrade.find((g) => g.key === '2x4|#2');
+  assert.equal(row.piecesOnHand, 10, 'ten 8ft pieces take ten 8ft boards');
+  assert.equal(row.piecesToBuy, 0);
+});
+
+// Demand side: a QTY typo past the netting ceiling is refused by name.
+
+test('a demand group over the netting ceiling is refused by name', () => {
+  const sheet = JOB_A.replace('2x4sp2,10,8-00-00', '2x4sp2,100000000,8-00-00');
+  const stock = parseLumberStockCsv(STOCK_CSV);
+  assert.throws(() => planLumber([{ name: 'a.csv', text: sheet }], stock),
+    /2x4 #2.*100,000,000 pieces.*1,000,000/);
+});
+
+test('POST /api/lumber/plan reports a second on-hand file instead of dropping it', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/lumber/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        files: [
+          { name: 'a.csv', text: JOB_A },
+          { name: 'yard-monday.csv', text: STOCK_CSV },
+          { name: 'yard-friday.csv', text: STOCK_CSV },
+        ],
+      }),
+    });
+    const data = await res.json();
+    assert.equal(data.ok, true);
+    assert.deepEqual(data.rerouted, [{ name: 'yard-monday.csv', to: 'stock' }]);
+    assert.equal(data.jobs.length, 1, 'the ignored file is not planned as a job');
+    assert.ok(data.warnings.some((w) => /^"yard-friday\.csv" ignored: "yard-monday\.csv" is already the on-hand file\.$/.test(w)),
+      `expected an ignored-file warning, got ${JSON.stringify(data.warnings)}`);
+  });
+});
+
+// One file in both slots is one file, not two.
+test('POST /api/lumber/plan treats the on-hand file repeated in files as the same file', async () => {
+  await withServer(async (base) => {
+    const res = await fetch(`${base}/api/lumber/plan`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        files: [{ name: 'a.csv', text: JOB_A }, { name: 'yard.csv', text: STOCK_CSV }],
+        stock: { name: 'yard.csv', text: STOCK_CSV },
+      }),
+    });
+    const data = await res.json();
+    assert.equal(data.ok, true);
+    assert.equal(data.jobs.length, 1);
+    assert.deepEqual(data.rerouted, []);
+    assert.deepEqual(data.warnings.filter((w) => /ignored/.test(w)), []);
+  });
+});

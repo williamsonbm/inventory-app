@@ -1,7 +1,7 @@
 // parsePlateSummary.js — PURE parser for the PLATE SUMMARY section of the MiTek
 // per-job material sheet (the same CSV the hanger import reads — §4a fan-out:
 // one drop, multiple material ledgers). No DB access, no normalization
-// (sku_norm is computed by the database). Returns { meta, lines, warnings, errors }.
+// (sku_norm is computed by the database). Returns { meta, lines, warnings }.
 //
 // Section shape (verified against samples/33864R-materials.csv and the real
 // 32552F full export):
@@ -34,7 +34,7 @@ function parsePlateSummary(csvText) {
   const meta = { job_number: null, job_name: null, delivery_date: null, category: null, commit_date: null };
   const lines = [];
   const warnings = [];
-  const errors = [];
+  let skipped = 0;
 
   // Same metadata scan as the hanger parser (labels scattered across columns).
   let quoteDate = null, orderDate = null;
@@ -55,13 +55,13 @@ function parsePlateSummary(csvText) {
 
   if (!meta.job_number) {
     return { ok: false, reason: "No 'Job Number:' found in the header block — not a per-job material sheet?",
-             meta, lines, warnings, errors };
+             meta, lines, warnings };
   }
 
   const sectionIdx = rows.findIndex((r) => clean(r[0]).toLowerCase() === "plate summary");
   if (sectionIdx === -1) {
     warnings.push("No 'PLATE SUMMARY' section in this sheet — zero plate lines for this job.");
-    return { ok: true, reason: null, meta, lines, warnings, errors };
+    return { ok: true, reason: null, meta, lines, warnings };
   }
 
   // Header row (contains QUANTITY and SIZE-GAUGE) within the next few rows.
@@ -72,7 +72,7 @@ function parsePlateSummary(csvText) {
   }
   if (headerIdx === -1) {
     return { ok: false, reason: "Found 'PLATE SUMMARY' but no QUANTITY/SIZE-GAUGE header row after it — format change?",
-             meta, lines, warnings, errors };
+             meta, lines, warnings };
   }
   const header  = rows[headerIdx].map((c) => clean(c).toLowerCase());
   const qtyCol  = header.indexOf("quantity");
@@ -95,16 +95,17 @@ function parsePlateSummary(csvText) {
     const qtyStr = rawQty.replace(/,/g, "");
     const qty = parseInt(qtyStr, 10);
     if (!Number.isFinite(qty) || String(qty) !== qtyStr.replace(/^0+(?=\d)/, "") || qty <= 0) {
-      errors.push({ rowIndex: i + 1, reason: `QUANTITY not a positive integer: "${rawQty}"`, raw: r.join(",") });
+      warnings.push(`Row ${i + 1} skipped: QUANTITY not a positive integer: "${rawQty}"`);
+      skipped++;
       continue;
     }
     lines.push({ seq: lines.length + 1, qty, sku });
   }
 
-  if (lines.length === 0 && errors.length === 0) {
+  if (lines.length === 0 && skipped === 0) {
     warnings.push("PLATE SUMMARY present but contained no data rows.");
   }
-  return { ok: true, reason: null, meta, lines, warnings, errors };
+  return { ok: true, reason: null, meta, lines, warnings };
 }
 
 module.exports = { parsePlateSummary };

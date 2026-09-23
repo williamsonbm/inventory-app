@@ -53,11 +53,8 @@ function planHangers(jobFiles, parsedStock = null) {
       continue;
     }
 
-    if (res.warnings && res.warnings.length) {
-      for (const w of res.warnings) {
-        warnings.push(`[${res.meta.job_number || f.name}] ${w}`);
-      }
-    }
+    const job = res.meta.job_number || f.name;
+    for (const w of res.warnings) warnings.push(`[${job}] ${w}`);
 
     const jobEntry = {
       name: f.name,

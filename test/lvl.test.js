@@ -267,3 +267,21 @@ test('POST /api/lvl/plan plans a batch via HTTP API, auto-detecting the stock fi
     assert.equal(d1178.usedLf, 32);
   });
 });
+
+// ── dropped rows report themselves ─────────────────────────────────────────
+test('an LVL row with a bad QTY is reported in the plan warnings, not dropped in silence', () => {
+  const sheet = JOB_A.replace('2BM1-3,2.1 RigidLam DF LVL 1-3/4 x 14,3,30-00-00,', '2BM1-3,2.1 RigidLam DF LVL 1-3/4 x 14,abc,30-00-00,');
+  const plan = planLvl([{ name: 'a.csv', text: sheet }], null);
+  assert.ok(plan.warnings.some((w) => /^\[20001J\] Row 14 skipped: "2BM1-3" SIZE "2\.1 RigidLam DF LVL 1-3\/4 x 14", QTY "abc", LENGTH "30-00-00"$/.test(w)),
+    `expected a skipped-row warning, got ${JSON.stringify(plan.warnings)}`);
+  assert.equal(plan.jobs[0].items.length, 1, 'the good row still counts');
+});
+
+// Misc Items ends the LVL section.
+test('a Misc Items section after Rectangular EWP ends the LVL section without warnings', () => {
+  const sheet = JOB_A.replace('Total: 2.1 RigidLam DF LVL 1-3/4 x 14,-3,90-00-00 - L/F,\n',
+    'Total: 2.1 RigidLam DF LVL 1-3/4 x 14,-3,90-00-00 - L/F,\nMisc Items,,,,\n10,,ATR1/2X48HDG,,\n');
+  const plan = planLvl([{ name: 'a.csv', text: sheet }], null);
+  assert.deepEqual(plan.warnings.filter((w) => /skipped/.test(w)), []);
+  assert.equal(plan.jobs[0].items.length, 2);
+});

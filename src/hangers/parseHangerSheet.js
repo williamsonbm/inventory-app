@@ -2,7 +2,7 @@
 // parseHangerSheet.js — PURE parser for the MiTek per-job material sheet (CSV text).
 // =============================================================
 // No DB access, no normalization (sku_norm is computed by the caller; the parser
-// captures sku_display exactly as written). Returns { ok, reason, meta, lines, warnings, errors }.
+// captures sku_display exactly as written). Returns { ok, reason, meta, lines, warnings }.
 //
 // File shape (verified against spreadsheets/examples/*.csv):
 //   - Metadata block: "Label:,value" pairs spread across columns; layout varies by
@@ -50,7 +50,7 @@ function parseHangerSheet(csvText) {
   };
   const lines = [];
   const warnings = [];
-  const errors = [];
+  let skipped = 0;
 
   // ── Reject the batch/forecast report outright ─────────────────────────────
   const firstCell = clean(rows[0]?.[0] || "").toLowerCase();
@@ -60,7 +60,7 @@ function parseHangerSheet(csvText) {
       reason: "This is a date-range batch report (no job number). It is forecast " +
               "input only and cannot be imported as commitments. Use the per-job " +
               "material sheet instead.",
-      meta, lines, warnings, errors,
+      meta, lines, warnings,
     };
   }
 
@@ -85,7 +85,7 @@ function parseHangerSheet(csvText) {
     return {
       ok: false,
       reason: "No 'Job Number:' found in the header block — not a per-job material sheet?",
-      meta, lines, warnings, errors,
+      meta, lines, warnings,
     };
   }
 
@@ -98,7 +98,7 @@ function parseHangerSheet(csvText) {
   });
   if (sections.length === 0) {
     warnings.push("No 'Hangers' (or 'Misc Items') section in this sheet — importing zero hanger lines for this job.");
-    return { ok: true, reason: null, meta, lines, warnings, errors };
+    return { ok: true, reason: null, meta, lines, warnings };
   }
 
   for (const { at, label } of sections) {
@@ -109,7 +109,7 @@ function parseHangerSheet(csvText) {
     if (headerIdx === -1) {
       if (label === "Hangers") {
         return { ok: false, reason: "Found the 'Hangers' section but no QTY/TYPE/SIZE header row after it — format change?",
-                 meta, lines, warnings, errors };
+                 meta, lines, warnings };
       }
       warnings.push(`Found '${label}' but no QTY header row after it — section skipped (format change?).`);
       continue;
@@ -120,7 +120,7 @@ function parseHangerSheet(csvText) {
     const typeCol = header.indexOf("type");   // used to tell footer rows from bad data
     if (sizeCol === -1) {
       if (label === "Hangers") {
-        return { ok: false, reason: "Hangers header row has no SIZE column — format change?", meta, lines, warnings, errors };
+        return { ok: false, reason: "Hangers header row has no SIZE column — format change?", meta, lines, warnings };
       }
       warnings.push(`'${label}' header row has no SIZE column — section skipped.`);
       continue;
@@ -142,7 +142,7 @@ function parseHangerSheet(csvText) {
       // Repeated QTY/TYPE/SIZE header
       if (rawQty.toLowerCase() === "qty") continue;
 
-      if (!sku) { errors.push({ rowIndex: i + 1, reason: "no SIZE (SKU) value", raw: r.join(",") }); continue; }
+      if (!sku) { warnings.push(`Row ${i + 1} skipped: no SIZE (SKU) value`); skipped++; continue; }
       const qtyStr = rawQty.replace(/,/g, "");
       let qty = parseInt(qtyStr, 10);
       if (!Number.isFinite(qty) || String(qty) !== qtyStr.replace(/^0+(?=\d)/, "") || qty <= 0) {
@@ -150,7 +150,8 @@ function parseHangerSheet(csvText) {
           warnings.push(`Stopped reading the ${label} section at row ${i + 1} (foreign row: "${r.slice(0, 4).join(",")}"). If real lines exist below this row, the format changed — flag it.`);
           break;
         }
-        errors.push({ rowIndex: i + 1, reason: `QTY not a positive integer: "${rawQty}"`, raw: r.join(",") });
+        warnings.push(`Row ${i + 1} skipped: QTY not a positive integer: "${rawQty}"`);
+        skipped++;
         continue;
       }
       if (IGNORED_SKUS.has(sku.toUpperCase())) {
@@ -192,11 +193,11 @@ function parseHangerSheet(csvText) {
     }
   }
 
-  if (lines.length === 0 && errors.length === 0) {
+  if (lines.length === 0 && skipped === 0) {
     warnings.push("Material sections present but contained no data rows.");
   }
 
-  return { ok: true, reason: null, meta, lines, warnings, errors };
+  return { ok: true, reason: null, meta, lines, warnings };
 }
 
 module.exports = { parseHangerSheet };

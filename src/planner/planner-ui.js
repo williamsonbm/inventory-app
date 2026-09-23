@@ -208,7 +208,7 @@
       const isStock = typeof config.isStockFile === 'function' ? config.isStockFile : null;
       const pick = isStock ? CsvPile.pickStock(files, isStock) : null;
       for (const f of files) {
-        if (looksLikeAnyStock(f.text)) continue;
+        if (looksLikeAnyStock(f.text) || (pick && f.name === pick.name)) continue;
         jobs.set(f.name, { name: f.name, text: f.text });
       }
       if (pick) stock = { name: pick.name, text: pick.text };
