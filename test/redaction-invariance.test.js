@@ -115,6 +115,8 @@ test('redaction invariance: the footer rows go, and the three sheets that still 
   for (const { family, route } of ROUTES) {
     const before = await post(base, route, { files: raw });
     const after = await post(base, route, { files: redacted });
+    // Two empty answers would also be equal: require a real plan of all three jobs.
+    assert.equal(before.body.jobs?.length, 3, `${family}: the raw sheets did not plan all three jobs`);
     assert.deepEqual(after, before, `${family}: redaction changed the buy list`);
   }
 });
