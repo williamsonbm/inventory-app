@@ -508,9 +508,9 @@
   // The four pages POST getJobs()/getStock() to a hosted server, so the sheet
   // now leaves the office machine. A MiTek summary carries per-line and per-job
   // costs, the customer name and addresses, the job-site address, phone numbers,
-  // the sales representative and the designer — none of which any surviving
-  // parser reads (spec #41 §5, #38). Remove
-  // them here, at the single chokepoint every request body is built from.
+  // the sales representative, the designer, the customer ID and the customer
+  // P.O. number — none of which any surviving parser reads (spec #41 §5, #38).
+  // Remove them here, at the single chokepoint every request body is built from.
   //
   // The mechanism is find-and-replace on the RAW text: it never parses the sheet
   // beyond finding where column 0 ends, and never rebuilds a line, so it cannot
@@ -527,6 +527,16 @@
   // neighboring rows, to find the block; it still rewrites only column 0.
   const REDACT_STRUCTURAL = /^[\s,"']*$/;
   const REDACT_MARK = '-';
+  // A labeled value is one cell: a quoted cell whole, commas and all, or else
+  // the text up to the next comma. Stopping at the first comma of
+  // `"Thompson, Richard"` would send ` Richard"`, and the stray quote makes the
+  // plates parseCsv() merge every row below it into one cell.
+  const labeled = (label) => new RegExp('(' + label.source + ')(?:"(?:[^"]|"")*"|[^,]*)', 'g');
+  const SALES_REP = labeled(/Sales Rep:,/);
+  const DESIGNER = labeled(/^Designer,/);
+  const ADDRESS = labeled(/Address:,/);
+  const CUSTOMER_ID = labeled(/Customer ID:,/);
+  const CUSTOMER_PO = labeled(/Customer P\.O\. #:,/);
   function redactLine(line) {
     // A number is a digit run, optionally thousands-grouped and/or decimal:
     // 42, 865.13, 1,871.56, 9,701.59. It must START with a digit — a class like
@@ -535,9 +545,11 @@
     const strip = (mark) => line
       .replace(/\$[ \t]?\d+(?:,\d{3})*(?:\.\d+)?/g, mark)       // money
       .replace(/-?\d+(?:,\d{3})*(?:\.\d+)?%/g, mark)            // percentages
-      .replace(/(Sales Rep:,)[^,]*/g, '$1' + mark)              // sales rep
-      .replace(/^(Designer,)[^,]*/g, '$1' + mark)               // designer
-      .replace(/(Address:,)[^,]*/g, '$1' + mark)                // job-site address
+      .replace(SALES_REP, '$1' + mark)
+      .replace(DESIGNER, '$1' + mark)
+      .replace(ADDRESS, '$1' + mark)                            // job-site address
+      .replace(CUSTOMER_ID, '$1' + mark)
+      .replace(CUSTOMER_PO, '$1' + mark)
       .replace(/\(?\d{3}\)?[ \t.\-]?\d{3}[ \t.\-]?\d{4}/g, mark); // phone
     const out = strip('');
     // Constraint 1 (spec #41 §5): never empty a row completely. A fully blank
