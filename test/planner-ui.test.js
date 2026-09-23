@@ -80,6 +80,26 @@ Gross Profit (Margin %),,,,,,,,,,42.5%
 Total Lumber:,,,,,,,,,,"$9,701.59"
 `;
 
+// The SOLD TO / SHIP TO block, shaped like the real export: the customer name
+// and the addresses sit in column 0 between the Delivery Date row and the
+// Address row, with the two labels spelled down the rows one letter at a time.
+const SHEET_WITH_CUSTOMER = `Quote Date:,2/2/2026,Job Number:,11601J
+Delivery Date:,8/28/2026,,
+Barbara Rodriguez
+"Rodriguez, Barbara",S
+1284 Harvest Dr
+O
+L
+D
+
+T
+O,
+8485 Quarry Ct,S
+H
+Address:,,Lot:,Lot-267,Subdiv:,
+Job Name:,Suite 6B,Delivery Area,
+`;
+
 // Split a CSV line into fields, respecting double-quoted cells, so "column
 // count" means real columns — a removed comma INSIDE a quoted money value like
 // "$1,871.56" must not read as a lost column.
@@ -94,9 +114,8 @@ function csvCols(line) {
 
 test('redact: removes money, percentages, sales rep, designer, address and phone', () => {
   const out = redact(SHEET_WITH_SENSITIVE);
-  // Money on the data row and the Total row goes. The one exception is the
-  // cost-only subtotal row, which the blank-row guard keeps whole (spec #41 §5
-  // constraint 1) — covered by its own test below.
+  // Money on the data row and the Total row goes. The cost-only subtotal row
+  // keeps a dash instead of its cost — covered by its own test below.
   for (const money of ['$4.16', '$865.13', '$88.40', '$9,701.59']) {
     assert.ok(!out.includes(money), `money value ${money} survived`);
   }
@@ -117,21 +136,54 @@ test('redact: keeps the labels, the job fields and the material data the parsers
 });
 
 test('redact: preserves the row count, the column count and every Total marker', () => {
-  const out = redact(SHEET_WITH_SENSITIVE);
-  const before = SHEET_WITH_SENSITIVE.split('\n');
-  const after = out.split('\n');
-  assert.equal(after.length, before.length, 'the row count changed');
-  for (let i = 0; i < before.length; i++) {
-    assert.equal(csvCols(after[i]), csvCols(before[i]), `column count changed on row ${i}`);
-    if (/^Total/.test(before[i])) assert.ok(/^Total/.test(after[i]), `a Total marker was lost on row ${i}`);
+  for (const sheet of [SHEET_WITH_SENSITIVE, SHEET_WITH_CUSTOMER]) {
+    const before = sheet.split('\n');
+    const after = redact(sheet).split('\n');
+    assert.equal(after.length, before.length, 'the row count changed');
+    for (let i = 0; i < before.length; i++) {
+      assert.equal(csvCols(after[i]), csvCols(before[i]), `column count changed on row ${i}`);
+      if (/^Total/.test(before[i])) assert.ok(/^Total/.test(after[i]), `a Total marker was lost on row ${i}`);
+    }
   }
 });
 
-test('redact: never empties a row completely — a cost-only subtotal row is kept whole', () => {
+test('redact: never empties a row completely — a cost-only subtotal row keeps a dash, not its cost', () => {
   // `,,,,,,,"$1,871.56"` would collapse to all-commas, which terminates the
-  // hangers section. The guard keeps the original line (spec #41 §5 constraint 1).
+  // hangers section (spec #41 §5 constraint 1). A dash keeps the row non-blank
+  // without the cost (#38, decided 2026-09-23).
   const out = redact(SHEET_WITH_SENSITIVE);
-  assert.ok(out.includes(',,,,,,,"$1,871.56"'), 'the cost-only row was emptied instead of kept');
+  assert.ok(!out.includes('$1,871.56'), 'the cost on the cost-only row survived');
+  assert.ok(out.includes('\n,,,,,,,"-"\n'), 'the cost-only row was not kept as a dash');
+});
+
+test('redact: removes the customer name and addresses in the SOLD TO / SHIP TO block', () => {
+  const out = redact(SHEET_WITH_CUSTOMER);
+  for (const value of ['Barbara', 'Rodriguez', 'Harvest', 'Quarry']) {
+    assert.ok(!out.includes(value), `customer value ${value} survived`);
+  }
+  assert.ok(out.includes('Delivery Date:,8/28/2026,,'), 'the delivery date was removed');
+  assert.ok(out.includes('Job Name:,Suite 6B'), 'the job name was removed');
+});
+
+test('redact: a colon inside a customer line does not end the block early', () => {
+  const sheet = SHEET_WITH_CUSTOMER.replace('1284 Harvest Dr', 'C/O Smith:\n1284 Harvest Dr');
+  const out = redact(sheet);
+  for (const value of ['Smith', 'Harvest', 'Quarry']) {
+    assert.ok(!out.includes(value), `customer value ${value} survived`);
+  }
+});
+
+test('redact: finds the end label up to 40 rows down, and leaves the block alone past that', () => {
+  // Past 40 rows the layout has changed. Blanking on regardless could reach a
+  // section header and drop that section from the buy list; the owner chose a
+  // buy list that stays right over a customer name that stays home (#38,
+  // 2026-09-23). The corpus block is 15 to 17 rows.
+  const sheet = (rowsDown) => 'Delivery Date:,8/28/2026,,\nBarbara Rodriguez\n'
+    + '2z4spdss,10,8-00-00\n'.repeat(rowsDown - 2) + 'Address:,,\n';
+  assert.ok(!redact(sheet(40)).includes('Barbara'), 'an end label 40 rows down was not found');
+  const past = redact(sheet(41));
+  assert.ok(past.includes('\nBarbara Rodriguez\n'), 'the block was blanked with its end label 41 rows down');
+  assert.ok(past.includes('\n2z4spdss,10,8-00-00\n'), 'a material row was blanked with no end label in reach');
 });
 
 test('redact: passes through the trivial inputs untouched', () => {

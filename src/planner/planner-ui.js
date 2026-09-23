@@ -507,47 +507,102 @@
   // ── Redaction: strip the sensitive values before a sheet leaves the browser ─
   // The four pages POST getJobs()/getStock() to a hosted server, so the sheet
   // now leaves the office machine. A MiTek summary carries per-line and per-job
-  // costs, the job-site address, phone numbers, the sales representative and the
-  // designer — none of which any surviving parser reads (spec #41 §5). Remove
+  // costs, the customer name and addresses, the job-site address, phone numbers,
+  // the sales representative and the designer — none of which any surviving
+  // parser reads (spec #41 §5, #38). Remove
   // them here, at the single chokepoint every request body is built from.
   //
   // The mechanism is find-and-replace on the RAW text: it never parses the sheet
-  // and never rebuilds it, so it cannot re-quote a cell and silently corrupt a
-  // buy list (the round-trip hazard in docs/research/browser-side-redaction-…).
+  // beyond finding where column 0 ends, and never rebuilds a line, so it cannot
+  // re-quote a cell and silently corrupt a buy list (the round-trip hazard in
+  // docs/research/browser-side-redaction-…).
   // Every byte a pass does not match reaches the server exactly as it arrived.
   // The passes port the owner's scrub-mats.py blocklist; MiTek's export format
   // is fixed, so the blocklist stays enumerated.
   //
-  // Applied per line, so no pass can span a newline: the row count, the column
-  // count and every `Total` section-marker are preserved, which is what keeps
-  // the buy list identical (proven by test/redaction-invariance.test.js).
+  // Every pass rewrites within one line, so none can span a newline: the row
+  // count, the column count and every `Total` section-marker are preserved,
+  // which is what keeps the buy list identical (proven by
+  // test/redaction-invariance.test.js). The customer-block pass alone reads the
+  // neighboring rows, to find the block; it still rewrites only column 0.
   const REDACT_STRUCTURAL = /^[\s,"']*$/;
+  const REDACT_MARK = '-';
   function redactLine(line) {
     // A number is a digit run, optionally thousands-grouped and/or decimal:
     // 42, 865.13, 1,871.56, 9,701.59. It must START with a digit — a class like
     // [\d,]+ would also match a run of empty cells (their commas), eating column
     // separators off a row such as `,,,,,,,,,,42.5%` and dropping its columns.
-    const out = line
-      .replace(/\$[ \t]?\d+(?:,\d{3})*(?:\.\d+)?/g, '')         // money
-      .replace(/-?\d+(?:,\d{3})*(?:\.\d+)?%/g, '')              // percentages
-      .replace(/(Sales Rep:,)[^,]*/g, '$1')                     // sales rep
-      .replace(/^(Designer,)[^,]*/g, '$1')                      // designer
-      .replace(/(Address:,)[^,]*/g, '$1')                       // job-site address
-      .replace(/\(?\d{3}\)?[ \t.\-]?\d{3}[ \t.\-]?\d{4}/g, ''); // phone
+    const strip = (mark) => line
+      .replace(/\$[ \t]?\d+(?:,\d{3})*(?:\.\d+)?/g, mark)       // money
+      .replace(/-?\d+(?:,\d{3})*(?:\.\d+)?%/g, mark)            // percentages
+      .replace(/(Sales Rep:,)[^,]*/g, '$1' + mark)              // sales rep
+      .replace(/^(Designer,)[^,]*/g, '$1' + mark)               // designer
+      .replace(/(Address:,)[^,]*/g, '$1' + mark)                // job-site address
+      .replace(/\(?\d{3}\)?[ \t.\-]?\d{3}[ \t.\-]?\d{4}/g, mark); // phone
+    const out = strip('');
     // Constraint 1 (spec #41 §5): never empty a row completely. A fully blank
     // row TERMINATES the hangers section (parseHangerSheet.js isBlankRow→break),
     // so a cost-only subtotal row like `,,,,,,,"$1,871.56"` must not collapse to
-    // all-commas. If it would, keep the original line untouched.
-    if (REDACT_STRUCTURAL.test(out) && !REDACT_STRUCTURAL.test(line)) return line;
+    // all-commas. If it would, strip it again with a dash in place of each
+    // removed value (#38): the row stays non-blank and the cost still goes.
+    if (REDACT_STRUCTURAL.test(out) && !REDACT_STRUCTURAL.test(line)) return strip(REDACT_MARK);
     return out;
+  }
+  // End of a line's first cell, honoring a double-quoted cell such as
+  // `"Rodriguez, Barbara"`, whose comma is not a column separator.
+  function firstCellEnd(line) {
+    if (line[0] !== '"') {
+      const comma = line.indexOf(',');
+      return comma === -1 ? line.length : comma;
+    }
+    for (let k = 1; k < line.length; k++) {
+      if (line[k] !== '"') continue;
+      if (line[k + 1] === '"') { k++; continue; }
+      return k + 1;
+    }
+    return line.length;
+  }
+  // The labels that end the block, as in the owner's scrub-mats.py. A known
+  // label, not any cell ending in `:`, so a customer line such as `C/O Smith:`
+  // cannot end the block early and send the lines below it.
+  const CUSTOMER_BLOCK_END = /^(?:Address|Job Name|Delivery Notes|Notes):$/;
+  function endsCustomerBlock(line) {
+    return CUSTOMER_BLOCK_END.test(line.slice(0, firstCellEnd(line)).trim());
+  }
+  // The SOLD TO / SHIP TO block: the customer name and the addresses, in column
+  // 0 of the rows between the Delivery Date row and the next header label
+  // (`Address:` on all 50 corpus sheets). The block has no label of its own —
+  // MiTek spells SOLD TO down the rows one letter at a time — so no find-and-
+  // replace pass can match it; its position is the only anchor (#38). Each
+  // non-empty first cell becomes a dash, so no row is emptied (constraint 1).
+  //
+  // Deliberately fails open: with no end label within 40 rows (the corpus
+  // block is 15 to 17), the layout has changed and the block is left whole.
+  // Blanking on regardless would reach a section header such as LUMBER SUMMARY
+  // and drop that section from the buy list without a word.
+  const CUSTOMER_BLOCK_MAX_ROWS = 40;
+  function redactCustomerBlock(lines) {
+    const start = lines.findIndex((l) => l.startsWith('Delivery Date:,'));
+    if (start === -1) return;
+    let end = -1;
+    const limit = Math.min(lines.length, start + CUSTOMER_BLOCK_MAX_ROWS + 1);
+    for (let i = start + 1; i < limit; i++) {
+      if (endsCustomerBlock(lines[i])) { end = i; break; }
+    }
+    if (end === -1) return;
+    for (let i = start + 1; i < end; i++) {
+      const cut = firstCellEnd(lines[i]);
+      if (lines[i].slice(0, cut).trim()) lines[i] = REDACT_MARK + lines[i].slice(cut);
+    }
   }
   function redact(text) {
     if (typeof text !== 'string' || text === '') return text;
     // Split keeping the terminators (even indices = content, odd = the newline)
     // so the exact newline style survives the rejoin.
     const parts = text.split(/(\r\n|\n|\r)/);
-    for (let i = 0; i < parts.length; i += 2) parts[i] = redactLine(parts[i]);
-    return parts.join('');
+    const lines = parts.filter((_, i) => i % 2 === 0).map((l) => redactLine(l));
+    redactCustomerBlock(lines);
+    return lines.map((l, i) => l + (parts[2 * i + 1] || '')).join('');
   }
 
   if (typeof window !== 'undefined') {
