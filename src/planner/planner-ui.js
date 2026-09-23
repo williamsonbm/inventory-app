@@ -457,12 +457,11 @@
     };
   }
 
-  // Cell-level: does this CSV carry the bare item/span/qty stock shape (EWP's
-  // own product, e.g. item,span,qty… or the wide on_hand export)? Not a
-  // substring check — a job summary's "Product:,EWP" metadata must not read as
-  // an 'item' alias. Shared by looksLikeAnyStock's own branch below and by
-  // EWP's isStockFile ("is this file my stock" — the same shape, a narrower
-  // question), so the tokenizer + shape check exists in exactly one place.
+  // Cell-level: does this CSV carry the bare item/span/qty stock shape (the
+  // EWP stock export LVL reads, e.g. item,span,qty… or the wide on_hand
+  // export)? Not a substring check — a job summary's "Product:,EWP" metadata
+  // must not read as an 'item' alias. Its one caller is looksLikeAnyStock
+  // below; the EWP tab's isStockFile, which shared it, left with the tab (#41).
   function looksLikeItemSpanQtyStock(text, maxLines) {
     const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim()).slice(0, maxLines);
     const has = (cells, arr) => cells.some((c) => arr.includes(c));
@@ -631,7 +630,8 @@
   // window.PlannerUI: getJobs()/getStock() call it from this closure, so a
   // browser export would have no reader — and an export with no reader does not
   // ship (issue #39). looksLikeAnyStock and looksLikeItemSpanQtyStock are held
-  // back for the same reason: their only reader was planner.html, now deleted.
+  // back for the same reason: dropZones calls them from this closure, and their
+  // only outside reader, the EWP tab's isStockFile, left with the tab (#41).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       stockProductHints, looksLikePlateOrHangerStock, redact,
