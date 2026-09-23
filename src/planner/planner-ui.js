@@ -12,6 +12,12 @@
    for the two blocks that are identical everywhere.
 
    Exposes a single global: window.PlannerUI.
+
+   NOT UNIT-TESTED: dropZones and the closures inside it (rebuild, paintFiles,
+   badgeFor) read CsvPile and the DOM, and this repo has no Node DOM harness.
+   They are checked by hand in the browser. test/planner-ui.test.js covers the
+   pure sniffing helpers (looksLikePlateOrHangerStock, redact), and the server
+   re-classifies every upload, so a client mis-sniff cannot mis-plan.
    ============================================================= */
 (function () {
   'use strict';
@@ -168,8 +174,9 @@
       count.textContent = parts.join('  ·  ');
     }
 
-    // Badge one pile file from THIS tab's point of view: its own stock, a stock
-    // file for another tab ("other stock"), or a job it will feed to the server.
+    // Badge one pile file from THIS tab's point of view: its own on-hand file,
+    // an on-hand file for another tab (badged "other stock"), or a job it will
+    // feed to the server.
     function badgeFor(f) {
       if (stock && f.name === stock.name) return { label: 'stock', cls: 'b-stock' };
       if (looksLikeAnyStock(f.text)) return { label: 'other stock', cls: 'b-other' };
@@ -193,13 +200,15 @@
       filesActions.hidden = pile.length === 0;
     }
 
-    // Re-derive jobs/stock from the shared pile, two-stage (see spec):
+    // Re-derive jobs and the on-hand slot from the shared pile, two-stage (see
+    // spec):
     //   stock = the last-added on-hand file THIS tab's isStockFile claims;
     //   jobs  = files that are NOT any kind of on-hand file (looksLikeAnyStock)
-    //           and are not the file picked above — so an on-hand file for any
-    //           family never lands in a job list, even one the sniffer misses.
+    //           and are not the file picked above, so the on-hand file this tab
+    //           claims never lands in its job list even when looksLikeAnyStock
+    //           misses it. Another family's on-hand file that looksLikeAnyStock
+    //           misses does land in jobs; the client has no third check.
     // Everything else in the pile (another tab's on-hand file) is unused here.
-    // Not unit-tested: rebuild reads CsvPile and lives in the dropZones closure.
     // The server re-classifies authoritatively on plan, so a client mis-sniff
     // only mislabels the panel, never mis-plans.
     function rebuild() {
