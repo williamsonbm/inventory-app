@@ -194,10 +194,12 @@
     }
 
     // Re-derive jobs/stock from the shared pile, two-stage (see spec):
-    //   jobs  = files that are NOT any kind of stock (looksLikeAnyStock) — so a
-    //           plate/hanger/lumber/EWP stock file never lands in a job list;
-    //   stock = the last-added stock file THIS tab's isStockFile claims.
-    // Everything else in the pile (another tab's stock) is simply unused here.
+    //   stock = the last-added on-hand file THIS tab's isStockFile claims;
+    //   jobs  = files that are NOT any kind of on-hand file (looksLikeAnyStock)
+    //           and are not the file picked above — so an on-hand file for any
+    //           family never lands in a job list, even one the sniffer misses.
+    // Everything else in the pile (another tab's on-hand file) is unused here.
+    // Not unit-tested: rebuild reads CsvPile and lives in the dropZones closure.
     // The server re-classifies authoritatively on plan, so a client mis-sniff
     // only mislabels the panel, never mis-plans.
     function rebuild() {
