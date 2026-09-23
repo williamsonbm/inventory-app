@@ -1,0 +1,24 @@
+# Runs the test suite on every pull request and on every push to main.
+# The pre-push hook keeps direct pushes off main; this is the second net,
+# a red check on a PR before the owner merges it.
+name: test
+
+permissions:
+  contents: read
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: package.json
+          cache: npm
+      - run: npm ci
+      - run: npm test
