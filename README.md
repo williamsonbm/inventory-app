@@ -35,7 +35,6 @@ Under the `claude-pod` alias both sit at `/workspace/`; elsewhere the path diffe
 |---|---|
 | `src/lumber/`, `src/plates/`, `src/hangers/`, `src/lvl/`, `src/ewp/` | Per-family sheet parsers and buy-list planners |
 | `src/planner/` | The Express server, the four HTML pages, and the shared UI (`planner-ui.js`, `planner.css`) |
-| `public/` | Shared client assets (the cut-list view) |
 | `test/` | Node test suites and sheet fixtures |
 | `docs/adr/` | Accepted decisions (start with ADR 0001) |
 | `docs/research/` | Platform, database, and schema assessments — the numbers behind the decisions |

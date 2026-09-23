@@ -2,16 +2,16 @@
    csvPile.js — the one shared, durable CSV pile for every tab.
    =============================================================
    Served at /csvPile.js by src/planner/server.js and loaded by every page.
-   The five planner tabs are five separate documents; switching tabs is a full
+   The four planner tabs are four separate documents; switching tabs is a full
    navigation that drops all in-memory state. This is the bridge: a single pile
    of uploaded CSVs kept in localStorage (shared across every same-origin page),
    so you drop your files once on any tab and every tab reads the same pile until
    you clear it.
 
-   ONE writer. Both intakes (the shared PlannerUI.dropZones and EWP's bespoke
-   drop panel) call CsvPile.add/remove/clear; nobody keeps a second copy of the
-   files. Each tab derives its own view (which files are jobs, which one is its
-   stock file) from CsvPile.list() — the pile stores no per-file "type", because
+   ONE writer. The one intake, the shared PlannerUI.dropZones, calls
+   CsvPile.add/remove/clear; nobody keeps a second copy of the files. Each tab
+   derives its own view (which files are jobs, which one is its stock file)
+   from CsvPile.list() — the pile stores no per-file "type", because
    type is intrinsic to the CSV and every tab already sniffs it server-side; a
    cached type would just be a second source of truth waiting to disagree.
 

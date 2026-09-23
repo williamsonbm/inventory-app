@@ -1,8 +1,8 @@
 /* =============================================================
    planner.css — the ONE shared stylesheet for every planner tab.
    =============================================================
-   EWP, Plates, Hangers, LVL and Lumber are one tool and must not look like
-   five. Each page used to inline its own ~110-line copy of this block; they
+   Plates, Hangers, LVL and Lumber are one tool and must not look like
+   four. Each page used to inline its own ~110-line copy of this block; they
    drifted (two different stat-card systems, a warm palette on one page) which
    read as different applications sitting on the same port. This is now the
    single source of truth — served at /planner.css by src/planner/server.js and

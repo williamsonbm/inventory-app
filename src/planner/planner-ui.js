@@ -457,12 +457,11 @@
     };
   }
 
-  // Cell-level: does this CSV carry the bare item/span/qty stock shape (EWP's
-  // own product, e.g. item,span,qty… or the wide on_hand export)? Not a
-  // substring check — a job summary's "Product:,EWP" metadata must not read as
-  // an 'item' alias. Shared by looksLikeAnyStock's own branch below and by
-  // EWP's isStockFile ("is this file my stock" — the same shape, a narrower
-  // question), so the tokenizer + shape check exists in exactly one place.
+  // Cell-level: does this CSV carry the bare item/span/qty stock shape (the
+  // EWP stock export LVL reads, e.g. item,span,qty… or the wide on_hand
+  // export)? Not a substring check — a job summary's "Product:,EWP" metadata
+  // must not read as an 'item' alias. Its one caller is looksLikeAnyStock
+  // below; the EWP tab's isStockFile, which shared it, left with the tab (#41).
   function looksLikeItemSpanQtyStock(text, maxLines) {
     const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim()).slice(0, maxLines);
     const has = (cells, arr) => cells.some((c) => arr.includes(c));
