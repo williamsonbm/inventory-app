@@ -68,6 +68,7 @@ test('looksLikePlateOrHangerStock: a job summary\'s Misc Items section is not a 
 const SHEET_WITH_SENSITIVE = `Material Summary,Riverbend Lumber Supply,P.O. Box 1347,Grottoes VA 20335,Business:  (540) 555-0137
 Quote Date:,2/2/2026,Job Number:,11601J
 Order Date:,8/14/2026,Product:,EWP
+Delivered Date:,,Customer P.O. #:,CLM-2613489
 Sales Rep:,Richard Thompson
 Designer,Lisa Johnson,Customer ID:,708
 Address:,8485 Quarry Ct,Lot:,Lot-267,Subdiv:,
@@ -100,6 +101,17 @@ Address:,,Lot:,Lot-267,Subdiv:,
 Job Name:,Suite 6B,Delivery Area,
 `;
 
+// A labeled value with a comma in it, which the export wraps in quotes. A pass
+// that stops at the first comma leaves the rest of the value and a stray quote;
+// the plates parser then reads the stray quote as the start of a quoted cell
+// and merges every row after it into that one cell.
+const SHEET_WITH_QUOTED_VALUES = `Delivered Date:,,Customer P.O. #:,"PO 12, rev 2"
+Sales Rep:,"Thompson, Richard"
+Designer,"Johnson, Lisa",Customer ID:,"708, 709"
+Address:,"8485 Quarry Ct, Unit 4",Lot:,Lot-267,Subdiv:,
+PLATE SUMMARY,,
+`;
+
 // Split a CSV line into fields, respecting double-quoted cells, so "column
 // count" means real columns — a removed comma INSIDE a quoted money value like
 // "$1,871.56" must not read as a lost column.
@@ -112,7 +124,7 @@ function csvCols(line) {
   return cols;
 }
 
-test('redact: removes money, percentages, sales rep, designer, address and phone', () => {
+test('redact: removes money, percentages, sales rep, designer, address, phone, customer ID and P.O. number', () => {
   const out = redact(SHEET_WITH_SENSITIVE);
   // Money on the data row and the Total row goes. The cost-only subtotal row
   // keeps a dash instead of its cost — covered by its own test below.
@@ -124,11 +136,26 @@ test('redact: removes money, percentages, sales rep, designer, address and phone
   assert.ok(!out.includes('Lisa Johnson'), 'the designer name survived');
   assert.ok(!out.includes('8485 Quarry Ct'), 'the job-site address survived');
   assert.ok(!out.includes('555-0137') && !out.includes('(540)'), 'the phone number survived');
+  assert.ok(!out.includes('Customer ID:,708'), 'the customer ID survived');
+  assert.ok(!out.includes('CLM-2613489'), 'the customer P.O. number survived');
+});
+
+test('redact: removes a whole quoted value that has a comma in it', () => {
+  const before = SHEET_WITH_QUOTED_VALUES.split('\n');
+  const after = redact(SHEET_WITH_QUOTED_VALUES).split('\n');
+  for (const part of ['rev 2', 'Richard', 'Lisa', '709', 'Unit 4']) {
+    assert.ok(!after.join('\n').includes(part), `part of a quoted value survived: ${part}`);
+  }
+  for (let i = 0; i < before.length; i++) {
+    assert.equal(csvCols(after[i]), csvCols(before[i]), `column count changed on row ${i}`);
+  }
 });
 
 test('redact: keeps the labels, the job fields and the material data the parsers read', () => {
   const out = redact(SHEET_WITH_SENSITIVE);
   assert.ok(out.includes('Sales Rep:,'), 'the Sales Rep label was removed with its value');
+  assert.ok(out.includes('Customer ID:,'), 'the Customer ID label was removed with its value');
+  assert.ok(out.includes('Customer P.O. #:,'), 'the Customer P.O. # label was removed with its value');
   assert.ok(out.includes('Job Number:,11601J'), 'the job number was removed');
   assert.ok(out.includes('Job Name:,Suite 6B'), 'the job name was removed');
   assert.ok(out.includes('2x4 SP DSS'), 'a material name was removed');

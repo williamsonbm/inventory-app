@@ -19,10 +19,10 @@
 // sheets entered git, so this corpus cannot exercise the PHONE clause or the
 // FOOTER clause of §5 — a redaction that dropped both passes would still pass
 // here. Those two clauses are covered instead by the synthetic fixture in
-// test/planner-ui.test.js ('redact: removes ... and phone'). Every other clause
-// — money, percentages, sales rep, designer, address, the SOLD TO / SHIP TO
-// customer block — is exercised here: the scrub left generated stand-in values
-// for them in the corpus.
+// test/planner-ui.test.js ('redact: removes money, percentages, …'). Every other
+// clause — money, percentages, sales rep, designer, address, customer ID,
+// customer P.O. number, the SOLD TO / SHIP TO customer block — is exercised
+// here: the corpus carries values for them.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
