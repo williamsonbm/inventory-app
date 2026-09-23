@@ -277,6 +277,13 @@ test('an LVL row with a bad QTY is reported in the plan warnings, not dropped in
   assert.equal(plan.jobs[0].items.length, 1, 'the good row still counts');
 });
 
+test('an LVL row with a QTY but no LABEL or SIZE is reported, not taken for a spacer row', () => {
+  const sheet = JOB_A.replace('2BM1-3,2.1 RigidLam DF LVL 1-3/4 x 14,3,30-00-00,', ',,3,30-00-00,');
+  const plan = planLvl([{ name: 'a.csv', text: sheet }], null);
+  assert.ok(plan.warnings.includes('[20001J] Row 14 skipped: "" SIZE "", QTY "3", LENGTH "30-00-00"'),
+    `expected a skipped-row warning, got ${JSON.stringify(plan.warnings)}`);
+});
+
 // Misc Items ends the LVL section.
 test('a Misc Items section after Rectangular EWP ends the LVL section without warnings', () => {
   const sheet = JOB_A.replace('Total: 2.1 RigidLam DF LVL 1-3/4 x 14,-3,90-00-00 - L/F,\n',

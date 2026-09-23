@@ -82,10 +82,16 @@ function parseLvlSheet(csvText) {
     const qty = parseInt(rawQty);
     const rawLength = (cols[3] || '').trim();
 
-    if (!label && !size) continue;                      // spacer row
-    // A label alone is the next section's title ("Misc Items"), as in the
-    // plate and lumber parsers.
-    if (label && !size && !rawQty && !rawLength) { currentCategory = null; continue; }
+    // Blank in SIZE, QTY and LENGTH. Deliberately not a whole-row blank test
+    // (isBlankRow in the other parsers): cost cells to the right fill
+    // otherwise-empty rows, and that test would put 33 false "Row N skipped"
+    // warnings on 13 of the 50 corpus sheets.
+    if (!size && !rawQty && !rawLength) {
+      // A label alone is the next section's title ("Misc Items"), as in the
+      // plate and lumber parsers. No label is a spacer row.
+      if (label) currentCategory = null;
+      continue;
+    }
 
     const decimalFeet = parseLength(rawLength);
     if (!size || !qty || qty < 1 || decimalFeet === null) {
