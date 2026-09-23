@@ -618,7 +618,8 @@
   // window.PlannerUI: getJobs()/getStock() call it from this closure, so a
   // browser export would have no reader — and an export with no reader does not
   // ship (issue #39). looksLikeAnyStock and looksLikeItemSpanQtyStock are held
-  // back for the same reason: their only reader was planner.html, now deleted.
+  // back for the same reason: dropZones calls them from this closure, and their
+  // only outside reader, the EWP tab's isStockFile, left with the tab (#41).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       stockProductHints, looksLikePlateOrHangerStock, redact,
