@@ -213,6 +213,31 @@ test('redact: finds the end label up to 40 rows down, and leaves the block alone
   assert.ok(past.includes('\n2z4spdss,10,8-00-00\n'), 'a material row was blanked with no end label in reach');
 });
 
+// The two footer rows, laid out as in test/plate-fixtures/10001R-materials.csv
+// (made-up values): the company, its address and phone in one quoted cell, then
+// the report creator, the print date and the page count. The 50-sheet corpus
+// has its footer rows stripped, so this fixture covers them.
+const SHEET_WITH_FOOTER = `Gross Profit (Margin %),,,,,,,
+,,,,,,,
+"Oakridge Truss Co - 123 Mill Rd , Staunton VA 24401 Phone: (540) 555-0199",,,,,,,
+Pat Morgan,Pat -  Date: 9/4/2026  Page: 1 of 1,9/4/2026 ,,,,,
+`;
+
+test('redact: replaces every cell of the two footer rows with a dash', () => {
+  const out = redact(SHEET_WITH_FOOTER).split('\n');
+  assert.equal(out[2], '-,,,,,,,');
+  assert.equal(out[3], '-,-,-,,,,,');
+});
+
+test('redact: leaves the footer rows whole when either marker is missing', () => {
+  // Only one of the two footer markers: the layout has changed, so the rows
+  // are left alone rather than guessed at.
+  const noPhone = 'Notes:,see plan,,\nPat Morgan,Pat -  Date: 9/4/2026  Page: 1 of 1,9/4/2026 ,,\n';
+  assert.equal(redact(noPhone), noPhone);
+  const noPage = '"Oakridge Truss Co Phone: ",,\nLUMBER SUMMARY,,\n';
+  assert.equal(redact(noPage), noPage);
+});
+
 test('redact: passes through the trivial inputs untouched', () => {
   assert.equal(redact(''), '');
   assert.equal(redact(undefined), undefined);

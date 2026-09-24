@@ -518,8 +518,9 @@
   // The four pages POST getJobs()/getStock() to a hosted server, so the sheet
   // now leaves the office machine. A MiTek summary carries per-line and per-job
   // costs, the customer name and addresses, the job-site address, phone numbers,
-  // the sales representative, the designer, the customer ID and the customer
-  // P.O. number — none of which any surviving parser reads (spec #41 §5, #38).
+  // the sales representative, the designer, the customer ID, the customer P.O.
+  // number, and a footer naming the company, its address and the report
+  // creator — none of which any surviving parser reads (spec #41 §5, #38).
   // Remove them here, at the single chokepoint every request body is built from.
   //
   // The mechanism is find-and-replace on the RAW text: it never parses the sheet
@@ -533,15 +534,17 @@
   // Every pass rewrites within one line, so none can span a newline: the row
   // count, the column count and every `Total` section-marker are preserved,
   // which is what keeps the buy list identical (proven by
-  // test/redaction-invariance.test.js). The customer-block pass alone reads the
-  // neighboring rows, to find the block; it still rewrites only column 0.
+  // test/redaction-invariance.test.js). The customer-block and footer passes
+  // alone read neighboring rows, to find their rows; they still rewrite only
+  // cell contents, never a comma.
   const REDACT_STRUCTURAL = /^[\s,"']*$/;
   const REDACT_MARK = '-';
   // A labeled value is one cell: a quoted cell whole, commas and all, or else
   // the text up to the next comma. Stopping at the first comma of
   // `"Thompson, Richard"` would send ` Richard"`, and the stray quote makes the
   // plates parseCsv() merge every row below it into one cell.
-  const labeled = (label) => new RegExp('(' + label.source + ')(?:"(?:[^"]|"")*"|[^,]*)', 'g');
+  const CELL = '"(?:[^"]|"")*"|[^,]*';
+  const labeled = (label) => new RegExp('(' + label.source + ')(?:' + CELL + ')', 'g');
   const SALES_REP = labeled(/Sales Rep:,/);
   const DESIGNER = labeled(/^Designer,/);
   const ADDRESS = labeled(/Address:,/);
@@ -617,6 +620,25 @@
       if (lines[i].slice(0, cut).trim()) lines[i] = REDACT_MARK + lines[i].slice(cut);
     }
   }
+  // The two footer rows: the company, its address and phone in one quoted cell,
+  // then the report creator, the print date and `Page: N of M`. Neither row has
+  // a label, so the pair is found by its two markers, and every non-empty cell
+  // of both rows becomes a dash: the text goes, the row and column counts stay.
+  //
+  // Deliberately anchored on the markers, not on "the last two rows" as in the
+  // owner's scrub-mats.py: a sheet already scrubbed of its footer would lose
+  // its totals and Gross Profit rows instead. Without both markers, the rows
+  // are left whole.
+  const FOOTER_PAGE = /Page: ?\d+ of \d+/;
+  const EACH_CELL = new RegExp(CELL, 'g');
+  const dashCells = (line) => line.replace(EACH_CELL, (c) => (c.trim() ? REDACT_MARK : c));
+  function redactFooter(lines) {
+    for (let i = 1; i < lines.length; i++) {
+      if (!FOOTER_PAGE.test(lines[i]) || !lines[i - 1].includes('Phone:')) continue;
+      lines[i - 1] = dashCells(lines[i - 1]);
+      lines[i] = dashCells(lines[i]);
+    }
+  }
   function redact(text) {
     if (typeof text !== 'string' || text === '') return text;
     // Split keeping the terminators (even indices = content, odd = the newline)
@@ -624,6 +646,7 @@
     const parts = text.split(/(\r\n|\n|\r)/);
     const lines = parts.filter((_, i) => i % 2 === 0).map((l) => redactLine(l));
     redactCustomerBlock(lines);
+    redactFooter(lines);
     return lines.map((l, i) => l + (parts[2 * i + 1] || '')).join('');
   }
 
