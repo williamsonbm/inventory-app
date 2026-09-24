@@ -519,8 +519,9 @@
   // now leaves the office machine. A MiTek summary carries per-line and per-job
   // costs, the customer name and addresses, the job-site address, phone numbers,
   // the sales representative, the designer, the customer ID, the customer P.O.
-  // number, and a footer naming the company, its address and the report
-  // creator — none of which any surviving parser reads (spec #41 §5, #38).
+  // number, the company line in row 1, and a footer naming the company, its
+  // address and the report creator — none of which any surviving parser reads
+  // (spec #41 §5, #38).
   // Remove them here, at the single chokepoint every request body is built from.
   //
   // The mechanism is find-and-replace on the RAW text: it never parses the sheet
@@ -639,6 +640,19 @@
       lines[i] = dashCells(lines[i]);
     }
   }
+  // Row 1: the report title, then the company name, its P.O. box, its town and
+  // `Business:` with its phone. parseHangerSheet reads the title cell, so it
+  // stays; every other non-empty cell becomes a dash.
+  //
+  // Deliberately anchored on the `Business:` label, not on the title
+  // `Material Summary`: the Invoice layout (test/plate-fixtures/10001R) has
+  // another title and would send its company line. Without the label, row 1
+  // is left whole.
+  function redactCompanyLine(lines) {
+    if (!lines[0].includes('Business:')) return;
+    const cut = firstCellEnd(lines[0]);
+    lines[0] = lines[0].slice(0, cut) + dashCells(lines[0].slice(cut));
+  }
   function redact(text) {
     if (typeof text !== 'string' || text === '') return text;
     // Split keeping the terminators (even indices = content, odd = the newline)
@@ -647,6 +661,7 @@
     const lines = parts.filter((_, i) => i % 2 === 0).map((l) => redactLine(l));
     redactCustomerBlock(lines);
     redactFooter(lines);
+    redactCompanyLine(lines);
     return lines.map((l, i) => l + (parts[2 * i + 1] || '')).join('');
   }
 

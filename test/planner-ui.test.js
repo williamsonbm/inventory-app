@@ -238,6 +238,17 @@ test('redact: leaves the footer rows whole when either marker is missing', () =>
   assert.equal(redact(noPage), noPage);
 });
 
+test('redact: replaces the company cells of row 1 with dashes, keeping the report title', () => {
+  // parseHangerSheet reads the first cell of row 1, so the title stays.
+  const out = redact(SHEET_WITH_SENSITIVE).split('\n');
+  assert.equal(out[0], 'Material Summary,-,-,-,-');
+});
+
+test('redact: leaves row 1 whole when it has no Business: label', () => {
+  const sheet = 'Material Summary,Oakridge Truss Co,P.O. Box 12,Staunton VA 24401\nJob Name:,Suite 6B,,\n';
+  assert.equal(redact(sheet), sheet);
+});
+
 test('redact: passes through the trivial inputs untouched', () => {
   assert.equal(redact(''), '');
   assert.equal(redact(undefined), undefined);
