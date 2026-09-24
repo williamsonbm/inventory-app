@@ -21,10 +21,10 @@
 // FOOTER clause of §5. The phone clause is covered by the synthetic fixture in
 // test/planner-ui.test.js ('redact: removes money, percentages, …'); the footer
 // clause by three plate fixtures that still carry it, in the test 'redaction
-// invariance: the footer rows go, …'. Every other clause — money, percentages,
-// sales rep, designer, address, customer ID, customer P.O. number, the SOLD TO
-// / SHIP TO customer block — is exercised by the 50 sheets, which carry values
-// for them.
+// invariance: the footer rows and the company line go, …'. Every other clause
+// — money, percentages, sales rep, designer, address, customer ID, customer
+// P.O. number, the SOLD TO / SHIP TO customer block, the company line in row 1
+// — is exercised by the 50 sheets, which carry values for them.
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -82,6 +82,9 @@ test('redaction invariance: redacted sheets plan to the same buy lists, all four
 
   const sheets = loadSheets();
   assert.equal(sheets.length, 50, 'the committed corpus should still hold 50 sheets');
+  for (const { name, text } of sheets) {
+    assert.ok(/^[^,]*(?:,-?)*$/.test(text.split(/\r?\n/)[0]), `${name}: the company line in row 1 survived`);
+  }
 
   for (const { family, route, stockFile } of ROUTES) {
     for (const withStock of [false, true]) {
@@ -100,7 +103,8 @@ test('redaction invariance: redacted sheets plan to the same buy lists, all four
 // The 50-sheet corpus has its footer rows stripped. These three plate fixtures
 // still carry the real two-row footer, so they prove the footer pass: the
 // footer text goes, and every route plans them exactly as it plans the raw file.
-test('redaction invariance: the footer rows go, and the three sheets that still carry them plan the same on all four routes', async (t) => {
+// 10001R also carries the Invoice layout of the company line in row 1.
+test('redaction invariance: the footer rows and the company line go, and the three sheets that still carry them plan the same on all four routes', async (t) => {
   const base = startServer(t);
 
   const dir = path.join(__dirname, 'plate-fixtures');
@@ -111,6 +115,7 @@ test('redaction invariance: the footer rows go, and the three sheets that still 
   for (const { name, text } of redacted) {
     assert.ok(!/Page: ?\d/.test(text), `${name}: the page-count footer row survived`);
     assert.ok(!text.includes('Phone:'), `${name}: the company footer row survived`);
+    assert.ok(/^[^,]*(?:,-?)*$/.test(text.split(/\r?\n/)[0]), `${name}: the company line in row 1 survived`);
   }
   for (const { family, route } of ROUTES) {
     const before = await post(base, route, { files: raw });
