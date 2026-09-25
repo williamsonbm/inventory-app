@@ -1,52 +1,83 @@
 /* =============================================================
-   planner.css — the ONE shared stylesheet for every planner tab.
+   planner.css — the ONE shared stylesheet for the Planner.
    =============================================================
    Plates, Hangers, LVL and Lumber are one tool and must not look like
    four. Each page used to inline its own ~110-line copy of this block; they
    drifted (two different stat-card systems, a warm palette on one page) which
-   read as different applications sitting on the same port. This is now the
-   single source of truth — served at /planner.css by src/planner/server.js and
-   linked from every page. Page-specific rules (buy-table column widths, the
-   row accent colour for that tab) stay inline on each page, clearly the only
-   thing that differs.
+   read as different applications sitting on the same port. This is the single
+   source of truth — served at /planner.css by src/planner/server.js and linked
+   from planner.html. Family-specific rules (buy-table column widths, a row
+   accent colour) sit at the end, scoped to their section where two families
+   would otherwise clash.
 
-   Theme: light palette on :root, dark via prefers-color-scheme. Every colour is
-   a token so the two themes stay in step.
+   Theme: the web app's palette and two-level header (spec #72), light on
+   :root and dark on [data-theme="dark"], which planner.html sets on <html>
+   from the saved choice or the computer's preference. The dark palette is
+   screen-only: a printed order sheet is always dark ink on white paper.
+   Every colour is a token so the two themes stay in step. Muted text and the
+   amber warning colour keep the planner's darker shades: the web app's
+   #7f8c8d and #b9770e are too faint on white for small text and the bold buy
+   figures.
    ============================================================= */
 
 :root {
-  --bg:#f6f7f9; --card:#fff; --ink:#1b1f24; --muted:#606a76; --line:#dfe3e8;
-  --accent:#1f6feb; --good-bg:#e8f5ee; --good:#137a45; --warn-bg:#fdf1e3; --warn:#9a5b00;
-  --info-bg:#eaf1fd; --drop:#6a5acd;
-  --surface:#fff; --surface-2:#eef1f4; --line-strong:#c8ced6; --text:#1b1f24;
-  --bad:#b3261e; --bad-bg:#fbeae9;
+  --bg:#fbfcfc; --card:#fff; --ink:#1c2833; --muted:#606a76; --line:#e3e6e8;
+  --accent:#1a5276; --good-bg:#eafaf1; --good:#1e8449; --warn-bg:#fef9e7; --warn:#9a5b00;
+  --info-bg:#eaf1f7;
+  --surface-2:#f4f6f7; --line-strong:#cbd2d6;
+  --bad:#c0392b; --bad-bg:#fdedec;
 }
-@media (prefers-color-scheme: dark) {
-  :root { --bg:#14171a; --card:#1c2024; --ink:#e6e9ed; --muted:#9aa4b0; --line:#2c3238;
-          --accent:#5b9bff; --good-bg:#12291d; --good:#54c58a; --warn-bg:#2b2113; --warn:#e0a34a;
-          --info-bg:#151d2b; --drop:#a99bff;
-          --surface:#1c2024; --surface-2:#23282d; --line-strong:#3a424a; --text:#e6e9ed;
-          --bad:#f2836f; --bad-bg:#2e1614; }
-}
+@media screen { [data-theme="dark"] {
+  --bg:#0f141a; --card:#161d25; --ink:#e6eaed; --muted:#9aa7b2; --line:#2a3642;
+  --accent:#3d7fc0; --good-bg:#16301f; --good:#5bbf86; --warn-bg:#332b16; --warn:#d9a441;
+  --info-bg:#151d2b;
+  --surface-2:#1f2a35; --line-strong:#3a4856;
+  --bad:#e8736a; --bad-bg:#3a201d;
+  color-scheme:dark;
+} }
 
 *{box-sizing:border-box}
-body{background:var(--bg);color:var(--ink);margin:0;padding:24px;
+body{background:var(--bg);color:var(--ink);margin:0;
   font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-.wrap{max-width:1040px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
-h1{font:600 20px/1.25 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0 0 4px}
+.wrap{max-width:1040px;margin:0 auto;padding:18px 22px 48px;display:flex;flex-direction:column;gap:14px}
 .sub{color:var(--muted);margin:0}
 a{color:var(--accent)}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
 .eyebrow{font-size:11px;letter-spacing:.09em;text-transform:uppercase;
   color:var(--muted);margin:0 0 6px}
 
-/* ── Tab switcher ─────────────────────────────────────────────────────────── */
-.nav{display:inline-flex;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden;flex-wrap:wrap}
-.nav a{padding:7px 16px;font-size:13.5px;text-decoration:none;color:var(--muted);
-  background:var(--card);border-right:1px solid var(--line-strong)}
-.nav a:last-child{border-right:0}
-.nav a.on{background:var(--accent);color:#fff}
-.nav a:not(.on):hover{background:var(--surface-2);color:var(--ink)}
+/* ── Header: brand, then the modes, then the family filter (web app's appbar) */
+.appbar{position:sticky;top:0;z-index:20;background:var(--card);border-bottom:1px solid var(--line)}
+.appbar-primary{display:flex;flex-wrap:wrap;gap:16px;align-items:center;padding:12px 22px}
+.appbar-brand{font-weight:700;font-size:15px}
+.themebtn{margin-left:auto;background:transparent;border:1px solid var(--line-strong);border-radius:8px;
+  color:var(--ink);font-size:15px;line-height:1;padding:4px 9px}
+.themebtn:hover{background:var(--surface-2)}
+.appbar-nav{display:flex;flex-wrap:wrap;gap:14px;padding:8px 22px;border-top:1px solid var(--line)}
+.appbar-nav a{color:var(--accent);text-decoration:none;font-size:14px;padding:2px 0;
+  border-bottom:2px solid transparent;white-space:nowrap}
+.appbar-nav a.here{font-weight:700;border-bottom-color:var(--accent);color:var(--ink)}
+.appbar-filter{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 22px;
+  border-top:1px solid var(--line);background:var(--surface-2)}
+.appbar-filter .label{font-size:12px;color:var(--muted)}
+.seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden}
+.seg button{border:0;border-radius:0;background:var(--card);color:var(--muted);font-size:13px;padding:5px 16px}
+.seg button + button{border-left:1px solid var(--line-strong)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+@media(max-width:760px){
+  .appbar{position:static}
+  .appbar-primary,.appbar-nav,.appbar-filter{padding-left:14px;padding-right:14px}
+  .wrap{padding-left:14px;padding-right:14px}
+}
+
+/* ── Family sections ───────────────────────────────────────────────────────── */
+.fam{display:flex;flex-direction:column;gap:14px;padding-top:18px;border-top:1px solid var(--line)}
+.fam-head{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-start;justify-content:space-between}
+.fam-head h2{font:600 18px/1.25 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0 0 2px}
+.fam-head button{padding:4px 12px;font-size:12.5px}
+.fam-out{display:flex;flex-direction:column;gap:14px}
+.busy{color:var(--muted)}
+@media screen{.fam[data-filtered-out]{display:none}}
 
 /* ── Collapsible drop-zone panel (shared component, see planner-ui.js) ──────
    Collapsed by default so the action button sits near the top without a
@@ -64,14 +95,11 @@ a{color:var(--accent)}
 .drop-count{color:var(--muted);font-size:13px;margin-left:auto;text-align:right}
 .drop-body{padding:0 16px 16px}
 
-.zones{display:grid;grid-template-columns:2fr 1fr;gap:14px}
-@media(max-width:760px){.zones{grid-template-columns:1fr}}
 .zone{background:var(--card);border:2px dashed var(--line-strong);border-radius:10px;
   padding:20px;text-align:center;cursor:pointer;transition:border-color .15s, background .15s}
 .zone:hover,.zone.over{border-color:var(--accent);background:var(--info-bg)}
 .zone h3{margin:0 0 4px;font-size:15px;font-weight:600;color:var(--ink)}
 .zone .sub-hint,.zone p{margin:0;color:var(--muted);font-size:13px;line-height:1.4}
-.badge-opt{font-size:11.5px;font-weight:400;color:var(--muted);vertical-align:middle;margin-left:4px}
 .files{margin-top:12px;text-align:left;font-size:12.5px}
 .files > div{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:5px 0;
   border-bottom:1px solid var(--line);color:var(--ink)}
@@ -120,6 +148,18 @@ table.drill-t{width:auto;min-width:420px;background:var(--card);border:1px solid
   border-radius:6px;overflow:hidden}
 table.drill-t th,table.drill-t td{padding:5px 12px;font-size:13px;border-bottom:1px solid var(--line)}
 table.drill-t tr:last-child td{border-bottom:0}
+/* Two drill-down tables side by side, always — never wrap to stacked. A long
+   cell (a cut instruction, say) can otherwise inflate one table past what fits
+   beside its neighbour, and flex-wrap packs lines by that natural width before
+   anything shrinks. Each column is forced to share the row and compress;
+   min-width:0 lets a table shrink below its content width so long text wraps
+   inside the column instead of pushing it wider. */
+.plan-cols{display:flex;flex-wrap:nowrap;gap:14px 32px;align-items:flex-start}
+.plan-cols > div{min-width:0;flex:1 1 0}
+.plan-cols tfoot td{border-top:2px solid var(--line-strong)}
+/* A second heading stacked under another table in the same column (Driving
+   usage under Raw lengths) needs top spacing that a leading heading doesn't. */
+.drill h4:not(:first-child){margin-top:16px}
 .caret{cursor:pointer;user-select:none;color:var(--muted);margin-right:6px;font-size:13px;display:inline-block}
 /* A whole row that expands a drill-down on click (see PlannerUI.drilldowns).
    tr[data-key] is the Plates buy list's own row-click wiring — it keeps its
@@ -143,7 +183,7 @@ tr[data-group][data-toggle]:hover .caret,tr[data-key]:hover .caret{color:var(--a
 .chip.incoming{color:var(--accent);border-color:var(--accent);background:var(--info-bg)}
 .chip.neg{color:var(--bad);border-color:var(--bad);background:var(--bad-bg)}
 
-/* ── Stat cards (ONE system for every tab) ─────────────────────────────────── */
+/* ── Stat cards (ONE system for every family) ──────────────────────────────── */
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:11px 14px}
 .stat .l{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);
@@ -157,3 +197,89 @@ details.sec[open] summary{margin-bottom:10px}
 
 .hide{display:none}
 .zero-ink{color:var(--muted)}
+
+/* ── Family-specific rules ─────────────────────────────────────────────────── */
+/* Plates and Hangers: a buy row carries a warning edge; a non-stock plate is
+   tinted. Each sets its own buy-table column widths. */
+tr.buy td:first-child{border-left:3px solid var(--warn)}
+tr.buy.non-stock td{background:var(--bad-bg);color:var(--ink)}
+tr.buy.non-stock td:first-child{border-left:3px solid var(--bad)}
+#sec-plates table.buy{table-layout:fixed}
+#sec-plates table.buy col.c-sku{width:220px}
+#sec-plates table.buy col.c-need{width:80px}
+#sec-plates table.buy col.c-have{width:80px}
+#sec-plates table.buy col.c-buy{width:190px}
+#sec-plates table.buy col.c-order{width:auto}
+#sec-plates table.buy col.c-inc{width:90px}
+#sec-hangers table.buy{table-layout:fixed}
+#sec-hangers table.buy col.c-sku{width:240px}
+#sec-hangers table.buy col.c-need{width:90px}
+#sec-hangers table.buy col.c-have{width:90px}
+#sec-hangers table.buy col.c-buy{width:110px}
+#sec-hangers table.buy col.c-inc{width:110px}
+#sec-hangers table.buy col.c-thresh{width:90px}
+#sec-hangers table.buy col.c-status{width:auto}
+
+/* LVL: a depth row's accent edge, amber when short. */
+tr.depth td:first-child{border-left:3px solid var(--accent)}
+tr.depth.short td:first-child{border-left-color:var(--warn)}
+
+/* Lumber: a size/grade row's accent edge, amber when short, red when the grade
+   is not carried (flagged the same way non-stocked plates are). */
+tr.grp td:first-child{border-left:3px solid var(--accent)}
+tr.grp.short td:first-child{border-left-color:var(--warn)}
+tr.grp.non-stock td{background:var(--bad-bg)}
+tr.grp.non-stock td:first-child{border-left-color:var(--bad)}
+/* Editable stock-length menu, and the "Redirect to" picker trailing its rows. */
+.menu-wrap{display:flex;flex-direction:column;gap:8px;margin-top:10px}
+.menu-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.menu-row .lbl{min-width:120px;font-weight:600;font-size:13px}
+.len-chip{padding:3px 10px;font-size:12.5px;border:1px solid var(--line-strong);border-radius:14px;
+  background:var(--card);color:var(--muted);cursor:pointer;user-select:none}
+.len-chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.redirect-lbl{font-size:12px;color:var(--muted);margin-left:4px}
+.redirect-sel{font-size:12.5px;padding:2px 6px;border:1px solid var(--line-strong);border-radius:6px;
+  background:var(--card);color:var(--ink)}
+.cut-instr{color:var(--ink)}
+/* The status badge (Buy / Covered / Redirected / Not Carried) is the last
+   column. When on-hand adds five columns the pooled table outgrows the panel,
+   and that badge — the at-a-glance "what to do" — would scroll off the right
+   edge. Pin it there instead so the wide columns scroll UNDER it. Only when
+   those columns are present (.stock-cols); the plain 4-column view fits.
+   Opaque background is required to cover the scrolled cells, and non-stock
+   rows carry their own tint, so it's restated. Scoped to grp rows so the
+   expandable detail rows are untouched. */
+#lum-grp-table.stock-cols thead th:last-child,
+#lum-grp-table.stock-cols tr.grp > td:last-child{
+  position:sticky;right:0;background:var(--card);z-index:1;
+  box-shadow:-8px 0 8px -8px rgba(0,0,0,.25)}
+#lum-grp-table.stock-cols tr.grp.non-stock > td:last-child{background:var(--bad-bg)}
+
+/* ── Printing: the order sheet ─────────────────────────────────────────────────
+   "Print order sheet" prints every family's section, whatever the filter
+   shows; a section's own "Print … only" button marks the others to skip. Only
+   the buy lists print, with lumber's lengths to order (below). The header, the
+   file panel, buttons and the collapsible sections (Included Jobs, warnings,
+   skipped files) stay on screen. Warnings stay off paper by the owner's
+   decision of 2026-09-25, recorded in issue #74. The browser's print dialog
+   can also save a PDF. */
+@media print{
+  :root{--bg:#fff;--card:#fff}
+  .appbar,.no-print,button,details.sec{display:none!important}
+  .fam[data-print-skip]{display:none}
+  /* Lumber: the main row gives one board count per size/grade; the lengths to
+     order sit in its expandable row. Print that row open only when its Order
+     column holds the Order table (boards per stock length), showing that table
+     alone — not the raw lengths, driving jobs or cut detail. Keyed on the
+     table itself, not on the row's "short" mark: a not-carried grade can be
+     short with no table, only an on-screen instruction, and that must not
+     print. */
+  #lum-grp-table tr.jobs:has(.plan-cols > div:last-child > table.drill-t){display:table-row!important}
+  #lum-grp-table tr.jobs:not(:has(.plan-cols > div:last-child > table.drill-t)){display:none!important}
+  #lum-grp-table .plan-cols > div:first-child,#lum-grp-table tr.jobs details{display:none}
+  .fam{break-inside:auto}
+  .fam + .fam{border-top:1px solid #999}
+  .tw{overflow:visible;border:0}
+  tr{break-inside:avoid}
+  .wrap{max-width:none;padding:0}
+}

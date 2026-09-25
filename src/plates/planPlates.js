@@ -43,9 +43,9 @@ const PACK_FACTORS = require('./packFactors.json');
 // Plates outside this set are non-stocked special orders and flagged for redesign.
 //
 // THIS IS THE ONLY COPY. It reaches the browser as `isStocked` on each buy row;
-// plates.html deliberately has no list of its own. A duplicate once lived there
-// and drifted, which is how MT20 2x6 and MT20HS 7x8 spent three commits being
-// "fixed" in the copy that never ran.
+// plates-section.js deliberately has no list of its own. A duplicate once lived
+// in the old plates page and drifted, which is how MT20 2x6 and MT20HS 7x8 spent
+// three commits being "fixed" in the copy that never ran.
 //
 // EVERY ENTRY MUST BE UPPERCASE. skuKey() uppercases what it produces, so a
 // lowercase 'x' here can never match and the plate silently reports NON-STOCK —

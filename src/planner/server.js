@@ -61,50 +61,33 @@ app.use((_req, res, next) => {
 // Deliberately NOT express.static(). Every served file is named by an explicit
 // route below, so this server can never publish a file nobody chose to publish.
 //
-// "/" is the front door and it serves the LUMBER page — decided by the owner,
-// 2026-09-14. Lumber is the tab the office opens first. /lumber stays registered
-// alongside it, because the other three pages link to it by name.
-//
-// ONE handler serves both paths. Two handlers naming lumber.html separately
-// would stay in step only by hand, so a header or a redirect added to one would
-// silently miss the other.
-function sendLumberPage(_req, res) {
-  res.sendFile(path.join(__dirname, 'lumber.html'));
+// "/" is the front door and serves the Planner: one page with a section per
+// family (spec #72, step 1). It replaced the four family pages, and "/"
+// served the lumber page before it (owner, 2026-09-14).
+app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'planner.html')));
+
+// Per family: the old page address redirects to the Planner with that family
+// selected in its filter, so bookmarks keep working, and /<family>-section.js
+// serves the family's section of the Planner (its buy list and plan route).
+// Deliberately 302, not 301: a browser keeps a 301 for good, so a later change
+// to these addresses could never reach a browser that has seen one.
+for (const family of ['lumber', 'plates', 'hangers', 'lvl']) {
+  app.get(`/${family}`, (_req, res) => res.redirect(302, `/?family=${family}`));
+  const section = path.join(__dirname, `${family}-section.js`);
+  app.get(`/${family}-section.js`, (_req, res) => res.type('application/javascript').sendFile(section));
 }
-app.get('/', sendLumberPage);
 
 // Served as EXPLICIT ROUTES rather than a static mount, per the reasoning above.
 const SHARED_ASSETS = {
-  // The one shared stylesheet + UI helper every planner tab links, so the four
-  // pages stay one tool instead of four drifting copies. Live next to the HTML.
+  // The one shared stylesheet + UI helper the Planner links. Live next to the HTML.
   '/planner.css': [path.join(__dirname, 'planner.css'), 'text/css'],
   '/planner-ui.js': [path.join(__dirname, 'planner-ui.js'), 'application/javascript'],
-  // The shared, durable CSV pile every tab reads from (drop once, use anywhere).
+  // The shared, durable CSV pile (drop once, use in every family's plan).
   '/csvPile.js': [path.join(__dirname, 'csvPile.js'), 'application/javascript'],
 };
 for (const [route, [file, type]] of Object.entries(SHARED_ASSETS)) {
   app.get(route, (_req, res) => res.type(type).sendFile(file));
 }
-
-// ── The four family pages ─────────────────────────────────────────────────────
-// One process serves four independent tools. Each family gets its own page and
-// its own endpoint rather than one page with a family toggle: they answer
-// different questions — how many boxes of plates, how many hangers, how many
-// linear feet of LVL, how many boards of lumber — and share no controls.
-app.get('/plates', (_req, res) => res.sendFile(path.join(__dirname, 'plates.html')));
-app.get('/hangers', (_req, res) => res.sendFile(path.join(__dirname, 'hangers.html')));
-// LVL is not a cut-optimization question at all — it is a linear-footage roll-up.
-// Its plan route reuses readStockCsv.js's generic stock reader and sniffer as-is
-// rather than duplicating them (see PLAN_ROUTES below). It does NOT use
-// parseJobCsv: src/lvl/parseLvlSheet.js says why it parses the sheet itself, and
-// src/lvl/planLvl.js says why qty × length already accounts for plies.
-app.get('/lvl', (_req, res) => res.sendFile(path.join(__dirname, 'lvl.html')));
-// LUMBER is the front door — "/" serves this page too (see sendLumberPage above).
-// Unlike LVL it answers two questions at once: linear feet AND how many whole
-// boards to buy, via its own cut-optimizer, netted against on-hand. Its stock
-// schema is size,grade,length, so it uses its own reader and sniffer rather than
-// the generic item,span one. See src/lumber/planLumber.js.
-app.get('/lumber', sendLumberPage);
 
 // The default carried-lengths menu the editor seeds from, straight from the
 // engine constant, so the page and the planner cannot disagree about it.
@@ -116,6 +99,16 @@ app.get('/api/lumber/menu', (_req, res) => {
 });
 
 // ── The plan endpoint — one code path for all four families ───────────────────
+// Each family has its own endpoint: they answer different questions — how many
+// boxes of plates, how many hangers, how many linear feet of LVL, how many
+// boards of lumber. LVL is not a cut-optimization question at all but a
+// linear-footage roll-up: it reuses readStockCsv.js's generic reader and
+// sniffer as-is, and does NOT use parseJobCsv (src/lvl/parseLvlSheet.js says
+// why it parses the sheet itself; src/lvl/planLvl.js why qty × length already
+// accounts for plies). Lumber answers linear feet AND whole boards to buy, via
+// its own cut-optimizer; its on-hand schema is size,grade,length, so it has its
+// own reader and sniffer (src/lumber/planLumber.js).
+//
 // The four families differ only in DATA — which sniffer routes a dropped stock
 // file, which reader parses it, which planner runs, and the noun in the "nothing
 // usable" message — never in the shape of the operation. So the operation lives

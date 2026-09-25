@@ -468,7 +468,7 @@ function planLumber(jobFiles, parsedStock = null, opts = {}) {
 
   // No separate top-of-results-banner list: every fact it needs (fromLabel =
   // a row's own label, toLabel/lf = that row's redirect) already lives on
-  // bySizeGrade, so lumber.html derives the banner from that directly rather
+  // bySizeGrade, so lumber-section.js derives the banner from that directly rather
   // than this shipping the same data twice.
   return { jobs, bySizeGrade, summary, hasStock, unmatched, warnings, rejected };
 }

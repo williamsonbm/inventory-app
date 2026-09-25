@@ -5,8 +5,8 @@
 // Why this test is separate from recorded-output.test.js. That test posts the
 // RAW fixtures to the server, so it exercises the port, not the redaction — it
 // stays green even if redact() is broken or a no-op. This test posts every
-// sheet AFTER running it through PlannerUI.redact(), exactly as the four pages
-// do at getJobs()/getStock(), and asserts the response still matches the
+// sheet AFTER running it through PlannerUI.redact(), exactly as the Planner
+// does at getJobs()/getOnHand(), and asserts the response still matches the
 // baseline captured from the raw sheets. "recorded-output green" is necessary
 // but not sufficient for the redaction; this is the sufficient half.
 //

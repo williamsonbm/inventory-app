@@ -194,15 +194,6 @@ async function withServer(fn) {
   }
 }
 
-test('GET /hangers serves the hanger planner page', async () => {
-  await withServer(async (base) => {
-    const res = await fetch(`${base}/hangers`);
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /<title>Hanger purchase planner<\/title>/i);
-  });
-});
-
 test('POST /api/hangers/plan plans a batch via HTTP API', async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/api/hangers/plan`, {

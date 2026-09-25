@@ -9,7 +9,7 @@
 //
 //   1. the module graph reaches no database and no .env
 //   2. every response is marked no-store
-//   3. "/" serves the lumber page
+//   3. "/" serves the Planner, and the old family addresses redirect to it
 //   4. a request body over the size cap is refused before any handler runs
 //   5. every refusal leaves as JSON the page can show, never Express's HTML
 //
@@ -111,19 +111,43 @@ test('every response is marked no-store so a stale API body cannot be reused', a
 });
 
 // ---- 3. the front door -------------------------------------------------------
-// "/" served the EWP page before the port; it now serves LUMBER, decided by the
-// owner 2026-09-14. "A signed-in Viewer reaches the lumber page" is a Done-when
-// criterion on #41 with no other automated test, so it is asserted here.
+// "/" served the EWP page before the port, then the lumber page (owner,
+// 2026-09-14). Spec #72 step 1 merges the four family pages into one Planner,
+// so "/" now serves the Planner, and the four old family addresses redirect to
+// it with their family selected, so bookmarks keep working. "A signed-in
+// Viewer reaches the page" is a Done-when criterion on #41 with no other
+// automated test, so it is asserted here.
 
-test('GET / serves the lumber page', async () => {
+const FAMILIES = ['lumber', 'plates', 'hangers', 'lvl'];
+
+test('GET / serves the Planner, with a section for each of the four families', async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/`);
     assert.equal(res.status, 200);
     const html = await res.text();
-    assert.match(html, /<title>Lumber planner<\/title>/);
+    assert.match(html, /<title>Planner<\/title>/);
     // The page must be the real thing, not an empty shell that happens to carry
-    // the right title: it posts to the lumber route.
-    assert.match(html, /\/api\/lumber\/plan/);
+    // the right title: it loads each family's section, and each section posts
+    // to its family's plan route.
+    for (const family of FAMILIES) {
+      assert.ok(html.includes(`<script src="/${family}-section.js"></script>`),
+        `the Planner must load the ${family} section`);
+      const js = await fetch(`${base}/${family}-section.js`);
+      assert.equal(js.status, 200, `/${family}-section.js must be served`);
+      assert.match(js.headers.get('content-type') || '', /javascript/);
+      assert.ok((await js.text()).includes(`'/api/${family}/plan'`),
+        `the ${family} section must post to /api/${family}/plan`);
+    }
+  });
+});
+
+test('each old family address redirects to the Planner with that family selected', async () => {
+  await withServer(async (base) => {
+    for (const family of FAMILIES) {
+      const res = await fetch(`${base}/${family}`, { redirect: 'manual' });
+      assert.equal(res.status, 302, `/${family} must redirect`);
+      assert.equal(res.headers.get('location'), `/?family=${family}`);
+    }
   });
 });
 

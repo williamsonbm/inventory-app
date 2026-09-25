@@ -1,119 +1,28 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Lumber planner</title>
-<link rel="stylesheet" href="/planner.css">
-<style>
-  /* Lumber-specific only — everything else is in /planner.css. */
-  tr.grp td:first-child{border-left:3px solid var(--accent)}
-  tr.grp.short td:first-child{border-left-color:var(--warn)}
-  /* Not-carried grades, flagged the same way non-stocked plates are. */
-  tr.grp.non-stock td{background:var(--bad-bg)}
-  tr.grp.non-stock td:first-child{border-left-color:var(--bad)}
-  /* Editable stock-length menu. */
-  .menu-wrap{display:flex;flex-direction:column;gap:8px;margin-top:10px}
-  .menu-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .menu-row .lbl{min-width:120px;font-weight:600;font-size:13px}
-  .len-chip{padding:3px 10px;font-size:12.5px;border:1px solid var(--line-strong);border-radius:14px;
-    background:var(--card);color:var(--muted);cursor:pointer;user-select:none}
-  .len-chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
-  /* "Redirect to" picker, trailing a menu row's length chips. */
-  .redirect-lbl{font-size:12px;color:var(--muted);margin-left:4px}
-  .redirect-sel{font-size:12.5px;padding:2px 6px;border:1px solid var(--line-strong);border-radius:6px;
-    background:var(--card);color:var(--ink)}
-  .cut-instr{color:var(--ink)}
-  /* Two columns side by side, always — never wrap to stacked, regardless of
-     how wide either column's content wants to be (a long cut-instruction
-     string, e.g., can otherwise inflate a table past what fits next to its
-     neighbor, and flex-wrap packs lines by that natural width before anything
-     shrinks — it doesn't wait to see if shrinking would let both fit). Instead
-     each column is forced to share the row and compress; min-width:0 lets a
-     table shrink below its own content width so long cell text wraps inside
-     the compressed column instead of pushing it wider. */
-  .plan-cols{display:flex;flex-wrap:nowrap;gap:14px 32px;align-items:flex-start}
-  .plan-cols > div{min-width:0;flex:1 1 0}
-  .plan-cols tfoot td{border-top:2px solid var(--line-strong)}
-  /* A second heading stacked under another table in the same plan-cols column
-     (e.g. Driving usage under Raw lengths) needs top spacing that a leading
-     heading doesn't — applied generically so future stacked headings get it
-     for free instead of each needing its own inline margin. */
-  .drill h4:not(:first-child){margin-top:16px}
-  /* The status badge (Buy / Covered / Redirected / Not Carried) is the last
-     column. When on-hand stock adds five columns the pooled table outgrows the
-     panel, and that badge — the at-a-glance "what to do" — would scroll off the
-     right edge. Pin it there instead so the wide stock columns scroll UNDER it.
-     Only when stock columns are present (the .stock-cols class); the plain
-     4-column view fits and needs no pinning. Opaque background is required to
-     cover the scrolled cells, and non-stock rows carry their own tint, so it's
-     restated. Scoped to grp rows so the expandable detail rows are untouched. */
-  #lum-grp-table.stock-cols thead th:last-child,
-  #lum-grp-table.stock-cols tr.grp > td:last-child{
-    position:sticky;right:0;background:var(--card);z-index:1;
-    box-shadow:-8px 0 8px -8px rgba(0,0,0,.25)}
-  #lum-grp-table.stock-cols tr.grp.non-stock > td:last-child{background:var(--bad-bg)}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div>
-    <nav class="nav" aria-label="Planner switch"><a href="/plates">Plates</a><a href="/hangers">Hangers</a><a href="/lvl">LVL</a><a href="/lumber" class="on">Lumber</a></nav>
-    <h1 style="margin-top:14px">Lumber Planner</h1>
-    <p class="sub">Multi-job dimensional-lumber usage by size &amp; grade — linear feet and whole stock pieces to buy, netted against on-hand.</p>
-  </div>
+/* =============================================================
+   lumber-section.js — the Lumber section of the Planner.
+   =============================================================
+   Served at /lumber-section.js by src/planner/server.js and loaded by
+   planner.html, which runs the plan and hands the response to render(). Moved
+   from the old lumber.html (spec #72, step 1); the buy list and the editable
+   purchasable lengths and grade redirects are unchanged. Those buying options
+   stay stored per computer until spec #72 step 3 moves them to Settings.
 
-  <div id="drop-mount"></div>
+   Registers window.PlannerSections.lumber.
 
-  <details class="sec" id="menu-sec">
-    <summary>Stock lengths we carry (editable)</summary>
-    <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade — those edits are remembered on this computer. Where a stronger grade is carried, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of #2); redirects apply on your next Calculate and are remembered here too, until you reset or clear them.</p>
-    <div class="menu-wrap" id="menu-mount"></div>
-    <div class="row" style="margin-top:10px">
-      <button class="ghost" id="btn-menu-reset" style="padding:4px 12px;font-size:12.5px">Reset to default</button>
-    </div>
-  </details>
-
-  <div class="row">
-    <button id="btn-plan" disabled>Calculate lumber</button>
-    <button id="btn-clear" class="ghost" style="display:none">Clear</button>
-    <span class="sub" id="msg"></span>
-    <span id="busy" style="display:none;color:var(--muted)">Totaling lumber usage…</span>
-  </div>
-
-  <div id="out" style="display:flex;flex-direction:column;gap:14px"></div>
-</div>
-
-<script src="/csvPile.js"></script>
-<script src="/planner-ui.js"></script>
-<script>
-(() => {
-  const { esc, fmtNum: fmt, fmtInt, renderStats, renderWarnings, renderRejected } = PlannerUI;
+   NOT UNIT-TESTED: render() and the options editor build DOM, and this repo
+   has no Node DOM harness. Checked by hand in the browser, one pass per family
+   (spec #72). The route's output is proven by test/recorded-output.test.js.
+   ============================================================= */
+(function () {
+  'use strict';
+  const { esc, fmtNum: fmt, fmtInt, ftLabel, buyLf, renderStats, renderWarnings, renderRejected } = PlannerUI;
   const el = (id) => document.getElementById(id);
-  const btnPlan = el('btn-plan'), btnClear = el('btn-clear'), busy = el('busy');
-  const msg = el('msg'), out = el('out');
-  const drills = PlannerUI.drilldowns(out);
 
   const TOL = 0.0052;
   // Candidate lengths the menu editor offers as chips for every group. A group's
   // own lengths render "on"; the rest render "off" and can be toggled in.
   const CANDIDATE_LENGTHS = [6, 7, 8, 10, 12, 14, 16, 18, 20, 22, 24];
   const STORE_KEY = 'lumberMenu.v1';
-
-  // "16" -> "16′"; "7.4583" -> "7′ 6″". Same rounding as the pull-list builder.
-  function ftLabel(ft) {
-    const n = Number(ft) || 0;
-    const f = Math.floor(n + 1e-9);
-    const inch = Math.round((n - f) * 12);
-    if (inch === 0) return `${f}′`;
-    if (inch === 12) return `${f + 1}′`;
-    return `${f}′ ${inch}″`;
-  }
-
-  // Purchased footage for one buyByLength row: stock length x boards bought
-  // (offcuts included). The one formula behind every "boards -> LF" total in
-  // this file, so it can't quietly drift between the pooled and per-job views.
-  function buyLf(b) { return b.stockLengthFt * b.boards; }
 
   // row.fullyRedirected, row.ownLf, and row.redirect/.redirectedIn are all
   // computed and rounded once server-side (planLumber.js) — read directly
@@ -143,8 +52,8 @@
   // Grade redirects ("send 2x6 #2's demand to 2x6 DSS instead") live in this
   // same panel, next to the lengths they depend on (a target must be carried
   // — have lengths — to be offered). Persisted (lumberRedirects.v1) and
-  // reconciled against the current menu on load, so switching tabs and coming
-  // back keeps them; "Reset to default" clears them.
+  // reconciled against the current menu on load, so reloading the page keeps
+  // them; "Reset to default" clears them.
   let activeRedirects = {};   // "size|fromGrade" -> toGrade
 
   // The SAME strength ranking planLumber.js enforces server-side — fetched
@@ -192,7 +101,7 @@
 
   // The "Redirect to" picker for one menu row — only rendered when there's a
   // stronger, carried grade to send this one to. Applies on your next
-  // Calculate, same as a length-chip edit; unlike a chip, it's not saved.
+  // "Work out what to buy", same as a length-chip edit, and is saved the same way.
   function redirectSelectHtml(key) {
     const [size, grade] = key.split('|');
     const targets = validRedirectTargets(size, grade);
@@ -217,25 +126,13 @@
     }).join('');
   }
 
-  el('menu-mount').addEventListener('click', (e) => {
-    const chip = e.target.closest('.len-chip');
-    if (!chip) return;
-    const key = chip.dataset.key;
-    const L = Number(chip.dataset.len);
-    const set = new Set((menu[key] || []).map(Number));
-    if (set.has(L)) set.delete(L); else set.add(L);
-    menu[key] = [...set].sort((a, b) => a - b);
-    chip.classList.toggle('on');
-    saveMenu();
-  });
-
   // Redirect picks persist (lumberRedirects.v1) and are reconciled on load, but
   // like the length chips they don't repaint or re-plan on change — they apply
-  // on your next Calculate. A full paintMenu() here would blow away whatever the
-  // user just picked on every unrelated chip click elsewhere.
+  // on your next "Work out what to buy". A full paintMenu() here would blow
+  // away whatever the user just picked on every unrelated chip click elsewhere.
   //
   // One handler, wired to BOTH the Stock-lengths panel's rows and the results
-  // area's "Not carried" rows (renderPlan, below) — the same redirectSelectHtml
+  // area's "Not carried" rows (render, below) — the same redirectSelectHtml
   // markup shows up in both places, so one listener body covers it rather than
   // two copies that could drift.
   function onRedirectChange(e) {
@@ -245,105 +142,62 @@
     else delete activeRedirects[sel.dataset.key];
     saveRedirects();
   }
-  el('menu-mount').addEventListener('change', onRedirectChange);
-  out.addEventListener('change', onRedirectChange);
 
-  el('btn-menu-reset').addEventListener('click', () => {
-    menu = JSON.parse(JSON.stringify(defaultMenu));
-    activeRedirects = {};
-    saveMenu();
-    saveRedirects();   // clears the stored redirects too
-    paintMenu();
-  });
+  // Resolves once the menu is loaded (or its fetch has failed), so the first
+  // plan never goes out before the menu and redirects it depends on.
+  let menuLoaded = null;
 
-  // Reconcile redirects against whatever menu is in scope, paint, and run —
-  // shared by the fetch's success and failure paths below, since both need
-  // this exact tail: it must not be gated on the fetch actually succeeding.
-  function finishMenuLoad() {
-    activeRedirects = reconcileRedirects(loadStoredRedirects());
-    paintMenu();
-    autoRun();   // on load: run from the shared pile once the menu is ready
-  }
+  // Builds the editor into the section's tools slot, wires it, and starts the
+  // menu load. Called once by planner.html.
+  function mount({ out, tools }) {
+    tools.innerHTML = `
+      <details class="sec" id="menu-sec">
+        <summary>Stock lengths we carry (editable)</summary>
+        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade — those edits are remembered on this computer. Where a stronger grade is carried, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of #2); redirects apply the next time you click Work out what to buy and are remembered here too, until you reset or clear them.</p>
+        <div class="menu-wrap" id="menu-mount"></div>
+        <div class="row" style="margin-top:10px">
+          <button class="ghost" id="btn-menu-reset" style="padding:4px 12px;font-size:12.5px">Reset to default</button>
+        </div>
+      </details>`;
 
-  // Fetch the default seed once, overlay any stored edits, and paint the editor.
-  fetch('/api/lumber/menu').then((r) => r.json()).then((d) => {
-    defaultMenu = (d && d.menu) || {};
-    gradeOrder = (d && d.gradeOrder) || [];
-    const stored = loadStoredMenu();
-    menu = Object.keys(stored).length ? stored : JSON.parse(JSON.stringify(defaultMenu));
-    finishMenuLoad();
-  }).catch(() => {
-    // The plan still works — server falls back to its default menu — but
-    // finishMenuLoad() must still run on this path too.
-    finishMenuLoad();
-  });
+    el('menu-mount').addEventListener('click', (e) => {
+      const chip = e.target.closest('.len-chip');
+      if (!chip) return;
+      const key = chip.dataset.key;
+      const L = Number(chip.dataset.len);
+      const set = new Set((menu[key] || []).map(Number));
+      if (set.has(L)) set.delete(L); else set.add(L);
+      menu[key] = [...set].sort((a, b) => a - b);
+      chip.classList.toggle('on');
+      saveMenu();
+    });
+    el('menu-mount').addEventListener('change', onRedirectChange);
+    out.addEventListener('change', onRedirectChange);
 
-  // ── Intake ─────────────────────────────────────────────────────────────────
-  function isStockFile(text) {
-    const head = String(text || '').slice(0, 1024).toLowerCase();
-    return head.includes('size') && head.includes('grade') && head.includes('length') &&
-           (head.includes('available') || head.includes('qty') || head.includes('on_hand'));
-  }
+    el('btn-menu-reset').addEventListener('click', () => {
+      menu = JSON.parse(JSON.stringify(defaultMenu));
+      activeRedirects = {};
+      saveMenu();
+      saveRedirects();   // clears the stored redirects too
+      paintMenu();
+    });
 
-  const dz = PlannerUI.dropZones({
-    mount: el('drop-mount'),
-    jobsTitle: 'Job material summaries',
-    jobsHint: 'Drop several, or click to choose. One per job.',
-    stockTitle: 'Lumber stock CSV',
-    stockHint: 'On-hand export with size, grade, length and available columns.',
-    isStockFile,
-    onChange() {
-      btnPlan.disabled = dz.isEmpty();
-      btnClear.style.display = (!dz.isEmpty() || dz.getStock()) ? 'inline-block' : 'none';
-      autoRun();
-    },
-  });
-
-  btnClear.addEventListener('click', () => {
-    dz.clear();
-    activeRedirects = {};
-    saveRedirects();   // clear the in-memory pick AND its persisted copy — a
-                        // save-less reset here used to let the old value
-                        // silently reappear on the next page load.
-    msg.innerHTML = '';
-    out.innerHTML = '';
-  });
-
-  async function runPlan() {
-    if (dz.isEmpty()) { msg.innerHTML = ''; out.innerHTML = ''; btnPlan.disabled = true; return; }
-    msg.innerHTML = '';
-    out.innerHTML = '';
-    busy.style.display = 'inline';
-    btnPlan.disabled = true;
-
-    try {
-      const res = await fetch('/api/lumber/plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: dz.getJobs(), stock: dz.getStock(), menu, redirects: activeRedirects }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        msg.innerHTML = `<div class="note bad">${esc(data.error || 'Failed to total lumber usage.')}</div>`;
-        return;
-      }
-      renderPlan(data);
-    } catch (err) {
-      msg.innerHTML = `<div class="note bad">Request failed: ${esc(err.message)}</div>`;
-    } finally {
-      busy.style.display = 'none';
-      btnPlan.disabled = dz.isEmpty();
+    // Fetch the default seed once, overlay any stored edits, and paint the
+    // editor. Reconciling redirects and painting must happen on the failure
+    // path too: the plan still works there, because the server falls back to
+    // its default menu.
+    function finishMenuLoad() {
+      activeRedirects = reconcileRedirects(loadStoredRedirects());
+      paintMenu();
     }
+    menuLoaded = fetch('/api/lumber/menu').then((r) => r.json()).then((d) => {
+      defaultMenu = (d && d.menu) || {};
+      gradeOrder = (d && d.gradeOrder) || [];
+      const stored = loadStoredMenu();
+      menu = Object.keys(stored).length ? stored : JSON.parse(JSON.stringify(defaultMenu));
+      finishMenuLoad();
+    }).catch(() => finishMenuLoad());
   }
-
-  // Auto-recompute: any pile change (a drop, a remove, Clear all, or a change
-  // from another tab) reruns; a multi-file drop debounces to one run.
-  const autoRun = PlannerUI.debounce(runPlan, 80);
-  btnPlan.addEventListener('click', runPlan);
-
-  // Sort state, shared across in-place repaints.
-  let jobSort = { col: null, dir: 'asc' };
-  let grpSort = { col: null, dir: 'asc' };
 
   // Cut instruction for one purchase draw, derived from the draw record only.
   function cutInstruction(d) {
@@ -356,7 +210,18 @@
     return n >= 2 ? `${n} × ${ftLabel(req)} per board` : `cut to ${ftLabel(req)}`;
   }
 
-  function renderPlan(p) {
+  // Sort state, shared across in-place repaints.
+  let grpSort = { col: null, dir: 'asc' };
+
+  // The Included Jobs summary columns after Job # and Job Name.
+  const JOB_COLUMNS = [
+    { label: 'Delivery', cell: (j) => j.deliveryDate || '—' },
+    { label: 'By size & grade', cell: (j) => j.byGroup.map((d) => `${d.label}: ${fmt(d.lf)}`).join(', ') || '—' },
+    { label: 'Total LF', cls: 'n', strong: true, cell: (j) => fmt(j.totalLf) },
+    { label: 'Boards', cls: 'n', strong: true, cell: (j) => fmtInt(j.totalPieces) },
+  ];
+
+  function render(p, out, drills) {
     const sum = p.summary;
     let html = '';
 
@@ -369,10 +234,11 @@
     // redirectSelectHtml() the Stock-lengths panel uses, keyed off g.key. It
     // was written to need only a "size|grade" key, never assuming that grade
     // is carried, so a not-carried grade can use it unchanged: pick a
-    // stronger carried grade here and it applies on the next Calculate, same
-    // as a redirect set in the panel above. A grade with no stronger carried
-    // grade to offer (redirectSelectHtml returns '') falls back to the
-    // original redesign-or-special-order wording, for that row only.
+    // stronger carried grade here and it applies on the next "Work out what to
+    // buy", same as a redirect set in the panel above. A grade with no
+    // stronger carried grade to offer (redirectSelectHtml returns '') falls
+    // back to the original redesign-or-special-order wording, for that row
+    // only.
     const notCarried = p.bySizeGrade.filter((g) => !g.inMenu && !g.redirect);
     if (notCarried.length) {
       const rows = notCarried.map((g) => {
@@ -430,22 +296,14 @@
 
     html += renderUnmatched(p.unmatched);
 
-    if (p.jobs.length > 0) {
-      html += `
-        <details class="sec">
-          <summary>Included Jobs (${p.jobs.length} files)</summary>
-          ${PlannerUI.expandAllButtonHtml('btn-toggle-jobs')}
-          <div class="tw" style="margin-top:10px"><table id="lum-jobs-table"></table></div>
-        </details>`;
-    }
-
+    const jobs = PlannerUI.includedJobs('lumber', p.jobs, JOB_COLUMNS);
+    html += jobs.html;
     html += renderRejected(p.rejected);
     out.innerHTML = html;
 
     PlannerUI.wireExpandAll(out, drills, 'grp', 'btn-toggle-grps');
-    PlannerUI.wireExpandAll(out, drills, 'job', 'btn-toggle-jobs');
     if (p.bySizeGrade.length > 0) paintGroups();
-    if (p.jobs.length > 0) paintJobs();
+    jobs.wire(out, drills);
 
     // ── By size & grade table ──
     function paintGroups() {
@@ -527,8 +385,8 @@
     // menu or not, so a "no menu" row can still be traced back to its jobs.
     // Stacked under Raw lengths (not Order) so Cut detail — nested under Order,
     // on the other side — can expand or collapse without shifting this at all.
-    // The gap above this heading is `.drill h4:not(:first-child)` in the page's
-    // <style> block, not inline — it's the second heading in this column.
+    // The gap above this heading is `.drill h4:not(:first-child)` in
+    // planner.css, not inline — it's the second heading in this column.
     function drivingJobsTable(row) {
       if (!row.jobs || !row.jobs.length) return '';
       return `
@@ -569,13 +427,13 @@
         const why = row.fullyRedirected
           ? `Redirected to ${esc(row.redirect.toLabel)} — see that row for the order and cut plan.`
           : !row.inMenu
-            ? `${esc(row.label)} isn’t on your carried-lengths list — add it in the Stock lengths panel, then Calculate again to get a board count.`
+            ? `${esc(row.label)} isn’t on your carried-lengths list — add it in the Stock lengths panel, then click Work out what to buy again to get a board count.`
             : `Nothing to buy for ${esc(row.label)} — on-hand covers it.`;
         orderSide = `<h4 style="color:var(--muted)">${why}</h4>`;
       } else {
         const total = row.buyByLength.reduce((t, b) => t + b.boards, 0);
         // Purchased footage — distinct from the group's Need (LF) demand (that's
-        // gross board LF bought, offcuts included; see buyLf() above).
+        // gross board LF bought, offcuts included; see PlannerUI.buyLf).
         const totalBuyLf = row.buyByLength.reduce((t, b) => t + buyLf(b), 0);
         orderSide = `
           <h4>Order — buy ${fmtInt(total)} board(s) for ${esc(row.label)}${row.piecesOnHand ? ` (${fmtInt(row.piecesOnHand)} more come from on-hand)` : ''}</h4>
@@ -648,112 +506,6 @@
           </table>
         </div>`;
     }
-
-    // ── Included jobs table (linear feet + raw line items) ──
-    function paintJobs() {
-      const table = el('lum-jobs-table');
-      if (!table) return;
-      const jobs = PlannerUI.sortRows(p.jobs, jobSort, { num: (j) => j.jobNumber, name: (j) => j.jobName });
-      table.innerHTML = jobsInner(jobs);
-      PlannerUI.wireSort(table, 'jobsort', jobSort, paintJobs);
-      PlannerUI.resetExpandAll('btn-toggle-jobs');
-    }
-
-    // Boards this one job needs, cut on its own (greenfield — no on-hand, no
-    // sharing with other jobs), by size/grade and stock length. For the saw.
-    // These per-job totals add up to MORE than the pooled order above (cut per
-    // job, so shared boards get double-counted across jobs) — that explanation
-    // used to be spelled out in the heading; it's a hover title now so the
-    // heading stays short enough to line up with Line items' heading beside it.
-    // Total LF here is purchased/cut footage (stock length x boards, offcuts
-    // included) — a different number from Line items' Total LF (raw material-
-    // sheet demand) below, by the same distinction as the size/grade panel.
-    function jobBoardsTable(j) {
-      const groups = j.byGroup.filter((g) => g.buyByLength && g.buyByLength.length);
-      if (!groups.length) return '';
-      // Total LF accumulates alongside the rows below (one pass over groups x
-      // buyByLength) rather than a second reduce over the same data.
-      let totalLf = 0;
-      const rows = groups.map((g) => g.buyByLength.map((b, i) => {
-        totalLf += buyLf(b);
-        return `
-              <tr>
-                <td>${i === 0 ? `<strong>${esc(g.label)}</strong>` : ''}</td>
-                <td class="mono">${ftLabel(b.stockLengthFt)}</td>
-                <td class="n"><strong>${fmtInt(b.boards)}</strong></td>
-              </tr>`;
-      }).join('')).join('');
-      return `
-        <h4 title="Cut per job, on its own — totals run higher than the pooled order above, since pooling shares boards across jobs.">Boards to cut — ${fmtInt(j.totalPieces)} total</h4>
-        <table class="drill-t">
-          <thead><tr><th>Size / Grade</th><th>Stock length</th><th class="n">Boards</th></tr></thead>
-          <tbody>${rows}</tbody>
-          ${totalLfFoot(totalLf)}
-        </table>`;
-    }
-
-    // A one-row "Total" tfoot for a table whose only total worth showing is LF
-    // (Line items and Boards-to-cut both fit this — see jobDrillDown below).
-    function totalLfFoot(lf) {
-      return `<tfoot><tr><td colspan="2"><strong>Total LF</strong></td><td class="n"><strong>${fmt(lf)}</strong></td></tr></tfoot>`;
-    }
-
-    // Line items on the left, boards-to-cut on the right, so the buyer can read
-    // what was ordered against what it gets cut into side by side — same
-    // .plan-cols pattern as the size/grade panel above.
-    function jobDrillDown(j, idx) {
-      const lineItems = `
-        <h4>Line items — ${j.items.length} row(s) on ${esc(j.jobNumber || j.name)}'s material sheet</h4>
-        <table class="drill-t">
-          <thead><tr><th>Material</th><th class="n">Qty</th><th>Length</th></tr></thead>
-          <tbody>
-            ${j.items.map((it) => `
-              <tr><td>${esc(it.material)}</td><td class="n">${fmtInt(it.qty)}</td><td class="mono">${esc(it.length)}</td></tr>
-            `).join('')}
-          </tbody>
-          ${totalLfFoot(j.totalLf)}
-        </table>`;
-      const boards = jobBoardsTable(j);
-      return `
-        <tr class="jobs" id="drill-job-${idx}" style="display:none">
-          <td colspan="7">
-            <div class="drill">
-              ${boards ? `<div class="plan-cols"><div>${lineItems}</div><div>${boards}</div></div>` : lineItems}
-            </div>
-          </td>
-        </tr>`;
-    }
-
-    function jobsInner(jobs) {
-      return `
-        <thead>
-          <tr>
-            <th></th>
-            <th class="sortable" data-jobsort="num">Job # ${PlannerUI.sortIcon(jobSort.col === 'num', jobSort.dir)}</th>
-            <th class="sortable" data-jobsort="name">Job Name ${PlannerUI.sortIcon(jobSort.col === 'name', jobSort.dir)}</th>
-            <th>Delivery</th>
-            <th>By size &amp; grade</th>
-            <th class="n">Total LF</th>
-            <th class="n">Boards</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${jobs.map((j, idx) => {
-            const hasItems = j.items && j.items.length > 0;
-            return `
-            <tr${hasItems ? ` data-group="job" data-toggle="${idx}"` : ''}>
-              <td>${hasItems ? '<span class="caret">▸</span>' : ''}</td>
-              <td class="mono"><strong>${esc(j.jobNumber || '—')}</strong></td>
-              <td>${esc(j.jobName || '—')}</td>
-              <td>${esc(j.deliveryDate || '—')}</td>
-              <td>${j.byGroup.map((d) => `${esc(d.label)}: ${fmt(d.lf)}`).join(', ') || '—'}</td>
-              <td class="n"><strong>${fmt(j.totalLf)}</strong></td>
-              <td class="n"><strong>${fmtInt(j.totalPieces)}</strong></td>
-            </tr>
-            ${hasItems ? jobDrillDown(j, idx) : ''}
-          `; }).join('')}
-        </tbody>`;
-    }
   }
 
   // "Not carried" grades are flagged inline on their own red rows above. This
@@ -772,7 +524,34 @@
         </table></div>
       </details>`;
   }
+
+  window.PlannerSections = window.PlannerSections || {};
+  window.PlannerSections.lumber = {
+    label: 'Lumber',
+    blurb: 'Multi-job dimensional-lumber usage by size & grade — linear feet and whole stock pieces to buy, netted against on-hand.',
+    route: '/api/lumber/plan',
+    busyText: 'Totaling lumber usage…',
+    isOnHandFile(text) {
+      const head = String(text || '').slice(0, 1024).toLowerCase();
+      return head.includes('size') && head.includes('grade') && head.includes('length') &&
+             (head.includes('available') || head.includes('qty') || head.includes('on_hand'));
+    },
+    mount,
+    // The lumber route alone takes page-editable options. Waits for the menu,
+    // so a plan never goes out with an empty one.
+    async planOptions() {
+      await menuLoaded;
+      return { menu, redirects: activeRedirects };
+    },
+    render,
+    // Clear drops the redirect picks AND their stored copy — a save-less reset
+    // used to let the old value silently reappear on the next page load — and
+    // repaints the pickers, which would otherwise still show the old choice
+    // while the next plan ignores it.
+    clear() {
+      activeRedirects = {};
+      saveRedirects();
+      paintMenu();
+    },
+  };
 })();
-</script>
-</body>
-</html>

@@ -549,14 +549,6 @@ async function withServer(fn) {
   }
 }
 
-test('GET /lumber serves the Lumber planner page', async () => {
-  await withServer(async (base) => {
-    const res = await fetch(`${base}/lumber`);
-    assert.equal(res.status, 200);
-    assert.match(await res.text(), /<title>Lumber planner<\/title>/i);
-  });
-});
-
 test('GET /api/lumber/menu returns the default carried-lengths seed', async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/api/lumber/menu`);

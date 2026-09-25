@@ -1,19 +1,19 @@
 /* =============================================================
-   csvPile.js — the one shared, durable CSV pile for every tab.
+   csvPile.js — the one shared, durable CSV pile.
    =============================================================
-   Served at /csvPile.js by src/planner/server.js and loaded by every page.
-   The four planner tabs are four separate documents; switching tabs is a full
-   navigation that drops all in-memory state. This is the bridge: a single pile
-   of uploaded CSVs kept in localStorage (shared across every same-origin page),
-   so you drop your files once on any tab and every tab reads the same pile until
-   you clear it.
+   Served at /csvPile.js by src/planner/server.js and loaded by the Planner.
+   A single pile of uploaded CSVs kept in localStorage (shared across every
+   same-origin page and browser tab), so dropped files survive a reload and
+   stay until you clear them. It began as the bridge between four separate
+   family pages; one Planner page (spec #72) still reads it on every load.
 
    ONE writer. The one intake, the shared PlannerUI.dropZones, calls
-   CsvPile.add/remove/clear; nobody keeps a second copy of the files. Each tab
-   derives its own view (which files are jobs, which one is its stock file)
-   from CsvPile.list() — the pile stores no per-file "type", because
-   type is intrinsic to the CSV and every tab already sniffs it server-side; a
-   cached type would just be a second source of truth waiting to disagree.
+   CsvPile.add/remove/clear; nobody keeps a second copy of the files. The
+   Planner derives its view (which files are jobs, which is each family's
+   on-hand file) from CsvPile.list() — the pile stores no per-file "type",
+   because type is intrinsic to the CSV and every plan route already sniffs it
+   server-side; a cached type would just be a second source of truth waiting to
+   disagree.
 
    Node (tests) gets the pure helpers via module.exports; the browser gets
    window.CsvPile. The pure core touches no localStorage, so it is unit-testable.
@@ -71,9 +71,9 @@
     return Array.from(byName.values());
   }
 
-  // A tab's one stock file: of the pile files its own predicate accepts, the
-  // last-added. None accepted → null (the tab plans greenfield, today's
-  // no-stock behavior).
+  // A family's one on-hand file: of the pile files its predicate accepts, the
+  // last-added. None accepted → null (the family plans greenfield, with no
+  // on-hand netting). Called by pickOnHand in planner-ui.js.
   function pickStock(files, isStock) {
     let best = null;
     for (const f of files) {
@@ -124,8 +124,8 @@
     pickStock,
   };
 
-  // Cross-tab: another same-origin planner page wrote the pile. Refresh the
-  // cache from the new value and fire local listeners so this tab re-derives.
+  // Cross-tab: the Planner in another browser tab wrote the pile. Refresh the
+  // cache from the new value and fire local listeners so this page re-derives.
   if (typeof window !== 'undefined' && window.addEventListener) {
     window.addEventListener('storage', (e) => {
       if (e.key !== STORE_KEY) return;

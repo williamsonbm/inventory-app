@@ -6,18 +6,21 @@
    wiring, escaping, number formatting, the warnings block and the stat bar —
    the same code four times, drifting apart. This is the one copy.
 
-   It owns the SHELL (drop zones, stats, warnings), never a tab's result table.
-   Each page still writes its own render() for its own data; it just calls
-   PlannerUI.dropZones() for intake and PlannerUI.renderStats()/renderWarnings()
-   for the two blocks that are identical everywhere.
+   It owns the SHELL (drop zones, stats, warnings, the Included Jobs panel),
+   never a family's buy list. Each family section still writes its own render()
+   for its own data; it calls PlannerUI.renderStats()/renderWarnings() for the
+   blocks that are identical everywhere and PlannerUI.includedJobs() for the
+   per-job panel. The Planner page calls PlannerUI.dropZones() for intake.
 
    Exposes a single global: window.PlannerUI.
 
    NOT UNIT-TESTED: dropZones and the closures inside it (rebuild, paintFiles,
-   badgeFor) read CsvPile and the DOM, and this repo has no Node DOM harness.
-   They are checked by hand in the browser. test/planner-ui.test.js covers the
-   pure sniffing helpers (looksLikePlateOrHangerStock, redact), and the server
-   re-classifies every upload, so a client mis-sniff cannot mis-plan.
+   badgeFor), and includedJobs, read CsvPile or the DOM, and this repo has no
+   Node DOM harness. They are checked by hand in the browser.
+   test/planner-ui.test.js covers the pure helpers (looksLikePlateOrHangerStock,
+   redact, jobBreakdown, renderBreakdown, and pickOnHand, which decides each
+   family's on-hand file: the server takes that file as given, so a wrong pick
+   would mis-plan).
    ============================================================= */
 (function () {
   'use strict';
@@ -39,6 +42,17 @@
   function fmtNum(v) {
     if (v == null || !Number.isFinite(Number(v))) return '—';
     return Number(v).toLocaleString('en-US', { maximumFractionDigits: 2 });
+  }
+
+  // Feet to a length label: 16 -> "16′", 7.4583 -> "7′ 6″" (inches rounded to
+  // the nearest whole inch). Same rounding as the pull-list builder.
+  function ftLabel(ft) {
+    const n = Number(ft) || 0;
+    const f = Math.floor(n + 1e-9);
+    const inch = Math.round((n - f) * 12);
+    if (inch === 0) return `${f}′`;
+    if (inch === 12) return `${f + 1}′`;
+    return `${f}′ ${inch}″`;
   }
 
   // Read one File to { name, text }.
@@ -104,24 +118,23 @@
      once at least one job file has landed.
 
      config:
-       mount        element to build into (required)
-       jobsTitle    heading for the multi-file job zone
-       jobsHint     sub-hint under it
-       stockTitle   heading for the single stock zone
-       stockHint    sub-hint under it
-       isStockFile  (text) => bool  — routes a panel-level drop to jobs vs stock
-       onChange     ()   => void    — fired after any add/remove/clear
+       mount         element to build into (required)
+       jobsTitle     heading for the drop zone
+       families      { family: { label, isOnHandFile(text) => bool } } — the
+                     badge name and on-hand sniffer of each family
+       onChange      () => void — fired after any add/remove/clear
 
-     returns { getJobs(), getStock(), isEmpty(), clear(), expand(), collapse() }.
+     returns { getJobs(), getOnHand(family), isEmpty(), clear(), expand(), collapse() }.
   */
   function dropZones(config) {
-    // jobs/stock are this tab's DERIVED view of the one shared CsvPile — the
-    // files themselves live there, not here. jobs is every pile file this tab's
-    // isStockFile does NOT claim; stock is the last-added file it does (its one
-    // stock slot). Both are rebuilt from the pile on every change, so a drop on
-    // another tab or the Loaded-files panel flows straight through.
+    // jobs/onHand are the page's DERIVED view of the one shared CsvPile — the
+    // files themselves live there, not here; pickOnHand decides which is which.
+    // Both are rebuilt from the pile on every change, so a drop in another
+    // browser tab flows straight through. Without the pile (csvPile.js failed
+    // to load) onHand stays empty and jobs is kept by hand, so the panel still
+    // plans.
     const jobs = new Map();   // name -> { name, text }
-    let stock = null;         // { name, text } | null
+    let onHand = {};          // family -> { name, text }
     let autoCollapsed = false;
 
     const mount = config.mount;
@@ -135,7 +148,7 @@
         '<div class="drop-body" hidden>' +
           '<div class="zone z-all">' +
             '<h3>' + esc(config.jobsTitle || 'CSV files') + '</h3>' +
-            '<p class="sub-hint">Drop your material summaries and stock CSVs together, or click to choose. Each tab uses what it needs.</p>' +
+            '<p class="sub-hint">Drop your material summaries and on-hand CSVs together, or click to choose. Each family uses what it needs.</p>' +
           '</div>' +
           '<div class="files files-all"></div>' +
           '<div class="row files-actions" hidden style="justify-content:flex-end;margin-top:8px">' +
@@ -165,27 +178,33 @@
     function expand() { setOpen(true); }
     function collapse() { setOpen(false); }
 
+    // The families whose on-hand file this is (usually one; plate and hanger
+    // files share a header, so a file with no telling SKUs can be both).
+    function onHandFamilies(name) {
+      return Object.keys(onHand).filter((family) => onHand[family].name === name);
+    }
+
     function summarize() {
       const j = jobs.size;
-      if (!j && !stock) { count.textContent = 'Drop CSVs, or click to add'; return; }
+      const labels = Object.keys(onHand).map((family) => config.families[family].label);
+      if (!j && !labels.length) { count.textContent = 'Drop CSVs, or click to add'; return; }
       const parts = [];
       parts.push(j + (j === 1 ? ' job file' : ' job files'));
-      if (stock) parts.push('stock ✓');
+      if (labels.length) parts.push('on hand: ' + labels.join(', '));
       count.textContent = parts.join('  ·  ');
     }
 
-    // Badge one pile file from THIS tab's point of view: its own on-hand file,
-    // an on-hand file for another tab (badged "other stock"), or a job it will
-    // feed to the server.
+    // Badge one pile file: a family's on-hand file, an on-hand file no family
+    // claims (badged "unused on-hand"), or a job fed to every family's plan.
     function badgeFor(f) {
-      if (stock && f.name === stock.name) return { label: 'stock', cls: 'b-stock' };
-      if (looksLikeAnyStock(f.text)) return { label: 'other stock', cls: 'b-other' };
+      const families = onHandFamilies(f.name);
+      if (families.length) return { label: families.map((family) => config.families[family].label).join(', ') + ' on hand', cls: 'b-stock' };
+      if (looksLikeAnyStock(f.text)) return { label: 'unused on-hand', cls: 'b-other' };
       return { label: 'job', cls: 'b-job' };
     }
 
-    // The single list shows the WHOLE shared pile (drop once, see it on every
-    // tab), each file badged for this tab. Nothing a tab doesn't use silently
-    // vanishes — it shows as "other stock" instead.
+    // The single list shows the WHOLE shared pile, each file badged. Nothing
+    // unused silently vanishes — it shows as "unused on-hand" instead.
     function paintFiles() {
       const pile = (typeof CsvPile !== 'undefined') ? CsvPile.list() : [];
       flAll.innerHTML = '';
@@ -200,29 +219,13 @@
       filesActions.hidden = pile.length === 0;
     }
 
-    // Re-derive jobs and the on-hand slot from the shared pile, two-stage (see
-    // spec):
-    //   stock = the last-added on-hand file THIS tab's isStockFile claims;
-    //   jobs  = files that are NOT any kind of on-hand file (looksLikeAnyStock)
-    //           and are not the file picked above, so the on-hand file this tab
-    //           claims never lands in its job list even when looksLikeAnyStock
-    //           misses it. Another family's on-hand file that looksLikeAnyStock
-    //           misses does land in jobs; the client has no third check.
-    // Everything else in the pile (another tab's on-hand file) is unused here.
-    // The server re-classifies authoritatively on plan, so a client mis-sniff
-    // only mislabels the panel, never mis-plans.
     function rebuild() {
       jobs.clear();
-      stock = null;
+      onHand = {};
       if (typeof CsvPile === 'undefined') return;
-      const files = CsvPile.list();
-      const isStock = typeof config.isStockFile === 'function' ? config.isStockFile : null;
-      const pick = isStock ? CsvPile.pickStock(files, isStock) : null;
-      for (const f of files) {
-        if (looksLikeAnyStock(f.text) || (pick && f.name === pick.name)) continue;
-        jobs.set(f.name, { name: f.name, text: f.text });
-      }
-      if (pick) stock = { name: pick.name, text: pick.text };
+      const picked = pickOnHand(CsvPile.list(), config.families);
+      for (const f of picked.jobs) jobs.set(f.name, { name: f.name, text: f.text });
+      for (const [family, f] of Object.entries(picked.onHand)) onHand[family] = { name: f.name, text: f.text };
     }
 
     function changed() {
@@ -233,8 +236,8 @@
 
     // Read a list of File objects into the shared pile. A zone drop used to
     // pass a 'jobs'/'stock' hint that routed storage; every file now lands in
-    // the one pile and each tab re-derives its own stock slot by sniffing, so
-    // no hint is needed here. Writing to CsvPile fires the subscription below,
+    // the one pile and each family's on-hand file is found by sniffing, so no
+    // hint is needed here. Writing to CsvPile fires the subscription below,
     // which rebuilds and repaints; the no-pile branch keeps the panel usable
     // if csvPile.js failed to load.
     async function addFiles(fileList) {
@@ -273,7 +276,7 @@
     clearAllBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       if (typeof CsvPile !== 'undefined') CsvPile.clear();
-      else { jobs.clear(); stock = null; changed(); }
+      else { jobs.clear(); changed(); }
     });
 
     // Remove buttons (event-delegated on the panel). Removal is from the shared
@@ -284,7 +287,7 @@
       e.stopPropagation();
       const name = rm.dataset.name;
       if (name && typeof CsvPile !== 'undefined') CsvPile.remove(name);
-      else { jobs.delete(name); if (stock && stock.name === name) stock = null; changed(); }
+      else { jobs.delete(name); changed(); }
     });
 
     // Panel-level drag/drop (works collapsed OR open) — one pile, so no per-zone
@@ -303,8 +306,8 @@
     // assigns the returned handle (often referenced from inside onChange) only
     // after this returns, so calling onChange now would hit it in the temporal
     // dead zone. The page decides whether to auto-run on load. AFTER that, wire
-    // the subscription so every later pile change (this panel, the Loaded-files
-    // panel, or another browser tab) rebuilds and fires onChange.
+    // the subscription so every later pile change (this panel or another
+    // browser tab) rebuilds and fires onChange.
     rebuild();
     paintFiles();
     summarize();
@@ -317,14 +320,14 @@
       // name is left as-is: it is the job number, which travels by design, and
       // the recorded baseline echoes it back.
       getJobs: () => Array.from(jobs.values()).map((j) => ({ name: j.name, text: redact(j.text) })),
-      getStock: () => (stock ? { name: stock.name, text: redact(stock.text) } : null),
+      getOnHand: (family) => (onHand[family] ? { name: onHand[family].name, text: redact(onHand[family].text) } : null),
       isEmpty: () => jobs.size === 0,
-      // Clears the whole shared pile (the pile is global — there is no per-tab
-      // slice to clear). The subscription rebuilds/repaints and fires onChange.
+      // Clears the whole shared pile. The subscription rebuilds/repaints and
+      // fires onChange.
       clear: () => {
         autoCollapsed = false;
         if (typeof CsvPile !== 'undefined') CsvPile.clear();
-        else { jobs.clear(); stock = null; changed(); }
+        else { jobs.clear(); changed(); }
       },
       expand,
       collapse,
@@ -431,7 +434,7 @@
 
   // Plate and hanger stock CSVs share this exact header shape (sku/item +
   // available/on_hand/qty, no span, no material name) — the one place that
-  // shape check lives, so Plates' and Hangers' isStockFile don't each carry
+  // shape check lives, so Plates' and Hangers' isOnHandFile don't each carry
   // their own copy. stockProductHints (below) then breaks the tie between them.
   //
   // Cell-level, not substring: a job summary's "Misc Items" line ("item") next
@@ -456,8 +459,8 @@
 
   // Plate stock and hanger stock carry IDENTICAL headers (sku,on_hand,…); only
   // the SKU data tells them apart. With one shared pile both the Plates and
-  // Hangers tabs would otherwise claim each other's stock file, so their
-  // isStockFile predicates disqualify by product hint using this — the one
+  // Hangers sections would otherwise claim each other's on-hand file, so their
+  // isOnHandFile predicates disqualify by product hint using this — the one
   // client copy of the SKU-prefix test the server's hanger sniffer also runs.
   // Returns { plate, hanger } booleans (both false when nothing recognisable).
   function stockProductHints(text) {
@@ -490,7 +493,8 @@
   // Detects the inventory columns a MiTek summary never carries, plus the bare
   // item,span,qty (EWP) and size,grade,length,qty (lumber) shapes. Cell-level,
   // not substring — a summary's "Product:,EWP" metadata must not read as an
-  // 'product' item alias. The server re-classifies authoritatively on Calculate.
+  // 'product' item alias. The server re-classifies authoritatively on each
+  // plan request.
   function looksLikeAnyStock(text) {
     const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim()).slice(0, 8);
     const stockCols = ['on_hand', 'onhand', 'committed', 'available', 'threshold', 'incoming'];
@@ -504,6 +508,30 @@
     return looksLikeItemSpanQtyStock(text, 8);
   }
 
+  // Sort the pile into each family's on-hand file and the job files, two-stage:
+  //   onHand = per family, the last-added file its isOnHandFile claims;
+  //   jobs   = files that are NOT any kind of on-hand file (looksLikeAnyStock)
+  //            and not a file picked above, so a claimed on-hand file never
+  //            lands in the job list even when looksLikeAnyStock misses it. An
+  //            on-hand file no family claims and looksLikeAnyStock misses does
+  //            land in jobs; there is no third check.
+  // The server takes a named on-hand file as given, so this choice decides
+  // what each family plans against; test/planner-ui.test.js covers it.
+  // files: the pile's [{ name, text, addedAt }]; families: { family: { isOnHandFile } }.
+  // The last-added-wins rule is CsvPile.pickStock, the pile's own; Node (the
+  // tests) has no CsvPile global, so it loads the same module.
+  function pickOnHand(files, families) {
+    const { pickStock } = typeof CsvPile !== 'undefined' ? CsvPile : require('./csvPile.js');
+    const onHand = {};
+    for (const [family, { isOnHandFile }] of Object.entries(families)) {
+      const pick = pickStock(files, isOnHandFile);
+      if (pick) onHand[family] = pick;
+    }
+    const picked = new Set(Object.values(onHand).map((f) => f.name));
+    const jobs = files.filter((f) => !looksLikeAnyStock(f.text) && !picked.has(f.name));
+    return { onHand, jobs };
+  }
+
   // Collapse a burst of calls into one trailing call `ms` later — a multi-file
   // drop or a flurry of cross-tab pile writes becomes a single recompute.
   function debounce(fn, ms) {
@@ -515,7 +543,7 @@
   }
 
   // ── Redaction: strip the sensitive values before a sheet leaves the browser ─
-  // The four pages POST getJobs()/getStock() to a hosted server, so the sheet
+  // The Planner POSTs getJobs()/getOnHand() to a hosted server, so the sheet
   // now leaves the office machine. A MiTek summary carries per-line and per-job
   // costs, the customer name and addresses, the job-site address, phone numbers,
   // the sales representative, the designer, the customer ID, the customer P.O.
@@ -665,25 +693,205 @@
     return lines.map((l, i) => l + (parts[2 * i + 1] || '')).join('');
   }
 
-  if (typeof window !== 'undefined') {
-    window.PlannerUI = {
-      esc, fmtInt, fmtNum, readFile, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
-      wireSort, drilldowns, wireExpandAll, resetExpandAll, expandAllButtonHtml, dropZones, debounce,
-      stockProductHints, looksLikePlateOrHangerStock,
+  // ── One job's Included Jobs detail, for any family ─────────────────────────
+  // The tables a job's row expands to, as data: each is { heading, columns,
+  // rows, footer? }, with every cell already formatted as the screen shows it.
+  // Families differ only in the entries of JOB_BREAKDOWN, never in the code
+  // that reads them (spec #72, "one code path per operation"); the Planner
+  // renders these with renderBreakdown, and Jobs will too (spec #72, step 4).
+  // A column is { label, cls?, strong? } — cls is the cell class ('n'
+  // right-aligns a number, 'mono' sets a code in monospace); strong bolds it.
+  const JOB_BREAKDOWN = {
+    lumber: {
+      lines: (j) => j.items || [],
+      tables: [
+        {
+          heading: (j, lines) => 'Line items — ' + lines.length + " row(s) on " + (j.jobNumber || j.name) + "'s material sheet",
+          columns: [{ label: 'Material' }, { label: 'Qty', cls: 'n' }, { label: 'Length', cls: 'mono' }],
+          rows: (j, lines) => lines.map((it) => [it.material, fmtInt(it.qty), it.length]),
+          footer: (j) => ['Total LF', fmtNum(j.totalLf)],
+        },
+        // Boards this one job needs, cut on its own (no on-hand, no sharing with
+        // other jobs), by size/grade and stock length. For the saw. These per-job
+        // totals add up to MORE than the pooled order, since pooling shares
+        // boards across jobs — hence the hover title. Total LF here is bought
+        // footage (stock length × boards, offcuts included), a different number
+        // from the line items' Total LF (raw sheet demand).
+        {
+          heading: (j) => 'Boards to cut — ' + fmtInt(j.totalPieces) + ' total',
+          title: 'Cut per job, on its own — totals run higher than the pooled order above, since pooling shares boards across jobs.',
+          columns: [{ label: 'Size / Grade', strong: true }, { label: 'Stock length', cls: 'mono' }, { label: 'Boards', cls: 'n', strong: true }],
+          rows: (j) => lumberBoards(j).map((b) => [b.first ? b.label : '', ftLabel(b.stockLengthFt), fmtInt(b.boards)]),
+          footer: (j) => ['Total LF', fmtNum(lumberBoards(j).reduce((lf, b) => lf + buyLf(b), 0))],
+        },
+      ],
+    },
+    plates: {
+      lines: (j) => j.items || [],
+      tables: [{
+        heading: (j, lines) => 'Material list — ' + fmtInt(lines.length) + ' plate line(s) on ' + j.jobNumber + "'s sheet",
+        columns: [{ label: 'SKU', cls: 'mono' }, { label: 'Qty', cls: 'n' }],
+        rows: (j, lines) => lines.map((it) => [it.sku, fmtInt(it.qty)]),
+      }],
+    },
+    hangers: {
+      lines: (j) => j.lines || [],
+      tables: [{
+        heading: (j, lines) => 'Material list — ' + lines.length + ' hanger line(s) on ' + (j.jobNumber || j.name) + "'s sheet",
+        columns: [{ label: 'Size', cls: 'mono' }, { label: 'Qty', cls: 'n' }, { label: 'Section' }],
+        rows: (j, lines) => lines.map((it) => [it.sku, fmtInt(it.qty), it.section || 'Hangers']),
+      }],
+    },
+    // Qty through fmtNum (at most two decimals), as the LVL page showed it;
+    // fmtInt would keep three.
+    lvl: {
+      lines: (j) => j.items || [],
+      tables: [{
+        heading: (j, lines) => 'Line items — ' + lines.length + ' row(s) on ' + (j.jobNumber || j.name) + "'s material sheet",
+        columns: [{ label: 'Label', cls: 'mono' }, { label: 'Size' }, { label: 'Qty', cls: 'n' }, { label: 'Length', cls: 'mono' }],
+        rows: (j, lines) => lines.map((it) => [it.label || '—', it.size, fmtNum(it.qty), it.length]),
+      }],
+    },
+  };
+
+  // Purchased footage for one lumber buyByLength row: stock length × boards
+  // (offcuts included). The one formula behind every "boards -> LF" total, here
+  // and in the lumber section, so the pooled and per-job views cannot drift.
+  function buyLf(b) { return b.stockLengthFt * b.boards; }
+
+  // A lumber job's boards to cut, one entry per size/grade and stock length;
+  // `first` marks the first stock length of each size/grade.
+  function lumberBoards(j) {
+    return j.byGroup.flatMap((g) => (g.buyByLength || []).map((b, i) =>
+      ({ label: g.label, stockLengthFt: b.stockLengthFt, boards: b.boards, first: i === 0 })));
+  }
+
+  // A job with no lines for this family has no breakdown. Otherwise every
+  // table that has rows: a lumber job with nothing to cut shows its lines alone.
+  function jobBreakdown(family, job) {
+    const { lines: linesOf, tables } = JOB_BREAKDOWN[family];
+    const lines = linesOf(job);
+    if (!lines.length) return [];
+    return tables
+      .map((t) => ({
+        heading: t.heading(job, lines),
+        title: t.title,
+        columns: t.columns,
+        rows: t.rows(job, lines),
+        footer: t.footer && t.footer(job),
+      }))
+      .filter((t) => t.rows.length > 0);
+  }
+
+  // One <td> for a column: its class, and bold where the column asks.
+  function cellHtml(col, text, extra) {
+    const cls = col.cls ? ' class="' + col.cls + '"' : '';
+    const body = col.strong ? '<strong>' + esc(text) + '</strong>' : esc(text);
+    return '<td' + cls + (extra || '') + '>' + body + '</td>';
+  }
+
+  // A column's header: right-aligned for a number column, plain otherwise.
+  function thHtml(col) {
+    return '<th' + (col.cls === 'n' ? ' class="n"' : '') + '>' + esc(col.label) + '</th>';
+  }
+
+  // jobBreakdown's tables as HTML. Two tables sit side by side (lumber's line
+  // items beside its boards to cut); one stands alone. A footer is a label and
+  // its totals: the label spans the columns the totals leave free, and every
+  // total is right-aligned as a number.
+  function renderBreakdown(tables) {
+    const html = tables.map((t) => {
+      const head = t.columns.map(thHtml).join('');
+      const body = t.rows.map((r) => '<tr>' + r.map((v, i) => cellHtml(t.columns[i], v)).join('') + '</tr>').join('');
+      let foot = '';
+      if (t.footer) {
+        const span = t.columns.length - t.footer.length + 1;
+        foot = '<tfoot><tr>' + t.footer.map((v, i) => i === 0
+          ? cellHtml({ strong: true }, v, span > 1 ? ' colspan="' + span + '"' : '')
+          : cellHtml({ cls: 'n', strong: true }, v)).join('') + '</tr></tfoot>';
+      }
+      return '<div><h4' + (t.title ? ' title="' + esc(t.title) + '"' : '') + '>' + esc(t.heading) + '</h4>' +
+        '<table class="drill-t"><thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody>' + foot + '</table></div>';
+    });
+    return html.length > 1 ? '<div class="plan-cols">' + html.join('') + '</div>' : html.join('');
+  }
+
+  // ── The Included Jobs panel, for any family ────────────────────────────────
+  // One row per job, which expands to its jobBreakdown. Job # and Job Name
+  // lead every family's table and sort; `columns` are the family's own summary
+  // columns after them ({ label, cls?, strong?, cell: (job) => text }).
+  // Returns { html, wire(out, drills) }: put html where the panel belongs, then
+  // call wire once it is in the page. Sort order survives a re-plan, per family.
+  const jobSorts = {};
+  function includedJobs(family, jobs, columns) {
+    if (!jobs.length) return { html: '', wire() {} };
+    const sort = jobSorts[family] || (jobSorts[family] = { col: null, dir: 'asc' });
+    const group = family + '-job';
+    const buttonId = family + '-btn-toggle-jobs';
+    const tableId = family + '-jobs-table';
+    const lead = [
+      { label: 'Job #', sort: 'num', cls: 'mono', strong: true, cell: (j) => j.jobNumber || '—' },
+      { label: 'Job Name', sort: 'name', cell: (j) => j.jobName || '—' },
+    ];
+    const all = lead.concat(columns);
+
+    function tableHtml(rows) {
+      const head = '<tr><th></th>' + all.map((c) => c.sort
+        ? '<th class="sortable" data-jobsort="' + c.sort + '">' + esc(c.label) + ' ' + sortIcon(sort.col === c.sort, sort.dir) + '</th>'
+        : thHtml(c)).join('') + '</tr>';
+      const body = rows.map((j, idx) => {
+        const tables = jobBreakdown(family, j);
+        const open = tables.length > 0;
+        return '<tr' + (open ? ' data-group="' + group + '" data-toggle="' + idx + '"' : '') + '>' +
+          '<td>' + (open ? '<span class="caret">▸</span>' : '') + '</td>' +
+          all.map((c) => cellHtml(c, c.cell(j))).join('') + '</tr>' +
+          (open ? '<tr class="jobs" id="drill-' + group + '-' + idx + '" style="display:none">' +
+            '<td colspan="' + (all.length + 1) + '"><div class="drill">' + renderBreakdown(tables) + '</div></td></tr>' : '');
+      }).join('');
+      return '<thead>' + head + '</thead><tbody>' + body + '</tbody>';
+    }
+
+    function paint() {
+      const table = document.getElementById(tableId);
+      if (!table) return;
+      table.innerHTML = tableHtml(sortRows(jobs, sort, { num: (j) => j.jobNumber, name: (j) => j.jobName }));
+      wireSort(table, 'jobsort', sort, paint);
+      resetExpandAll(buttonId);
+    }
+
+    return {
+      html: '<details class="sec"><summary>Included Jobs (' + fmtInt(jobs.length) + ' files)</summary>' +
+        expandAllButtonHtml(buttonId) +
+        '<div class="tw" style="margin-top:10px"><table id="' + tableId + '"></table></div></details>',
+      wire(out, drills) {
+        wireExpandAll(out, drills, group, buttonId);
+        paint();
+      },
     };
   }
 
-  // Node (tests): the pure helpers only — the CSV sniffers and redact(), which
-  // its own test drives directly. Everything else here (dropZones, drilldowns,
-  // sorting, …) touches the DOM and has no Node caller. redact() is NOT put on
-  // window.PlannerUI: getJobs()/getStock() call it from this closure, so a
-  // browser export would have no reader — and an export with no reader does not
-  // ship (issue #39). looksLikeAnyStock and looksLikeItemSpanQtyStock are held
-  // back for the same reason: dropZones calls them from this closure, and their
-  // only outside reader, the EWP tab's isStockFile, left with the tab (#41).
+  if (typeof window !== 'undefined') {
+    window.PlannerUI = {
+      esc, fmtInt, fmtNum, ftLabel, buyLf, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
+      wireSort, drilldowns, wireExpandAll, resetExpandAll, expandAllButtonHtml, dropZones, debounce,
+      stockProductHints, looksLikePlateOrHangerStock, includedJobs,
+    };
+  }
+
+  // Node (tests): the pure helpers only — the CSV sniffers, redact(),
+  // jobBreakdown(), renderBreakdown() and pickOnHand(), which their own tests
+  // drive directly. Everything else here (dropZones, drilldowns, sorting, …)
+  // touches the DOM and has no Node caller. redact(), jobBreakdown() and
+  // renderBreakdown() are NOT put on window.PlannerUI: getJobs()/getOnHand()
+  // and includedJobs() call them from this closure, so a browser export would
+  // have no reader — and an export with no reader does not ship (issue #39).
+  // Jobs (spec #72, step 4) puts jobBreakdown on it when it calls it.
+  // looksLikeAnyStock and looksLikeItemSpanQtyStock are held back for the same
+  // reason: dropZones calls them from this closure, and their only outside
+  // reader, the EWP tab's isStockFile, left with the tab (#41).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      stockProductHints, looksLikePlateOrHangerStock, redact,
+      stockProductHints, looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand,
     };
   }
 })();

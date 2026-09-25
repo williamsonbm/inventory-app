@@ -1,118 +1,21 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Hanger purchase planner</title>
-<link rel="stylesheet" href="/planner.css">
-<style>
-  /* Hanger-specific only — everything else is in /planner.css. */
-  tr.buy td:first-child{border-left:3px solid var(--warn)}
-  table.buy{table-layout:fixed}
-  table.buy col.c-sku{width:240px}
-  table.buy col.c-need{width:90px}
-  table.buy col.c-have{width:90px}
-  table.buy col.c-buy{width:110px}
-  table.buy col.c-inc{width:110px}
-  table.buy col.c-thresh{width:90px}
-  table.buy col.c-status{width:auto}
-</style>
-</head>
-<body>
-<div class="wrap">
-  <div>
-    <nav class="nav" aria-label="Planner switch"><a href="/plates">Plates</a><a href="/hangers" class="on">Hangers</a><a href="/lvl">LVL</a><a href="/lumber">Lumber</a></nav>
-    <h1 style="margin-top:14px">Hanger Purchase Planner</h1>
-    <p class="sub">Multi-job hanger and hardware demand consolidated and netted against stock.</p>
-  </div>
+/* =============================================================
+   hangers-section.js — the Hangers section of the Planner.
+   =============================================================
+   Served at /hangers-section.js by src/planner/server.js and loaded by
+   planner.html, which runs the plan and hands the response to render(). Moved
+   from the old hangers.html (spec #72, step 1); the buy list is unchanged.
 
-  <div id="drop-mount"></div>
+   Registers window.PlannerSections.hangers.
 
-  <div class="row">
-    <button id="btn-plan" disabled>Work out what to buy</button>
-    <button id="btn-clear" class="ghost" style="display:none">Clear</button>
-    <span class="sub" id="msg"></span>
-    <span id="busy" style="display:none;color:var(--muted)">Analyzing hardware requirements…</span>
-  </div>
-
-  <div id="out" style="display:flex;flex-direction:column;gap:14px"></div>
-</div>
-
-<script src="/csvPile.js"></script>
-<script src="/planner-ui.js"></script>
-<script>
-(() => {
+   NOT UNIT-TESTED: render() builds DOM, and this repo has no Node DOM harness.
+   Checked by hand in the browser, one pass per family (spec #72). The route's
+   output is proven by test/recorded-output.test.js.
+   ============================================================= */
+(function () {
+  'use strict';
   const { esc, fmtInt: fmt, renderStats, renderWarnings, renderRejected, expandAllButtonHtml } = PlannerUI;
   const el = (id) => document.getElementById(id);
-  const btnPlan = el('btn-plan'), btnClear = el('btn-clear'), busy = el('busy');
-  const msg = el('msg'), out = el('out');
-  // One delegated listener powers every expandable row (see PlannerUI.drilldowns).
-  const drills = PlannerUI.drilldowns(out);
 
-  // Sniff a hanger stock file vs a MiTek material summary.
-  function isStockFile(text) {
-    if (!PlannerUI.looksLikePlateOrHangerStock(text)) return false;
-    // A plate stock file shares this exact header; reject it so the Plates tab
-    // keeps it. (A file with no recognisable hints stays claimable here.)
-    const hints = PlannerUI.stockProductHints(text);
-    return !(hints.plate && !hints.hanger);
-  }
-
-  const dz = PlannerUI.dropZones({
-    mount: el('drop-mount'),
-    jobsTitle: 'Job material summaries',
-    jobsHint: 'Drop several, or click to choose. One per job.',
-    stockTitle: 'Hanger stock CSV',
-    stockHint: 'Stock → Hangers → Export CSV.',
-    isStockFile,
-    onChange() {
-      btnPlan.disabled = dz.isEmpty();
-      btnClear.style.display = (!dz.isEmpty() || dz.getStock()) ? 'inline-block' : 'none';
-      autoRun();
-    },
-  });
-
-  btnClear.addEventListener('click', () => {
-    dz.clear();
-    msg.innerHTML = '';
-    out.innerHTML = '';
-  });
-
-  async function runPlan() {
-    if (dz.isEmpty()) { msg.innerHTML = ''; out.innerHTML = ''; btnPlan.disabled = true; return; }
-    msg.innerHTML = '';
-    out.innerHTML = '';
-    busy.style.display = 'inline';
-    btnPlan.disabled = true;
-
-    try {
-      const res = await fetch('/api/hangers/plan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: dz.getJobs(), stock: dz.getStock() }),
-      });
-      const data = await res.json();
-      if (!res.ok || !data.ok) {
-        msg.innerHTML = `<div class="note bad">${esc(data.error || 'Failed to analyze hanger files.')}</div>`;
-        return;
-      }
-      renderPlan(data);
-    } catch (err) {
-      msg.innerHTML = `<div class="note bad">Request failed: ${esc(err.message)}</div>`;
-    } finally {
-      busy.style.display = 'none';
-      btnPlan.disabled = dz.isEmpty();
-    }
-  }
-  // Auto-recompute: any pile change (a drop, a remove, Clear all, or a change
-  // from another tab) reruns; a multi-file drop debounces to one run.
-  const autoRun = PlannerUI.debounce(runPlan, 80);
-  btnPlan.addEventListener('click', runPlan);
-  autoRun();   // on load: run from the shared pile (or clear if it's empty)
-
-  // Sort state for the Included Jobs table (shared across in-place repaints).
-  // col null = drop order; 'num' sorts Job # numerically, 'name' sorts Job Name.
-  let jobSort = { col: null, dir: 'asc' };
   // Sort state for the Buy list. col null = biggest-shortfall-first (the engine
   // order); 'sku'/'need'/'buy' sort those columns.
   let buySort = { col: null, dir: 'asc' };
@@ -120,7 +23,14 @@
   // engine order); 'sku'/'need'/'remaining' sort those columns.
   let coveredSort = { col: null, dir: 'asc' };
 
-  function renderPlan(p) {
+  // The Included Jobs summary columns after Job # and Job Name.
+  const JOB_COLUMNS = [
+    { label: 'Delivery', cell: (j) => j.deliveryDate || '—' },
+    { label: 'Category', cell: (j) => j.category || '—' },
+    { label: 'Hanger Lines', cls: 'n', cell: (j) => fmt((j.lines || []).length) },
+  ];
+
+  function render(p, out, drills) {
     const sum = p.summary;
     const hasStock = p.hasStock;
     let html = '';
@@ -161,7 +71,7 @@
       html += `
         <div class="row" style="justify-content:space-between;margin-top:0">
           <div class="eyebrow" style="margin:0">Buy list — ${p.buyList.length} SKU(s)</div>
-          <button class="ghost" id="btn-toggle-drills" style="padding:4px 12px;font-size:12.5px">Expand all</button>
+          <button class="ghost" id="hangers-btn-toggle-drills" style="padding:4px 12px;font-size:12.5px">Expand all</button>
         </div>
         <div class="tw"><table class="buy" id="hangers-buy-table"></table></div>
         ${hasStock ? `<p class="sub" style="font-size:13px;margin-top:0">Incoming is shown, never subtracted — whether an open order lands in time is your call, not the tool's.</p>` : ''}
@@ -182,36 +92,21 @@
       `;
     }
 
-    // Included jobs — Job # and Job Name are sortable, and each job with hanger
-    // lines expands to the line items on its sheet. The table is painted by
-    // paintJobs() after the shell mounts, so re-sorting repaints only this table
-    // and leaves the rest of the page (and the open panel) untouched.
-    if (p.jobs.length > 0) {
-      html += `
-        <details class="sec">
-          <summary>Included Jobs (${p.jobs.length} files)</summary>
-          ${expandAllButtonHtml('btn-toggle-jobs')}
-          <div class="tw" style="margin-top:10px">
-            <table id="hangers-jobs-table"></table>
-          </div>
-        </details>
-      `;
-    }
-
+    const jobs = PlannerUI.includedJobs('hangers', p.jobs, JOB_COLUMNS);
+    html += jobs.html;
     html += renderRejected(p.rejected);
 
     out.innerHTML = html;
 
     // Expand all / collapse all, one button per drilldown group. Individual
-    // row clicks (buy list, covered, jobs) are handled by the delegated
-    // `drills` listener; these drive each group in bulk.
-    PlannerUI.wireExpandAll(out, drills, 'sku', 'btn-toggle-drills');
+    // row clicks (buy list, covered) are handled by the delegated `drills`
+    // listener; these drive each group in bulk.
+    PlannerUI.wireExpandAll(out, drills, 'sku', 'hangers-btn-toggle-drills');
     PlannerUI.wireExpandAll(out, drills, 'cov', 'btn-toggle-cov');
-    PlannerUI.wireExpandAll(out, drills, 'job', 'btn-toggle-jobs');
 
     if (p.buyList.length > 0) paintBuy();
     if (hasStock && p.covered.length > 0) paintCovered();
-    if (p.jobs.length > 0) paintJobs();
+    jobs.wire(out, drills);
 
     // Paint (or repaint) the Covered in Stock table for the current sort — the
     // buy list's twin: SKU / Need / Remaining sort, rows expand via `drills`.
@@ -261,7 +156,7 @@
         { sku: (r) => r.sku, need: (r) => r.demand, buy: (r) => r.buyPieces });
       table.innerHTML = buyInner(rows);
       PlannerUI.wireSort(table, 'buysort', buySort, paintBuy);
-      PlannerUI.resetExpandAll('btn-toggle-drills');
+      PlannerUI.resetExpandAll('hangers-btn-toggle-drills');
     }
 
     function buyInner(rows) {
@@ -342,79 +237,22 @@
           </td>
         </tr>`;
     }
-
-    // Paint (or repaint) the Included Jobs table for the current sort. Row
-    // expansion is handled by the delegated `drills` listener, so a repaint only
-    // needs to re-bind the sort headers — the panel and other sections are
-    // untouched.
-    function paintJobs() {
-      const table = el('hangers-jobs-table');
-      if (!table) return;
-      const jobs = PlannerUI.sortRows(p.jobs, jobSort,
-        { num: (j) => j.jobNumber, name: (j) => j.jobName });
-      table.innerHTML = jobsInner(jobs);
-      PlannerUI.wireSort(table, 'jobsort', jobSort, paintJobs);
-      PlannerUI.resetExpandAll('btn-toggle-jobs');
-    }
-
-    function jobsInner(jobs) {
-      return `
-        <thead>
-          <tr>
-            <th></th>
-            <th class="sortable" data-jobsort="num">Job # ${PlannerUI.sortIcon(jobSort.col === 'num', jobSort.dir)}</th>
-            <th class="sortable" data-jobsort="name">Job Name ${PlannerUI.sortIcon(jobSort.col === 'name', jobSort.dir)}</th>
-            <th>Delivery</th>
-            <th>Category</th>
-            <th class="n">Hanger Lines</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${jobs.map((j, idx) => {
-            const lines = j.lines || [];
-            const hasLines = lines.length > 0;
-            return `
-            <tr${hasLines ? ` data-group="job" data-toggle="${idx}"` : ''}>
-              <td>${hasLines ? '<span class="caret">▸</span>' : ''}</td>
-              <td class="mono"><strong>${esc(j.jobNumber || '—')}</strong></td>
-              <td>${esc(j.jobName || '—')}</td>
-              <td>${esc(j.deliveryDate || '—')}</td>
-              <td>${esc(j.category || '—')}</td>
-              <td class="n">${fmt(lines.length)}</td>
-            </tr>
-            ${hasLines ? `
-            <tr class="jobs" id="drill-job-${idx}" style="display:none">
-              <td colspan="6">
-                <div class="drill">
-                  <h4>Material list — ${lines.length} hanger line(s) on ${esc(j.jobNumber || j.name)}'s sheet</h4>
-                  <table class="drill-t">
-                    <thead>
-                      <tr>
-                        <th>Size</th>
-                        <th class="n">Qty</th>
-                        <th>Section</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      ${lines.map((it) => `
-                        <tr>
-                          <td class="mono">${esc(it.sku)}</td>
-                          <td class="n">${fmt(it.qty)}</td>
-                          <td>${esc(it.section || 'Hangers')}</td>
-                        </tr>
-                      `).join('')}
-                    </tbody>
-                  </table>
-                </div>
-              </td>
-            </tr>
-            ` : ''}
-          `; }).join('')}
-        </tbody>
-      `;
-    }
   }
+
+  window.PlannerSections = window.PlannerSections || {};
+  window.PlannerSections.hangers = {
+    label: 'Hangers',
+    blurb: 'Multi-job hanger and hardware demand consolidated and netted against stock.',
+    route: '/api/hangers/plan',
+    busyText: 'Analyzing hardware requirements…',
+    // Sniff a hanger on-hand file vs a MiTek material summary.
+    isOnHandFile(text) {
+      if (!PlannerUI.looksLikePlateOrHangerStock(text)) return false;
+      // A plate on-hand file shares this exact header; reject it so the Plates
+      // section keeps it. (A file with no recognisable hints stays claimable.)
+      const hints = PlannerUI.stockProductHints(text);
+      return !(hints.plate && !hints.hanger);
+    },
+    render,
+  };
 })();
-</script>
-</body>
-</html>
