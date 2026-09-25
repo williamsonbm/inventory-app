@@ -235,15 +235,6 @@ async function withServer(fn) {
   }
 }
 
-test('GET /lvl serves the LVL planner page', async () => {
-  await withServer(async (base) => {
-    const res = await fetch(`${base}/lvl`);
-    assert.equal(res.status, 200);
-    const html = await res.text();
-    assert.match(html, /<title>LVL linear-footage planner<\/title>/i);
-  });
-});
-
 test('POST /api/lvl/plan plans a batch via HTTP API, auto-detecting the stock file', async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/api/lvl/plan`, {

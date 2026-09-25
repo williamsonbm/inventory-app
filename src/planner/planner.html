@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Planner</title>
+<script>
+  // Theme before first paint, so a dark-mode user never sees a white flash:
+  // the saved choice, else the computer's preference. Same key and rule as
+  // the web app's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  planner.html — the Planner: one page for all four families (spec #72, step 1).
+  Replaces the four family pages; their old addresses redirect here with the
+  family selected (src/planner/server.js).
+
+  This file is glue: the header, the family filter, the file panel, and the
+  runner that posts to each family's plan route and hands the response to that
+  family's section (src/planner/<family>-section.js). NOT UNIT-TESTED: the
+  tabs, the saved filter, the theme switch and the print buttons need a browser,
+  and this repo has no DOM harness. Checked by hand: a pass over the four
+  families (spec #72, Testing Decisions). The routes are proven by
+  test/recorded-output.test.js, the home page and the redirects by
+  test/port-guards.test.js.
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">Inventory</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+  </div>
+  <!-- One mode until Jobs, Inventory and Settings ship (spec #72): no tab
+       leads nowhere. The Planner has no tasks yet, so no task row. -->
+  <nav class="appbar-nav" aria-label="Modes"><a href="/" class="here" aria-current="page">Planner</a></nav>
+  <div class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="drop-mount"></div>
+
+  <div class="row no-print">
+    <button id="btn-plan" disabled>Work out what to buy</button>
+    <button id="btn-clear" class="ghost" hidden>Clear</button>
+    <button id="btn-print" class="ghost" hidden>Print order sheet</button>
+  </div>
+
+  <div id="sections"></div>
+</div>
+
+<script src="/csvPile.js"></script>
+<script src="/planner-ui.js"></script>
+<script src="/lumber-section.js"></script>
+<script src="/plates-section.js"></script>
+<script src="/hangers-section.js"></script>
+<script src="/lvl-section.js"></script>
+<script>
+(() => {
+  const { esc } = PlannerUI;
+  const el = (id) => document.getElementById(id);
+  // Screen order, and the order of the filter buttons.
+  const FAMILIES = ['lumber', 'plates', 'hangers', 'lvl'];
+  const sections = window.PlannerSections;
+
+  // ── Theme switch ───────────────────────────────────────────────────────────
+  const root = document.documentElement;
+  const themeBtn = el('theme-btn');
+  const paintThemeBtn = () => { themeBtn.textContent = root.dataset.theme === 'dark' ? '☀' : '☾'; };
+  paintThemeBtn();
+  let themeChosen = false;
+  themeBtn.addEventListener('click', () => {
+    themeChosen = true;
+    root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
+    try { localStorage.setItem('app.theme', root.dataset.theme); } catch { /* storage blocked: this visit only */ }
+    paintThemeBtn();
+  });
+  // Until the user picks a theme, follow the computer's setting as it changes.
+  try { themeChosen = !!localStorage.getItem('app.theme'); } catch { /* storage blocked */ }
+  const followComputer = (e) => {
+    if (themeChosen) return;
+    root.dataset.theme = e.matches ? 'dark' : 'light';
+    paintThemeBtn();
+  };
+  const darkQuery = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
+  // addListener is the older name; Safari before 14 has only that one.
+  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener('change', followComputer);
+  else if (darkQuery && darkQuery.addListener) darkQuery.addListener(followComputer);
+
+  // ── One section per family ─────────────────────────────────────────────────
+  const boxes = {};   // family -> { sec, out, busy, drills }
+  for (const family of FAMILIES) {
+    const s = sections[family];
+    const sec = document.createElement('section');
+    sec.className = 'fam';
+    sec.id = 'sec-' + family;
+    sec.dataset.family = family;
+    sec.innerHTML =
+      '<div class="fam-head"><div><h2>' + esc(s.label) + '</h2><p class="sub">' + esc(s.blurb) + '</p></div>' +
+      '<button type="button" class="ghost print-one">Print ' + esc(s.label) + ' only</button></div>' +
+      '<div class="fam-tools no-print"></div>' +
+      '<span class="busy" hidden>' + esc(s.busyText) + '</span>' +
+      '<div class="fam-out"></div>';
+    el('sections').appendChild(sec);
+    const out = sec.querySelector('.fam-out');
+    boxes[family] = { sec, out, busy: sec.querySelector('.busy'), drills: PlannerUI.drilldowns(out) };
+    if (s.mount) s.mount({ out, tools: sec.querySelector('.fam-tools') });
+    sec.querySelector('.print-one').addEventListener('click', () => printOnly(family));
+  }
+
+  // ── Family filter ──────────────────────────────────────────────────────────
+  // All, or one family. Kept in this browser only (spec #72), under an
+  // app-wide key so it follows the user into the other modes when they ship.
+  // An old family address arrives as /?family=<family> and sets it.
+  const FILTER_KEY = 'app.family';
+  const filterEl = el('family-filter');
+  const choices = ['all'].concat(FAMILIES);
+  filterEl.innerHTML = choices.map((f) =>
+    '<button type="button" data-family="' + f + '">' + esc(f === 'all' ? 'All' : sections[f].label) + '</button>').join('');
+
+  function applyFilter(family) {
+    for (const f of FAMILIES) boxes[f].sec.toggleAttribute('data-filtered-out', family !== 'all' && family !== f);
+    filterEl.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.family === family)));
+    try { localStorage.setItem(FILTER_KEY, family); } catch { /* storage blocked: this visit only */ }
+  }
+  filterEl.addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-family]');
+    if (b) applyFilter(b.dataset.family);
+  });
+
+  const fromAddress = new URLSearchParams(location.search).get('family');
+  let saved = null;
+  try { saved = localStorage.getItem(FILTER_KEY); } catch { /* storage blocked */ }
+  applyFilter([fromAddress, saved].find((f) => choices.includes(f)) || 'all');
+  if (fromAddress !== null) history.replaceState(null, '', '/');
+
+  // ── Printing ───────────────────────────────────────────────────────────────
+  // The combined order sheet prints every family, whatever the filter shows;
+  // "Print <family> only" marks the other sections to skip until printing ends.
+  el('btn-print').addEventListener('click', () => window.print());
+  function printOnly(family) {
+    for (const f of FAMILIES) boxes[f].sec.toggleAttribute('data-print-skip', f !== family);
+    window.print();
+  }
+  window.addEventListener('afterprint', () => {
+    for (const f of FAMILIES) boxes[f].sec.removeAttribute('data-print-skip');
+  });
+
+  // ── Files and planning ─────────────────────────────────────────────────────
+  const btnPlan = el('btn-plan'), btnClear = el('btn-clear'), btnPrint = el('btn-print');
+
+  const dz = PlannerUI.dropZones({
+    mount: el('drop-mount'),
+    jobsTitle: 'Job material summaries',
+    families: sections,
+    onChange() { syncButtons(); autoRun(); },
+  });
+
+  // Plan and Print need a job file; Clear needs any file at all.
+  function syncButtons() {
+    btnPlan.disabled = dz.isEmpty();
+    btnPrint.hidden = dz.isEmpty();
+    btnClear.hidden = dz.isEmpty() && !FAMILIES.some((f) => dz.getOnHand(f));
+  }
+
+  // Each run of a family gets a number; a response that is no longer the
+  // latest is dropped, so a slow earlier plan never paints over a newer one.
+  const runs = {};
+
+  // `files` is the redacted job list, read once per run for all four families.
+  // Deliberately not dz.getJobs() inside each family's run: that redacts every
+  // sheet four times, and one pass over the 50-sheet corpus measured 17–23 ms
+  // in Node, main-thread time a slower office PC would feel on every drop.
+  async function runFamily(family, files) {
+    const s = sections[family];
+    const box = boxes[family];
+    const run = runs[family] = (runs[family] || 0) + 1;
+    box.out.innerHTML = '';
+    // Set before the early return: a run superseded mid-flight leaves hiding
+    // the message to the newest run, and with no job file there is no request.
+    box.busy.hidden = dz.isEmpty();
+    if (dz.isEmpty()) return;
+    try {
+      const options = s.planOptions ? await s.planOptions() : {};
+      const res = await fetch(s.route, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files, stock: dz.getOnHand(family), ...options }),
+      });
+      const data = await res.json();
+      if (run !== runs[family]) return;
+      if (!res.ok || !data.ok) {
+        box.out.innerHTML = '<div class="note bad"><b>Couldn\'t plan ' + esc(s.label) + '.</b> ' +
+          esc(data.error || 'The plan failed.') + '</div>' + PlannerUI.renderRejected(data.rejected);
+        return;
+      }
+      s.render(data, box.out, box.drills);
+    } catch (err) {
+      if (run === runs[family]) box.out.innerHTML = '<div class="note bad">Request failed: ' + esc(err.message) + '</div>';
+    } finally {
+      if (run === runs[family]) box.busy.hidden = true;
+    }
+  }
+
+  function runAll() {
+    const files = dz.isEmpty() ? [] : dz.getJobs();
+    for (const f of FAMILIES) runFamily(f, files);
+  }
+
+  // Auto-recompute: any pile change (a drop, a remove, Clear all, or a change
+  // from another browser tab) reruns; a multi-file drop debounces to one run.
+  const autoRun = PlannerUI.debounce(runAll, 80);
+  btnPlan.addEventListener('click', runAll);
+  btnClear.addEventListener('click', () => {
+    dz.clear();
+    for (const f of FAMILIES) if (sections[f].clear) sections[f].clear();
+  });
+  syncButtons();
+  autoRun();   // on load: run from the shared pile
+})();
+</script>
+</body>
+</html>

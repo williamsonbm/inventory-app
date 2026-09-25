@@ -1,15 +1,32 @@
 // =============================================================
-// test/planner-ui.test.js — pure CSV-sniffing helpers shared by every tab.
+// test/planner-ui.test.js — the pure helpers in the shared planner UI module.
 // Run with: node --test test/planner-ui.test.js
 // The DOM-facing half of planner-ui.js (dropZones, drilldowns, sorting, …)
 // has no Node harness and is verified manually; this covers the pure
-// classification helpers Plates and Hangers both build their isStockFile on.
+// classification helpers the on-hand sniffers build on, redact(), and
+// jobBreakdown().
+//
+// Recorded-output proof for jobBreakdown (spec #72, step 1):
+// port-fixtures/recorded/included-jobs-panels.json holds, as screen text,
+// every per-job table the four old family pages showed in their Included Jobs
+// panels. Captured 2026-09-24 from this repo at 48c5f30 ("docs: record the
+// UI/UX grilling terms and the count-time decision (#71)"), clean tree. Each
+// old page's own inline script ran unchanged in a Node vm with stub DOM
+// elements, its plan request answered with recorded/<family>-no-stock.json;
+// the Included Jobs table it painted was read back and each drill-down's
+// heading, column labels, rows and footer kept as text (tags stripped,
+// entities decoded, space runs collapsed). Deterministic because the input is
+// the recorded body and no sort was applied, so the panel kept drop order.
+// The capture script was one-off and is not kept; the old pages it ran are
+// in git at that commit.
 // =============================================================
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
-const { looksLikePlateOrHangerStock, redact } = require('../src/planner/planner-ui.js');
+const { looksLikePlateOrHangerStock, redact, jobBreakdown, pickOnHand } = require('../src/planner/planner-ui.js');
 
 const REAL_HANGER_STOCK = `sku,on_hand,committed,available,incoming,threshold,flag,last_counted
 HUS26,20,5,15,0,0,OK,
@@ -253,4 +270,178 @@ test('redact: passes through the trivial inputs untouched', () => {
   assert.equal(redact(''), '');
   assert.equal(redact(undefined), undefined);
   assert.equal(redact('SKU,Qty\n2x4,10\n'), 'SKU,Qty\n2x4,10\n');
+});
+
+// ── jobBreakdown(): one job's Included Jobs detail, for any family ──────────
+// Spec #72, step 1, seam 2. Jobs are shaped like each plan route's jobs[]
+// entries; the expected rows are worked by hand from those inputs.
+
+// Columns and rows as plain text, the form a person reads off the screen: a
+// browser shows a run of spaces as one, and a missing value as nothing.
+const screen = (cell) => String(cell == null ? '' : cell).replace(/\s+/g, ' ').trim();
+const asText = (tables) => tables.map((t) => ({
+  heading: screen(t.heading),
+  columns: t.columns.map((c) => c.label),
+  rows: t.rows.map((r) => r.map(screen)),
+  ...(t.footer ? { footer: t.footer.map(screen) } : {}),
+}));
+
+// One lumber job: two sheet lines of 2x4 #2 (3 × 16 ft + 4 × 10 ft = 88 LF),
+// cut on its own into 3 boards of 16 ft and 2 boards of 20 ft (88 LF bought,
+// 48 + 40 = 88; the 20 ft boards each carry two 10 ft cuts).
+const LUMBER_JOB = {
+  name: '10001R.csv', jobNumber: '10001R', jobName: 'Sample', deliveryDate: '9/30/2026',
+  items: [
+    { material: '2x4 SP No.2', qty: 3, length: '16-00-00' },
+    { material: '2x4 SP No.2', qty: 4, length: '10-00-00' },
+  ],
+  totalLf: 88,
+  totalPieces: 5,
+  byGroup: [{ label: '2x4 #2', lf: 88, buyByLength: [{ stockLengthFt: 16, boards: 3 }, { stockLengthFt: 20, boards: 2 }] }],
+};
+
+test('jobBreakdown: lumber lists the sheet lines with their total linear feet', () => {
+  const [lines] = asText(jobBreakdown('lumber', LUMBER_JOB));
+  assert.deepEqual(lines, {
+    heading: "Line items — 2 row(s) on 10001R's material sheet",
+    columns: ['Material', 'Qty', 'Length'],
+    rows: [['2x4 SP No.2', '3', '16-00-00'], ['2x4 SP No.2', '4', '10-00-00']],
+    footer: ['Total LF', '88'],
+  });
+});
+
+test('jobBreakdown: lumber lists the boards to cut per stock length beside the sheet lines', () => {
+  const [, boards] = asText(jobBreakdown('lumber', LUMBER_JOB));
+  assert.deepEqual(boards, {
+    heading: 'Boards to cut — 5 total',
+    columns: ['Size / Grade', 'Stock length', 'Boards'],
+    // The size/grade label heads its group's first row only.
+    rows: [['2x4 #2', '16′', '3'], ['', '20′', '2']],
+    footer: ['Total LF', '88'],
+  });
+});
+
+test('jobBreakdown: plates lists each plate SKU with its quantity', () => {
+  const job = {
+    name: '10002J.csv', jobNumber: '10002J', jobName: 'Sample', plateLines: 2, eaches: 1_260,
+    items: [{ sku: 'MT20 3x4', qty: 1_200 }, { sku: 'MT20 4x6', qty: 60 }],
+  };
+  assert.deepEqual(asText(jobBreakdown('plates', job)), [{
+    heading: "Material list — 2 plate line(s) on 10002J's sheet",
+    columns: ['SKU', 'Qty'],
+    rows: [['MT20 3x4', '1,200'], ['MT20 4x6', '60']],
+  }]);
+});
+
+test('jobBreakdown: hangers lists each line with its section, and a line with no section reads Hangers', () => {
+  const job = {
+    name: '10003H.csv', jobNumber: '10003H', jobName: 'Sample', category: 'Hangers',
+    lines: [{ sku: 'HUS26', qty: 12, section: 'Hangers' }, { sku: 'LUS28', qty: 4 }],
+  };
+  assert.deepEqual(asText(jobBreakdown('hangers', job)), [{
+    heading: "Material list — 2 hanger line(s) on 10003H's sheet",
+    columns: ['Size', 'Qty', 'Section'],
+    rows: [['HUS26', '12', 'Hangers'], ['LUS28', '4', 'Hangers']],
+  }]);
+});
+
+test('jobBreakdown: a job with no lines for its family has no breakdown', () => {
+  assert.deepEqual(jobBreakdown('hangers', { name: 'x.csv', jobNumber: 'X' }), []);
+});
+
+test('jobBreakdown: LVL lists each line with its label, size, quantity (two decimals) and length, and a missing label reads —', () => {
+  const job = {
+    name: '10004J.csv', jobNumber: '10004J', jobName: 'Sample', totalLf: 70, byDepth: [],
+    items: [
+      { label: '1BM1-2', size: '2.1 RigidLam DF LVL 1-3/4 x 11-7/8', qty: 2, length: '20-00-00' },
+      { size: '2.1 RigidLam DF LVL 1-3/4 x 9-1/4', qty: 1.125, length: '20-00-00' },
+    ],
+  };
+  assert.deepEqual(asText(jobBreakdown('lvl', job)), [{
+    heading: "Line items — 2 row(s) on 10004J's material sheet",
+    columns: ['Label', 'Size', 'Qty', 'Length'],
+    rows: [
+      ['1BM1-2', '2.1 RigidLam DF LVL 1-3/4 x 11-7/8', '2', '20-00-00'],
+      ['—', '2.1 RigidLam DF LVL 1-3/4 x 9-1/4', '1.13', '20-00-00'],
+    ],
+  }]);
+});
+
+// ── jobBreakdown() against the four old Included Jobs panels ────────────────
+// Recorded-output proof that the one shared function shows what each family's
+// own panel showed (spec #72, step 1, seam 2), for every job of the recorded
+// 50-sheet run. See the file header for how the panels were captured.
+const RECORDED = path.join(__dirname, 'port-fixtures', 'recorded');
+const OLD_PANELS = JSON.parse(fs.readFileSync(path.join(RECORDED, 'included-jobs-panels.json'), 'utf8'));
+
+for (const family of ['lumber', 'plates', 'hangers', 'lvl']) {
+  test(`jobBreakdown: ${family} shows the same rows the old ${family} panel showed, for all 50 recorded jobs`, () => {
+    const { jobs } = JSON.parse(fs.readFileSync(path.join(RECORDED, `${family}-no-stock.json`), 'utf8')).body;
+    const old = OLD_PANELS[family];
+    assert.equal(jobs.length, 50, 'the recorded run should still hold 50 jobs');
+    assert.equal(old.length, jobs.length, 'one recorded panel entry per job');
+    jobs.forEach((job, i) => {
+      assert.equal(old[i].jobNumber, job.jobNumber, `entry ${i} is recorded for the same job`);
+      assert.deepEqual(asText(jobBreakdown(family, job)), old[i].tables, `job ${job.jobNumber}`);
+    });
+  });
+}
+
+// ── pickOnHand(): which file each family plans against ─────────────────────
+// Risk overrides size (docs/CODING-STANDARDS.md, Tests): this step selects
+// which input each family's calculation reads, and the server takes a named
+// on-hand file as given. Real files: the 50 corpus sheets and the four
+// on-hand exports, with each family's sniffer as its section file defines it.
+test('pickOnHand: each family gets its own on-hand file, and no on-hand file is planned as a job', () => {
+  const vm = require('node:vm');
+  const ctx = { window: {} };
+  ctx.window.window = ctx.window;
+  vm.createContext(ctx.window);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'planner', 'planner-ui.js'), 'utf8'), ctx.window);
+  for (const f of ['lumber', 'plates', 'hangers', 'lvl']) {
+    vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', 'planner', `${f}-section.js`), 'utf8'), ctx.window);
+  }
+  const families = ctx.window.PlannerSections;
+
+  const dir = (sub) => path.join(__dirname, 'port-fixtures', sub);
+  let addedAt = 0;
+  const read = (sub) => fs.readdirSync(dir(sub)).sort()
+    .map((name) => ({ name, text: fs.readFileSync(path.join(dir(sub), name), 'utf8'), addedAt: ++addedAt }));
+  const sheets = read('sheets');
+  const files = sheets.concat(read('stock'));
+
+  const { onHand, jobs } = pickOnHand(files, families);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(onHand).map(([family, f]) => [family, f.name])),
+    {
+      lumber: 'lumber-stock-20260902.csv',
+      plates: 'plate-stock-20260902.csv',
+      hangers: 'hanger-stock-20260902.csv',
+      lvl: 'ewp-stock-20260902.csv',
+    });
+  assert.deepEqual(jobs.map((f) => f.name), sheets.map((f) => f.name), 'every sheet, and only the sheets, is a job');
+});
+
+test('pickOnHand: the last-added on-hand file a family claims wins', () => {
+  const families = { lumber: { isOnHandFile: (t) => t.startsWith('size,grade') } };
+  const files = [
+    { name: 'old.csv', text: 'size,grade,length,qty\n', addedAt: 1 },
+    { name: 'job.csv', text: 'Job Number:,1\n', addedAt: 2 },
+    { name: 'new.csv', text: 'size,grade,length,qty\n', addedAt: 3 },
+  ];
+  const { onHand, jobs } = pickOnHand(files, families);
+  assert.equal(onHand.lumber.name, 'new.csv');
+  assert.deepEqual(jobs.map((f) => f.name), ['job.csv'], 'an unpicked on-hand file is still not a job');
+});
+
+test('pickOnHand: a claimed on-hand file is never a job, even when the general on-hand check misses it', () => {
+  // An export whose header the shared looksLikeAnyStock check does not know.
+  const families = { lvl: { isOnHandFile: (t) => t.startsWith('Board,Span') } };
+  const files = [
+    { name: 'odd-export.csv', text: 'Board,Span,Pieces\n', addedAt: 1 },
+    { name: 'job.csv', text: 'Job Number:,1\n', addedAt: 2 },
+  ];
+  const { onHand, jobs } = pickOnHand(files, families);
+  assert.equal(onHand.lvl.name, 'odd-export.csv');
+  assert.deepEqual(jobs.map((f) => f.name), ['job.csv']);
 });

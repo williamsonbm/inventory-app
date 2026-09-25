@@ -88,7 +88,7 @@ function sanitizeMenu(menu) {
 // must rank higher than its source: you can always over-spec to a stronger
 // board, never the reverse, so the tool enforces the direction rather than
 // trusting every caller to get it right. Exported and served via
-// /api/lumber/menu so the "Redirect to" picker (in lumber.html's
+// /api/lumber/menu so the "Redirect to" picker (in lumber-section.js's
 // Stock-lengths panel) filters its options from this SAME array — not its
 // own copy — so the two can't drift out of sync. resolveRedirects below is
 // still what actually enforces the rule either way, so a stale client that

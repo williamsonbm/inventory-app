@@ -7,14 +7,14 @@ This repo is the neutral ground where that merge happens.
 > **Not developer-owned.** The owner is a non-developer. Decisions are recorded before code is
 > written, and the working agreement lives in [`CLAUDE.md`](CLAUDE.md). Read it first.
 
-## Status (2026-09-21)
+## Status (2026-09-24)
 
-- **What runs today:** the materials planner, ported and stateless — four buy-list pages for
-  **lumber, plates, hangers, and LVL**. You drop in material-summary sheets for a batch of jobs
-  and it shows what to buy. It has **no database** and writes nothing.
+- **What runs today:** the materials planner, ported and stateless, as one **Planner** page
+  with a section each for **lumber, plates, hangers, and LVL**. You drop in material-summary
+  sheets for a batch of jobs and it shows what to buy. It has **no database** and writes nothing.
 - **Not built yet:** the database (the ledger — counts, receiving, availability, thresholds),
-  a login, and the UI redesign. The **EWP** optimizer page is deliberately excluded from the
-  hosted app (see the Map, below).
+  a login, and the rest of the UI redesign (#72: the Jobs, Inventory and Settings modes).
+  The **EWP** optimizer page is deliberately excluded from the hosted app (see the Map, below).
 - **Target:** a ground-up rebuild on **Vercel + Supabase**, starting from the planner and adding
   the database family by family.
 
@@ -34,7 +34,7 @@ Under the `claude-pod` alias both sit at `/workspace/`; elsewhere the path diffe
 | Path | What it holds |
 |---|---|
 | `src/lumber/`, `src/plates/`, `src/hangers/`, `src/lvl/`, `src/ewp/` | Per-family sheet parsers and buy-list planners |
-| `src/planner/` | The Express server, the four HTML pages, and the shared UI (`planner-ui.js`, `planner.css`) |
+| `src/planner/` | The Express server, the Planner page (`planner.html`), one section file per family (`<family>-section.js`), and the shared UI (`planner-ui.js`, `planner.css`) |
 | `test/` | Node test suites and sheet fixtures |
 | `docs/adr/` | Accepted decisions (start with ADR 0001) |
 | `docs/research/` | Platform, database, and schema assessments — the numbers behind the decisions |
