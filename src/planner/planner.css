@@ -37,6 +37,10 @@
 } }
 
 *{box-sizing:border-box}
+/* Always keep room for the vertical scrollbar. Without it, a filter that
+   shows a short section (no scrollbar) makes the page wider than one that
+   shows a long section, and the sections change width between families (#74). */
+html{scrollbar-gutter:stable}
 body{background:var(--bg);color:var(--ink);margin:0;
   font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
 .wrap{max-width:1040px;margin:0 auto;padding:18px 22px 48px;display:flex;flex-direction:column;gap:14px}
@@ -157,6 +161,12 @@ table.drill-t tr:last-child td{border-bottom:0}
 .plan-cols{display:flex;flex-wrap:nowrap;gap:14px 32px;align-items:flex-start}
 .plan-cols > div{min-width:0;flex:1 1 0}
 .plan-cols tfoot td{border-top:2px solid var(--line-strong)}
+/* Lumber's Order column: Cut detail is no wider than the Order table, and the
+   two tables share one right edge, so Waste (ft) lines up under LF (#74). The
+   one grid column is as narrow as the widest table allows (min-content), and
+   both tables fill it. A long cut instruction wraps instead. */
+.plan-cols > .order-col{display:grid;grid-template-columns:min-content}
+.order-col table.drill-t{width:100%}
 /* A second heading stacked under another table in the same column (Driving
    usage under Raw lengths) needs top spacing that a leading heading doesn't. */
 .drill h4:not(:first-child){margin-top:16px}
@@ -281,5 +291,8 @@ tr.grp.non-stock td:first-child{border-left-color:var(--bad)}
   .fam + .fam{border-top:1px solid #999}
   .tw{overflow:visible;border:0}
   tr{break-inside:avoid}
+  /* Lumber: each size/grade is its own <tbody> (its row and its lengths to
+     order), kept on one page (#74). */
+  #lum-grp-table tbody{break-inside:avoid}
   .wrap{max-width:none;padding:0}
 }

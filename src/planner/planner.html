@@ -99,23 +99,23 @@
   else if (darkQuery && darkQuery.addListener) darkQuery.addListener(followComputer);
 
   // ── One section per family ─────────────────────────────────────────────────
-  const boxes = {};   // family -> { sec, out, busy, drills }
+  const familyParts = {};   // family -> { sec, out, busy, drills }
   for (const family of FAMILIES) {
-    const s = sections[family];
+    const section = sections[family];
     const sec = document.createElement('section');
     sec.className = 'fam';
     sec.id = 'sec-' + family;
     sec.dataset.family = family;
     sec.innerHTML =
-      '<div class="fam-head"><div><h2>' + esc(s.label) + '</h2><p class="sub">' + esc(s.blurb) + '</p></div>' +
-      '<button type="button" class="ghost print-one">Print ' + esc(s.label) + ' only</button></div>' +
+      '<div class="fam-head"><div><h2>' + esc(section.label) + '</h2><p class="sub">' + esc(section.blurb) + '</p></div>' +
+      '<button type="button" class="ghost print-one">Print ' + esc(section.label) + ' only</button></div>' +
       '<div class="fam-tools no-print"></div>' +
-      '<span class="busy" hidden>' + esc(s.busyText) + '</span>' +
+      '<span class="busy" hidden>' + esc(section.busyText) + '</span>' +
       '<div class="fam-out"></div>';
     el('sections').appendChild(sec);
     const out = sec.querySelector('.fam-out');
-    boxes[family] = { sec, out, busy: sec.querySelector('.busy'), drills: PlannerUI.drilldowns(out) };
-    if (s.mount) s.mount({ out, tools: sec.querySelector('.fam-tools') });
+    familyParts[family] = { sec, out, busy: sec.querySelector('.busy'), drills: PlannerUI.drilldowns(out) };
+    if (section.mount) section.mount({ out, tools: sec.querySelector('.fam-tools') });
     sec.querySelector('.print-one').addEventListener('click', () => printOnly(family));
   }
 
@@ -129,12 +129,13 @@
   // that family with no hint why.
   const FILTER_KEY = 'app.family';
   const filterEl = el('family-filter');
-  const choices = ['all'].concat(FAMILIES);
+  // The families in screen order, then All at the far right (owner, 2026-09-25).
+  const choices = FAMILIES.concat(['all']);
   filterEl.innerHTML = choices.map((f) =>
     '<button type="button" data-family="' + f + '">' + esc(f === 'all' ? 'All' : sections[f].label) + '</button>').join('');
 
   function applyFilter(family) {
-    for (const f of FAMILIES) boxes[f].sec.toggleAttribute('data-filtered-out', family !== 'all' && family !== f);
+    for (const f of FAMILIES) familyParts[f].sec.toggleAttribute('data-filtered-out', family !== 'all' && family !== f);
     filterEl.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.family === family)));
   }
   filterEl.addEventListener('click', (e) => {
@@ -155,17 +156,17 @@
   // "Print <family> only" marks the other sections to skip until printing ends.
   el('btn-print').addEventListener('click', () => window.print());
   function printOnly(family) {
-    for (const f of FAMILIES) boxes[f].sec.toggleAttribute('data-print-skip', f !== family);
+    for (const f of FAMILIES) familyParts[f].sec.toggleAttribute('data-print-skip', f !== family);
     window.print();
   }
   window.addEventListener('afterprint', () => {
-    for (const f of FAMILIES) boxes[f].sec.removeAttribute('data-print-skip');
+    for (const f of FAMILIES) familyParts[f].sec.removeAttribute('data-print-skip');
   });
 
   // ── Files and planning ─────────────────────────────────────────────────────
   const btnPlan = el('btn-plan'), btnClear = el('btn-clear'), btnPrint = el('btn-print');
 
-  const dz = PlannerUI.dropZones({
+  const files = PlannerUI.dropZones({
     mount: el('drop-mount'),
     jobsTitle: 'Job material summaries',
     families: sections,
@@ -174,53 +175,53 @@
 
   // Plan and Print need a job file; Clear needs any file at all.
   function syncButtons() {
-    btnPlan.disabled = dz.isEmpty();
-    btnPrint.hidden = dz.isEmpty();
-    btnClear.hidden = dz.isEmpty() && !FAMILIES.some((f) => dz.getOnHand(f));
+    btnPlan.disabled = files.isEmpty();
+    btnPrint.hidden = files.isEmpty();
+    btnClear.hidden = files.isEmpty() && !FAMILIES.some((f) => files.getOnHand(f));
   }
 
   // Each run of a family gets a number; a response that is no longer the
   // latest is dropped, so a slow earlier plan never paints over a newer one.
   const runs = {};
 
-  // `files` is the redacted job list, read once per run for all four families.
-  // Deliberately not dz.getJobs() inside each family's run: that redacts every
+  // `jobFiles` is the redacted job list, read once per run for all four families.
+  // Deliberately not files.getJobs() inside each family's run: that redacts every
   // sheet four times, and one pass over the 50-sheet corpus measured 17–23 ms
   // in Node, main-thread time a slower office PC would feel on every drop.
-  async function runFamily(family, files) {
-    const s = sections[family];
-    const box = boxes[family];
+  async function runFamily(family, jobFiles) {
+    const section = sections[family];
+    const parts = familyParts[family];
     const run = runs[family] = (runs[family] || 0) + 1;
-    box.out.innerHTML = '';
+    parts.out.innerHTML = '';
     // Set before the early return: a run superseded mid-flight leaves hiding
     // the message to the newest run, and with no job file there is no request.
-    box.busy.hidden = dz.isEmpty();
-    if (dz.isEmpty()) return;
+    parts.busy.hidden = files.isEmpty();
+    if (files.isEmpty()) return;
     try {
-      const options = s.planOptions ? await s.planOptions() : {};
-      const res = await fetch(s.route, {
+      const options = section.planOptions ? await section.planOptions() : {};
+      const res = await fetch(section.route, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files, stock: dz.getOnHand(family), ...options }),
+        body: JSON.stringify({ files: jobFiles, stock: files.getOnHand(family), ...options }),
       });
       const data = await res.json();
       if (run !== runs[family]) return;
       if (!res.ok || !data.ok) {
-        box.out.innerHTML = '<div class="note bad"><b>Couldn\'t plan ' + esc(s.label) + '.</b> ' +
+        parts.out.innerHTML = '<div class="note bad"><b>Couldn\'t plan ' + esc(section.label) + '.</b> ' +
           esc(data.error || 'The plan failed.') + '</div>' + PlannerUI.renderRejected(data.rejected);
         return;
       }
-      s.render(data, box.out, box.drills);
+      section.render(data, parts.out, parts.drills);
     } catch (err) {
-      if (run === runs[family]) box.out.innerHTML = '<div class="note bad">Request failed: ' + esc(err.message) + '</div>';
+      if (run === runs[family]) parts.out.innerHTML = '<div class="note bad">Request failed: ' + esc(err.message) + '</div>';
     } finally {
-      if (run === runs[family]) box.busy.hidden = true;
+      if (run === runs[family]) parts.busy.hidden = true;
     }
   }
 
   function runAll() {
-    const files = dz.isEmpty() ? [] : dz.getJobs();
-    for (const f of FAMILIES) runFamily(f, files);
+    const jobFiles = files.isEmpty() ? [] : files.getJobs();
+    for (const f of FAMILIES) runFamily(f, jobFiles);
   }
 
   // Auto-recompute: any pile change (a drop, a remove, Clear all, or a change
@@ -228,7 +229,7 @@
   const autoRun = PlannerUI.debounce(runAll, 80);
   btnPlan.addEventListener('click', runAll);
   btnClear.addEventListener('click', () => {
-    dz.clear();
+    files.clear();
     for (const f of FAMILIES) if (sections[f].clear) sections[f].clear();
   });
   syncButtons();

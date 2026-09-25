@@ -32,14 +32,14 @@
     let html = '';
 
     if (p.rerouted && p.rerouted.length) {
-      html += `<div class="note ok">Auto-detected <b>${esc(p.rerouted.map(r=>r.name).join(', '))}</b> as the LVL stock file.</div>`;
+      html += `<div class="note ok">Auto-detected <b>${esc(p.rerouted.map(r=>r.name).join(', '))}</b> as the LVL on-hand file.</div>`;
     }
     if (p.stockError) {
-      html += `<div class="note bad"><b>Stock file not read:</b> ${esc(p.stockError)}<br>Totaled usage only — nothing was netted against stock.</div>`;
+      html += `<div class="note bad"><b>On-hand file not read:</b> ${esc(p.stockError)}<br>Totaled usage only — nothing was netted against on hand.</div>`;
     } else if (!p.hasStock) {
-      html += '<div class="note"><b>No stock file.</b> Figures below are usage totals only — no remaining/needed columns.</div>';
+      html += '<div class="note"><b>No on-hand file.</b> Figures below are usage totals only — no remaining/needed columns.</div>';
     } else {
-      html += `<div class="note ok"><b>Stock:</b> ${esc(p.stockFileName || 'file')}</div>`;
+      html += `<div class="note ok"><b>On-hand file:</b> ${esc(p.stockFileName || 'file')}</div>`;
     }
     html += renderWarnings(p.warnings);
 
@@ -90,7 +90,7 @@
         { depth: (r) => r.label, need: (r) => r.usedLf, buy: (r) => r.neededLf });
       table.innerHTML = depthsInner(rows);
       PlannerUI.wireSort(table, 'depthsort', depthSort, paintDepths);
-      PlannerUI.resetExpandAll('btn-toggle-depths');
+      PlannerUI.resetExpandAll(out, 'btn-toggle-depths');
     }
 
     function depthsInner(rows) {
@@ -151,7 +151,7 @@
   window.PlannerSections = window.PlannerSections || {};
   window.PlannerSections.lvl = {
     label: 'LVL',
-    blurb: 'Multi-job LVL usage by depth, in linear feet, netted against stock.',
+    blurb: 'Multi-job LVL usage by depth, in linear feet, netted against on hand.',
     route: '/api/lvl/plan',
     busyText: 'Totaling LVL usage…',
     // Sniff an on-hand file (item,span,qty/available) vs a MiTek material

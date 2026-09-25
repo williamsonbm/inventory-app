@@ -16,8 +16,8 @@
   const { esc, fmtInt: n, renderStats, renderWarnings, renderRejected } = PlannerUI;
 
   // A buy-list sort or Expand all redraws the whole section from the same plan.
-  let sortCol = 'buy';   // 'sku' | 'need' | 'buy'
-  let sortDir = 'desc';  // 'asc' | 'desc'
+  // col is 'sku' | 'need' | 'buy'; dir is 'asc' | 'desc'.
+  const buySort = { col: 'buy', dir: 'desc' };
   // The Buy List's open rows, kept across a re-sort — see the note on
   // tr[data-key] in planner.css.
   const openDrills = new Set();
@@ -46,33 +46,15 @@
       ' <span class="spare">' + n(o.leftover) + ' spare</span></span>').join('');
   }
 
-  function sortIndicator(col) {
-    if (sortCol !== col) return '<span class="sort-icon inactive" title="Click to sort">↕</span>';
-    return sortDir === 'asc'
-      ? '<span class="sort-icon active" title="Sorted least to most (ascending)">▲</span>'
-      : '<span class="sort-icon active" title="Sorted most to least (descending)">▼</span>';
+  // Rows that tie on Need or Buy stay in SKU order, whichever way the column
+  // sorts: sortRows keeps ties in input order, so sort the input by SKU first.
+  function getSortedBuyList(buyList) {
+    const bySku = (buyList || []).slice().sort((a, b) => a.sku.localeCompare(b.sku));
+    return PlannerUI.sortRows(bySku, buySort,
+      { sku: (r) => r.sku, need: (r) => r.needEaches, buy: (r) => r.shortEaches });
   }
 
-  function getSortedBuyList(buyList) {
-    if (!buyList) return [];
-    const list = [...buyList];
-    list.sort((a, b) => {
-      if (sortCol === 'sku') {
-        const cmp = a.sku.localeCompare(b.sku, undefined, { numeric: true, sensitivity: 'base' });
-        return sortDir === 'asc' ? cmp : -cmp;
-      }
-      if (sortCol === 'need') {
-        const diff = a.needEaches - b.needEaches;
-        return (sortDir === 'asc' ? diff : -diff) || a.sku.localeCompare(b.sku);
-      }
-      if (sortCol === 'buy') {
-        const diff = a.shortEaches - b.shortEaches;
-        return (sortDir === 'asc' ? diff : -diff) || a.sku.localeCompare(b.sku);
-      }
-      return 0;
-    });
-    return list;
-  }
+  const sortIndicator = (col) => PlannerUI.sortIcon(buySort.col === col, buySort.dir);
 
   function render(d, out, drills) {
     const hasStock = !!d.stockInfo;
@@ -81,13 +63,13 @@
     // Staleness first. The stock file is a manual export, so it can be old — and a
     // planner quietly costing out last week's stock is worse than no planner.
     if (d.stockError) {
-      h += '<div class="note bad"><b>Stock file not read:</b> ' + esc(d.stockError) +
+      h += '<div class="note bad"><b>On-hand file not read:</b> ' + esc(d.stockError) +
         '<br>Planned as if the yard were empty — every plate shows as a buy.</div>';
     } else if (!hasStock) {
-      h += '<div class="note"><b>No stock file.</b> Everything below is a full buy, ' +
+      h += '<div class="note"><b>No on-hand file.</b> Everything below is a full buy, ' +
         'not a shortfall.</div>';
     } else {
-      h += '<div class="note ok"><b>Stock:</b> ' + esc(d.stockFileName || 'file') + ' · ' +
+      h += '<div class="note ok"><b>On-hand file:</b> ' + esc(d.stockFileName || 'file') + ' · ' +
         n(d.stockInfo.rows) + ' rows · comparing against <span class="mono">' +
         esc(d.stockInfo.qtyColumn) + '</span>' +
         (d.stockInfo.lastCounted ? ' · last counted ' + esc(d.stockInfo.lastCounted) : '') +
@@ -116,7 +98,7 @@
       h += '<p class="eyebrow" style="margin-top:0">Buy list — ' + n(buy.length) + ' SKU(s)</p>';
     }
     if (!buy.length) {
-      h += '<div class="note ok">Nothing to buy — stock covers every plate in these jobs.</div>';
+      h += '<div class="note ok">Nothing to buy — on hand covers every plate in these jobs.</div>';
     } else {
       // Have and Incoming are stock-derived; they only appear with a stock file.
       const colgroup = hasStock
@@ -127,9 +109,9 @@
         '<colgroup>' + colgroup + '</colgroup>' +
         '<thead><tr>' +
         '<th class="sortable" data-col="sku">SKU ' + sortIndicator('sku') + '</th>' +
-        '<th class="sortable" data-col="need">Need ' + sortIndicator('need') + '</th>' +
+        '<th class="sortable" data-col="need" data-first-sort="desc">Need ' + sortIndicator('need') + '</th>' +
         (hasStock ? '<th>Have</th>' : '') +
-        '<th class="sortable" data-col="buy">Buy (eaches) ' + sortIndicator('buy') + '</th>' +
+        '<th class="sortable" data-col="buy" data-first-sort="desc">Buy (eaches) ' + sortIndicator('buy') + '</th>' +
         '<th>Order as</th>' +
         (hasStock ? '<th class="n">Incoming</th>' : '') +
         '</tr></thead><tbody>';
@@ -148,7 +130,7 @@
             n(r.availableEaches) + '</td>' : '') +
           '<td><b>' + n(r.shortEaches) + '</b>' +
           (r.shortFromLedger > 0
-            ? '<br><span class="spare" title="This SKU is already below zero in the stock file, so '
+            ? '<br><span class="spare" title="This SKU is already below zero in the on-hand file, so '
               + 'the buy figure covers that existing shortfall as well as these jobs. Count it '
               + 'before ordering.">' + n(r.shortFromJobs) + ' jobs + ' + n(r.shortFromLedger)
               + ' short</span>'
@@ -185,18 +167,7 @@
 
     // Buy-list column sort. Scoped to headers with data-col so it never fires on
     // the Included Jobs headers (which use data-jobsort and sort in place).
-    out.querySelectorAll('th.sortable[data-col]').forEach((th) => {
-      th.addEventListener('click', () => {
-        const col = th.dataset.col;
-        if (sortCol === col) {
-          sortDir = sortDir === 'asc' ? 'desc' : 'asc';
-        } else {
-          sortCol = col;
-          sortDir = (col === 'sku') ? 'asc' : 'desc';
-        }
-        render(d, out, drills);
-      });
-    });
+    PlannerUI.wireSort(out, 'col', buySort, () => render(d, out, drills));
 
     out.querySelectorAll('tr.buy[data-key]').forEach((row) => row.addEventListener('click', () => {
       const key = row.dataset.key;
@@ -243,7 +214,7 @@
     // Clear starts the next plan from the default sort with every row shut.
     clear() {
       openDrills.clear();
-      sortCol = 'buy'; sortDir = 'desc';
+      buySort.col = 'buy'; buySort.dir = 'desc';
     },
   };
 })();

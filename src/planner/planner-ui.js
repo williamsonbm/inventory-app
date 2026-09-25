@@ -103,7 +103,7 @@
   }
 
   // The bare "Expand all" button row that sits above a collapsible section's
-  // table (Included Jobs, Covered in Stock, By depth, …) — right-aligned, no
+  // table (Included Jobs, Covered by on hand, By depth, …) — right-aligned, no
   // title. PlannerUI.wireExpandAll wires the click; this just returns the
   // matching markup so every call site isn't hand-copying it.
   function expandAllButtonHtml(buttonId) {
@@ -370,12 +370,18 @@
   // `<th class="sortable[ n]" data-<attr>="col">`; clicking sets/flips `state`
   // ({ col, dir }) and calls `repaint`. First click opens numeric columns
   // (class "n") descending and label columns ascending — the more useful order.
+  // A header with data-first-sort="desc" opens descending without class "n",
+  // which also right-aligns it: the Plates buy list keeps its numbers
+  // left-aligned (#74).
   function wireSort(table, attr, state, repaint) {
     table.querySelectorAll('th.sortable[data-' + attr + ']').forEach((th) => {
       th.addEventListener('click', () => {
         const col = th.dataset[attr];
         if (state.col === col) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
-        else { state.col = col; state.dir = th.classList.contains('n') ? 'desc' : 'asc'; }
+        else {
+          state.col = col;
+          state.dir = th.classList.contains('n') || th.dataset.firstSort === 'desc' ? 'desc' : 'asc';
+        }
         repaint();
       });
     });
@@ -388,9 +394,18 @@
   // <toggle>` and flips the `.caret` inside the trigger. Because it is
   // delegated, rows painted in later (e.g. a re-sorted jobs table) work with no
   // re-wiring. Returns { setOpen } for programmatic expand-all / collapse-all.
+  //
+  // This helper, wireExpandAll and resetExpandAll look up ids inside
+  // `container` only, never the whole page (#74). Each family section repeats
+  // group names such as 'sku', so a page-wide lookup would find the first
+  // section's row or button, not this one's.
+  function byIdIn(container, id) {
+    return container.querySelector('#' + CSS.escape(id));
+  }
+
   function drilldowns(container) {
     function setOpen(group, toggle, open) {
-      const drill = document.getElementById('drill-' + group + '-' + toggle);
+      const drill = byIdIn(container, 'drill-' + group + '-' + toggle);
       if (!drill) return;
       drill.style.display = open ? 'table-row' : 'none';
       const trigger = container.querySelector(
@@ -402,7 +417,7 @@
       const trigger = e.target.closest('[data-group][data-toggle]');
       if (!trigger || !container.contains(trigger)) return;
       const { group, toggle } = trigger.dataset;
-      const drill = document.getElementById('drill-' + group + '-' + toggle);
+      const drill = byIdIn(container, 'drill-' + group + '-' + toggle);
       setOpen(group, toggle, !(drill && drill.style.display !== 'none'));
     });
     return { setOpen };
@@ -414,7 +429,7 @@
   // of these; this is the one copy instead of a near-identical block per
   // section per page.
   function wireExpandAll(container, drills, group, buttonId) {
-    const btn = document.getElementById(buttonId);
+    const btn = byIdIn(container, buttonId);
     if (!btn) return;
     btn.addEventListener('click', () => {
       const rows = [...container.querySelectorAll('[data-group="' + group + '"][data-toggle]')];
@@ -427,8 +442,8 @@
   // A repaint always closes the drill rows it repaints (simplest correct
   // behavior — see paintBuy()/paintDepths() comments); call this after
   // repainting a table to put its Expand-all button's label back in sync.
-  function resetExpandAll(buttonId) {
-    const btn = document.getElementById(buttonId);
+  function resetExpandAll(container, buttonId) {
+    const btn = byIdIn(container, buttonId);
     if (btn) btn.textContent = 'Expand all';
   }
 
@@ -851,12 +866,12 @@
       return '<thead>' + head + '</thead><tbody>' + body + '</tbody>';
     }
 
-    function paint() {
-      const table = document.getElementById(tableId);
+    function paint(out) {
+      const table = byIdIn(out, tableId);
       if (!table) return;
       table.innerHTML = tableHtml(sortRows(jobs, sort, { num: (j) => j.jobNumber, name: (j) => j.jobName }));
-      wireSort(table, 'jobsort', sort, paint);
-      resetExpandAll(buttonId);
+      wireSort(table, 'jobsort', sort, () => paint(out));
+      resetExpandAll(out, buttonId);
     }
 
     return {
@@ -865,7 +880,7 @@
         '<div class="tw" style="margin-top:10px"><table id="' + tableId + '"></table></div></details>',
       wire(out, drills) {
         wireExpandAll(out, drills, group, buttonId);
-        paint();
+        paint(out);
       },
     };
   }
@@ -878,7 +893,7 @@
     };
   }
 
-  // Node (tests): the pure helpers only — the CSV sniffers, redact(),
+  // Node (tests): the pure helpers only — looksLikePlateOrHangerStock, redact(),
   // jobBreakdown(), renderBreakdown() and pickOnHand(), which their own tests
   // drive directly. Everything else here (dropZones, drilldowns, sorting, …)
   // touches the DOM and has no Node caller. redact(), jobBreakdown() and
@@ -889,9 +904,12 @@
   // looksLikeAnyStock and looksLikeItemSpanQtyStock are held back for the same
   // reason: dropZones calls them from this closure, and their only outside
   // reader, the EWP tab's isStockFile, left with the tab (#41).
+  // stockProductHints is held back too: its readers are the Plates and Hangers
+  // on-hand sniffers, which reach it on window.PlannerUI. The pickOnHand test
+  // drives it through them (#74).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      stockProductHints, looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand,
+      looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand,
     };
   }
 })();
