@@ -37,9 +37,10 @@
 } }
 
 *{box-sizing:border-box}
-/* Always keep room for the vertical scrollbar. Without it, a filter that
-   shows a short section (no scrollbar) makes the page wider than one that
-   shows a long section, and the sections change width between families (#74). */
+/* Deliberately always keep room for the vertical scrollbar, not only when the
+   page scrolls. Otherwise a filter change between a short section (no
+   scrollbar) and a long one changes the page: on a narrow window the sections
+   change width, and on a wide window the page moves about 8 px sideways (#74). */
 html{scrollbar-gutter:stable}
 body{background:var(--bg);color:var(--ink);margin:0;
   font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}

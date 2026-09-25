@@ -17,7 +17,8 @@
 
   // A buy-list sort or Expand all redraws the whole section from the same plan.
   // col is 'sku' | 'need' | 'buy'; dir is 'asc' | 'desc'.
-  const buySort = { col: 'buy', dir: 'desc' };
+  const DEFAULT_SORT = { col: 'buy', dir: 'desc' };
+  const buySort = { ...DEFAULT_SORT };
   // The Buy List's open rows, kept across a re-sort — see the note on
   // tr[data-key] in planner.css.
   const openDrills = new Set();
@@ -214,7 +215,7 @@
     // Clear starts the next plan from the default sort with every row shut.
     clear() {
       openDrills.clear();
-      buySort.col = 'buy'; buySort.dir = 'desc';
+      Object.assign(buySort, DEFAULT_SORT);
     },
   };
 })();

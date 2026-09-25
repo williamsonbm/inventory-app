@@ -395,10 +395,12 @@
   // delegated, rows painted in later (e.g. a re-sorted jobs table) work with no
   // re-wiring. Returns { setOpen } for programmatic expand-all / collapse-all.
   //
-  // This helper, wireExpandAll and resetExpandAll look up ids inside
-  // `container` only, never the whole page (#74). Each family section repeats
-  // group names such as 'sku', so a page-wide lookup would find the first
-  // section's row or button, not this one's.
+  // Deliberately, this helper, wireExpandAll and resetExpandAll look up ids
+  // inside `container` only, not with document.getElementById (#74). Each id
+  // is unique on the Planner today, but new sections and the Jobs page will
+  // use these helpers too. With a page-wide lookup, a reused id finds the
+  // first match on the page, so a click opens or relabels a row or button in
+  // another section.
   function byIdIn(container, id) {
     return container.querySelector('#' + CSS.escape(id));
   }
