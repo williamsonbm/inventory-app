@@ -258,13 +258,25 @@ tr.grp.non-stock td:first-child{border-left-color:var(--bad)}
 /* ── Printing: the order sheet ─────────────────────────────────────────────────
    "Print order sheet" prints every family's section, whatever the filter
    shows; a section's own "Print … only" button marks the others to skip. Only
-   the buy lists print: the header, the file panel, buttons and the collapsible
-   sections (Included Jobs, warnings, skipped files) stay on screen. The
-   browser's print dialog can also save a PDF. */
+   the buy lists print, with lumber's lengths to order (below). The header, the
+   file panel, buttons and the collapsible sections (Included Jobs, warnings,
+   skipped files) stay on screen. Warnings stay off paper by the owner's
+   decision of 2026-09-25, recorded in issue #74. The browser's print dialog
+   can also save a PDF. */
 @media print{
   :root{--bg:#fff;--card:#fff}
   .appbar,.no-print,button,details.sec{display:none!important}
   .fam[data-print-skip]{display:none}
+  /* Lumber: the main row gives one board count per size/grade; the lengths to
+     order sit in its expandable row. Print that row open only when its Order
+     column holds the Order table (boards per stock length), showing that table
+     alone — not the raw lengths, driving jobs or cut detail. Keyed on the
+     table itself, not on the row's "short" mark: a not-carried grade can be
+     short with no table, only an on-screen instruction, and that must not
+     print. */
+  #lum-grp-table tr.jobs:has(.plan-cols > div:last-child > table.drill-t){display:table-row!important}
+  #lum-grp-table tr.jobs:not(:has(.plan-cols > div:last-child > table.drill-t)){display:none!important}
+  #lum-grp-table .plan-cols > div:first-child,#lum-grp-table tr.jobs details{display:none}
   .fam{break-inside:auto}
   .fam + .fam{border-top:1px solid #999}
   .tw{overflow:visible;border:0}

@@ -15,11 +15,12 @@
    Exposes a single global: window.PlannerUI.
 
    NOT UNIT-TESTED: dropZones and the closures inside it (rebuild, paintFiles,
-   badgeFor), includedJobs and renderBreakdown read CsvPile or build DOM, and
-   this repo has no Node DOM harness. They are checked by hand in the browser.
+   badgeFor), and includedJobs, read CsvPile or the DOM, and this repo has no
+   Node DOM harness. They are checked by hand in the browser.
    test/planner-ui.test.js covers the pure helpers (looksLikePlateOrHangerStock,
-   redact, jobBreakdown, and pickOnHand, which decides each family's on-hand
-   file: the server takes that file as given, so a wrong pick would mis-plan).
+   redact, jobBreakdown, renderBreakdown, and pickOnHand, which decides each
+   family's on-hand file: the server takes that file as given, so a wrong pick
+   would mis-plan).
    ============================================================= */
 (function () {
   'use strict';
@@ -492,7 +493,8 @@
   // Detects the inventory columns a MiTek summary never carries, plus the bare
   // item,span,qty (EWP) and size,grade,length,qty (lumber) shapes. Cell-level,
   // not substring — a summary's "Product:,EWP" metadata must not read as an
-  // 'product' item alias. The server re-classifies authoritatively on Calculate.
+  // 'product' item alias. The server re-classifies authoritatively on each
+  // plan request.
   function looksLikeAnyStock(text) {
     const lines = String(text || '').split(/\r?\n/).filter((l) => l.trim()).slice(0, 8);
     const stockCols = ['on_hand', 'onhand', 'committed', 'available', 'threshold', 'incoming'];
@@ -877,17 +879,19 @@
   }
 
   // Node (tests): the pure helpers only — the CSV sniffers, redact(),
-  // jobBreakdown() and pickOnHand(), which their own tests drive directly. Everything else here
-  // (dropZones, drilldowns, sorting, …) touches the DOM and has no Node caller.
-  // redact() and jobBreakdown() are NOT put on window.PlannerUI: getJobs()/
-  // getOnHand() and includedJobs() call them from this closure, so a browser
-  // export would have no reader — and an export with no reader does not ship
-  // (issue #39). Jobs (spec #72, step 4) puts jobBreakdown on it when it calls it. looksLikeAnyStock and looksLikeItemSpanQtyStock are held
-  // back for the same reason: dropZones calls them from this closure, and their
-  // only outside reader, the EWP tab's isStockFile, left with the tab (#41).
+  // jobBreakdown(), renderBreakdown() and pickOnHand(), which their own tests
+  // drive directly. Everything else here (dropZones, drilldowns, sorting, …)
+  // touches the DOM and has no Node caller. redact(), jobBreakdown() and
+  // renderBreakdown() are NOT put on window.PlannerUI: getJobs()/getOnHand()
+  // and includedJobs() call them from this closure, so a browser export would
+  // have no reader — and an export with no reader does not ship (issue #39).
+  // Jobs (spec #72, step 4) puts jobBreakdown on it when it calls it.
+  // looksLikeAnyStock and looksLikeItemSpanQtyStock are held back for the same
+  // reason: dropZones calls them from this closure, and their only outside
+  // reader, the EWP tab's isStockFile, left with the tab (#41).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      stockProductHints, looksLikePlateOrHangerStock, redact, jobBreakdown, pickOnHand,
+      stockProductHints, looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand,
     };
   }
 })();

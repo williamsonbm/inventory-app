@@ -101,7 +101,7 @@
 
   // The "Redirect to" picker for one menu row — only rendered when there's a
   // stronger, carried grade to send this one to. Applies on your next
-  // Calculate, same as a length-chip edit; unlike a chip, it's not saved.
+  // "Work out what to buy", same as a length-chip edit, and is saved the same way.
   function redirectSelectHtml(key) {
     const [size, grade] = key.split('|');
     const targets = validRedirectTargets(size, grade);
@@ -128,8 +128,8 @@
 
   // Redirect picks persist (lumberRedirects.v1) and are reconciled on load, but
   // like the length chips they don't repaint or re-plan on change — they apply
-  // on your next Calculate. A full paintMenu() here would blow away whatever the
-  // user just picked on every unrelated chip click elsewhere.
+  // on your next "Work out what to buy". A full paintMenu() here would blow
+  // away whatever the user just picked on every unrelated chip click elsewhere.
   //
   // One handler, wired to BOTH the Stock-lengths panel's rows and the results
   // area's "Not carried" rows (render, below) — the same redirectSelectHtml
@@ -153,7 +153,7 @@
     tools.innerHTML = `
       <details class="sec" id="menu-sec">
         <summary>Stock lengths we carry (editable)</summary>
-        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade — those edits are remembered on this computer. Where a stronger grade is carried, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of #2); redirects apply on your next Calculate and are remembered here too, until you reset or clear them.</p>
+        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade — those edits are remembered on this computer. Where a stronger grade is carried, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of #2); redirects apply the next time you click Work out what to buy and are remembered here too, until you reset or clear them.</p>
         <div class="menu-wrap" id="menu-mount"></div>
         <div class="row" style="margin-top:10px">
           <button class="ghost" id="btn-menu-reset" style="padding:4px 12px;font-size:12.5px">Reset to default</button>
@@ -234,10 +234,11 @@
     // redirectSelectHtml() the Stock-lengths panel uses, keyed off g.key. It
     // was written to need only a "size|grade" key, never assuming that grade
     // is carried, so a not-carried grade can use it unchanged: pick a
-    // stronger carried grade here and it applies on the next Calculate, same
-    // as a redirect set in the panel above. A grade with no stronger carried
-    // grade to offer (redirectSelectHtml returns '') falls back to the
-    // original redesign-or-special-order wording, for that row only.
+    // stronger carried grade here and it applies on the next "Work out what to
+    // buy", same as a redirect set in the panel above. A grade with no
+    // stronger carried grade to offer (redirectSelectHtml returns '') falls
+    // back to the original redesign-or-special-order wording, for that row
+    // only.
     const notCarried = p.bySizeGrade.filter((g) => !g.inMenu && !g.redirect);
     if (notCarried.length) {
       const rows = notCarried.map((g) => {
@@ -426,7 +427,7 @@
         const why = row.fullyRedirected
           ? `Redirected to ${esc(row.redirect.toLabel)} — see that row for the order and cut plan.`
           : !row.inMenu
-            ? `${esc(row.label)} isn’t on your carried-lengths list — add it in the Stock lengths panel, then Calculate again to get a board count.`
+            ? `${esc(row.label)} isn’t on your carried-lengths list — add it in the Stock lengths panel, then click Work out what to buy again to get a board count.`
             : `Nothing to buy for ${esc(row.label)} — on-hand covers it.`;
         orderSide = `<h4 style="color:var(--muted)">${why}</h4>`;
       } else {
@@ -544,10 +545,13 @@
     },
     render,
     // Clear drops the redirect picks AND their stored copy — a save-less reset
-    // used to let the old value silently reappear on the next page load.
+    // used to let the old value silently reappear on the next page load — and
+    // repaints the pickers, which would otherwise still show the old choice
+    // while the next plan ignores it.
     clear() {
       activeRedirects = {};
       saveRedirects();
+      paintMenu();
     },
   };
 })();

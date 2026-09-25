@@ -122,7 +122,11 @@
   // ── Family filter ──────────────────────────────────────────────────────────
   // All, or one family. Kept in this browser only (spec #72), under an
   // app-wide key so it follows the user into the other modes when they ship.
-  // An old family address arrives as /?family=<family> and sets it.
+  // Deliberately, only a click on a filter button saves it, not applyFilter:
+  // an old family address arrives as /?family=<family> and shows that family
+  // for this visit only. Saving in applyFilter would let an old bookmark
+  // silently replace the saved choice, and every later visit would open on
+  // that family with no hint why.
   const FILTER_KEY = 'app.family';
   const filterEl = el('family-filter');
   const choices = ['all'].concat(FAMILIES);
@@ -132,11 +136,12 @@
   function applyFilter(family) {
     for (const f of FAMILIES) boxes[f].sec.toggleAttribute('data-filtered-out', family !== 'all' && family !== f);
     filterEl.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.family === family)));
-    try { localStorage.setItem(FILTER_KEY, family); } catch { /* storage blocked: this visit only */ }
   }
   filterEl.addEventListener('click', (e) => {
     const b = e.target.closest('button[data-family]');
-    if (b) applyFilter(b.dataset.family);
+    if (!b) return;
+    applyFilter(b.dataset.family);
+    try { localStorage.setItem(FILTER_KEY, b.dataset.family); } catch { /* storage blocked: this visit only */ }
   });
 
   const fromAddress = new URLSearchParams(location.search).get('family');

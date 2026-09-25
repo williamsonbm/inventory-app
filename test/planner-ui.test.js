@@ -3,8 +3,8 @@
 // Run with: node --test test/planner-ui.test.js
 // The DOM-facing half of planner-ui.js (dropZones, drilldowns, sorting, …)
 // has no Node harness and is verified manually; this covers the pure
-// classification helpers the on-hand sniffers build on, redact(), and
-// jobBreakdown().
+// classification helpers the on-hand sniffers build on, redact(),
+// jobBreakdown(), renderBreakdown() and pickOnHand().
 //
 // Recorded-output proof for jobBreakdown (spec #72, step 1):
 // port-fixtures/recorded/included-jobs-panels.json holds, as screen text,
@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { looksLikePlateOrHangerStock, redact, jobBreakdown, pickOnHand } = require('../src/planner/planner-ui.js');
+const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand } = require('../src/planner/planner-ui.js');
 
 const REAL_HANGER_STOCK = `sku,on_hand,committed,available,incoming,threshold,flag,last_counted
 HUS26,20,5,15,0,0,OK,
@@ -407,8 +407,11 @@ test('pickOnHand: each family gets its own on-hand file, and no on-hand file is 
   let addedAt = 0;
   const read = (sub) => fs.readdirSync(dir(sub)).sort()
     .map((name) => ({ name, text: fs.readFileSync(path.join(dir(sub), name), 'utf8'), addedAt: ++addedAt }));
+  // On-hand files first: the last-added claim wins, so a job sheet that a
+  // sniffer wrongly claims would displace the real on-hand file and fail here.
+  const onHandFiles = read('stock');
   const sheets = read('sheets');
-  const files = sheets.concat(read('stock'));
+  const files = onHandFiles.concat(sheets);
 
   const { onHand, jobs } = pickOnHand(files, families);
   assert.deepEqual(
@@ -444,4 +447,24 @@ test('pickOnHand: a claimed on-hand file is never a job, even when the general o
   const { onHand, jobs } = pickOnHand(files, families);
   assert.equal(onHand.lvl.name, 'odd-export.csv');
   assert.deepEqual(jobs.map((f) => f.name), ['job.csv']);
+});
+
+// ── renderBreakdown(): jobBreakdown's tables as HTML ────────────────────────
+test('renderBreakdown: two tables sit side by side, and a footer label spans the columns its total leaves free', () => {
+  const html = renderBreakdown(jobBreakdown('lumber', LUMBER_JOB));
+  assert.ok(html.startsWith('<div class="plan-cols">'), 'lumber\'s two tables share one row');
+  // 3 columns, a 2-cell footer: the label spans 2, the total is a right-aligned number.
+  assert.ok(html.includes('<tfoot><tr><td colspan="2"><strong>Total LF</strong></td><td class="n"><strong>88</strong></td></tr></tfoot>'),
+    'the Total LF footer spans the label and right-aligns the total');
+  assert.ok(html.includes('<th class="n">Qty</th>'), 'a number column\'s header is right-aligned');
+  assert.match(html, /<h4 title="[^"]+">Boards to cut/, 'the boards heading keeps its hover note');
+});
+
+test('renderBreakdown: one table stands alone, escaped, with no footer when it has none', () => {
+  const job = { name: 'x.csv', jobNumber: 'A&B', items: [{ sku: 'MT20 <3x4>', qty: 2 }] };
+  const html = renderBreakdown(jobBreakdown('plates', job));
+  assert.ok(!html.includes('plan-cols'), 'a single table is not wrapped for side by side');
+  assert.ok(!html.includes('<tfoot>'), 'no footer row');
+  assert.ok(html.includes('A&amp;B'), 'the heading text is HTML-escaped');
+  assert.ok(html.includes('MT20 &lt;3x4&gt;'), 'the cell text is HTML-escaped');
 });
