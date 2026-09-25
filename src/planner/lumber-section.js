@@ -152,8 +152,8 @@
   function mount({ out, tools }) {
     tools.innerHTML = `
       <details class="sec" id="menu-sec">
-        <summary>Stock lengths we carry (editable)</summary>
-        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade — those edits are remembered on this computer. Where a stronger grade is carried, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of #2); redirects apply the next time you click Work out what to buy and are remembered here too, until you reset or clear them.</p>
+        <summary>Stock lengths we buy (editable)</summary>
+        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade — those edits are remembered on this computer. Where we buy a stronger grade, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of #2); redirects apply the next time you click Work out what to buy and are remembered here too, until you reset or clear them.</p>
         <div class="menu-wrap" id="menu-mount"></div>
         <div class="row" style="margin-top:10px">
           <button class="ghost" id="btn-menu-reset" style="padding:4px 12px;font-size:12.5px">Reset to default</button>
@@ -259,14 +259,14 @@
     }
 
     if (p.rerouted && p.rerouted.length) {
-      html += `<div class="note ok">Auto-detected <b>${esc(p.rerouted.map((r) => r.name).join(', '))}</b> as the lumber stock file.</div>`;
+      html += `<div class="note ok">Auto-detected <b>${esc(p.rerouted.map((r) => r.name).join(', '))}</b> as the lumber on-hand file.</div>`;
     }
     if (p.stockError) {
-      html += `<div class="note bad"><b>Stock file not read:</b> ${esc(p.stockError)}<br>Totaled usage only — nothing was netted against stock.</div>`;
+      html += `<div class="note bad"><b>On-hand file not read:</b> ${esc(p.stockError)}<br>Totaled usage only — nothing was netted against on hand.</div>`;
     } else if (!p.hasStock) {
-      html += '<div class="note"><b>No stock file.</b> Boards-to-buy assume you start from zero on hand; no on-hand columns.</div>';
+      html += '<div class="note"><b>No on-hand file.</b> Boards-to-buy assume you start from zero on hand; no on-hand columns.</div>';
     } else {
-      html += `<div class="note ok"><b>Stock:</b> ${esc(p.stockFileName || 'file')}</div>`;
+      html += `<div class="note ok"><b>On-hand file:</b> ${esc(p.stockFileName || 'file')}</div>`;
     }
     html += renderWarnings(p.warnings);
 
@@ -316,7 +316,7 @@
         { grp: (r) => r.label, need: (r) => r.usedLf, buy: (r) => r.piecesToBuy });
       table.innerHTML = groupsInner(rows);
       PlannerUI.wireSort(table, 'grpsort', grpSort, paintGroups);
-      PlannerUI.resetExpandAll('btn-toggle-grps');
+      PlannerUI.resetExpandAll(out, 'btn-toggle-grps');
     }
 
     function groupsInner(rows) {
@@ -333,8 +333,10 @@
             ${sortableTh('buy', 'Buy')}
             <th></th>
           </tr>
-        </thead>
-        <tbody>`;
+        </thead>`;
+      // One <tbody> per size/grade: its row and its detail row. Printing keeps
+      // each <tbody> on one page (planner.css), so a row never prints on one
+      // page and its lengths to order on the next (#74).
       rows.forEach((row, idx) => {
         const isShort = row.piecesToBuy > 0 || (hasStock && row.neededLf > 0);
         // Expand whenever there's ANYTHING to show — the driving jobs (always
@@ -358,6 +360,7 @@
             ? '<span class="chip bad" title="This size/grade isn’t on your carried-lengths list — special order, or redesign to a carried grade">Not Carried</span>'
             : (isShort ? '<span class="chip short">Buy</span>' : (hasStock ? '<span class="chip covered">Covered</span>' : ''));
         s += `
+          <tbody>
           <tr class="grp${isShort ? ' short' : ''}${notInMenu ? ' non-stock' : ''}"${hasDrill ? ` data-group="grp" data-toggle="${idx}"` : ''}>
             <td>${hasDrill ? '<span class="caret">▸</span>' : ''}<span class="mono"><b>${esc(row.label)}</b></span>${row.redirect ? ` <span class="sub">redirected to <b>${esc(row.redirect.toLabel)}</b></span>` : ''}</td>
             <td class="n">${needCellHtml(row)}</td>
@@ -376,9 +379,10 @@
                 ${planTable(row)}
               </div>
             </td>
-          </tr>`;
+          </tr>
+          </tbody>`;
       });
-      return s + '</tbody>';
+      return s;
     }
 
     // Which jobs drive this size/grade, biggest first — shown for EVERY group,
@@ -417,8 +421,9 @@
     // short note when there's nothing to buy; the raw-lengths table shows either
     // way, wherever there's demand.
     function planTable(row) {
+      const hasOrder = !!(row.buyByLength && row.buyByLength.length);
       let orderSide;
-      if (!row.buyByLength || !row.buyByLength.length) {
+      if (!hasOrder) {
         // row.fullyRedirected, not raw row.redirect: a row that's both a
         // source AND a target (rare — see planLumber's "does not chain" case)
         // can still land here with nothing to buy for an ordinary reason (e.g.
@@ -427,7 +432,7 @@
         const why = row.fullyRedirected
           ? `Redirected to ${esc(row.redirect.toLabel)} — see that row for the order and cut plan.`
           : !row.inMenu
-            ? `${esc(row.label)} isn’t on your carried-lengths list — add it in the Stock lengths panel, then click Work out what to buy again to get a board count.`
+            ? `${esc(row.label)} isn’t in the Stock lengths we buy panel — add it there, then click Work out what to buy again to get a board count.`
             : `Nothing to buy for ${esc(row.label)} — on-hand covers it.`;
         orderSide = `<h4 style="color:var(--muted)">${why}</h4>`;
       } else {
@@ -465,7 +470,7 @@
             </table>
           </details>`;
       }
-      return `<div class="plan-cols"><div>${rawLengthsTable(row)}${drivingJobsTable(row)}</div><div>${orderSide}</div></div>`;
+      return `<div class="plan-cols"><div>${rawLengthsTable(row)}${drivingJobsTable(row)}</div><div${hasOrder ? ' class="order-col"' : ''}>${orderSide}</div></div>`;
     }
 
     // The RAW demanded cut lengths for one size/grade, longest first, with qty and
@@ -528,7 +533,7 @@
   window.PlannerSections = window.PlannerSections || {};
   window.PlannerSections.lumber = {
     label: 'Lumber',
-    blurb: 'Multi-job dimensional-lumber usage by size & grade — linear feet and whole stock pieces to buy, netted against on-hand.',
+    blurb: 'Multi-job dimensional-lumber usage by size & grade — linear feet and whole boards to buy, netted against on hand.',
     route: '/api/lumber/plan',
     busyText: 'Totaling lumber usage…',
     isOnHandFile(text) {

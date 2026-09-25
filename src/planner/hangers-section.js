@@ -19,7 +19,7 @@
   // Sort state for the Buy list. col null = biggest-shortfall-first (the engine
   // order); 'sku'/'need'/'buy' sort those columns.
   let buySort = { col: null, dir: 'asc' };
-  // Sort state for the Covered in Stock table. col null = alphabetical (the
+  // Sort state for the Covered by on hand table. col null = alphabetical (the
   // engine order); 'sku'/'need'/'remaining' sort those columns.
   let coveredSort = { col: null, dir: 'asc' };
 
@@ -36,14 +36,14 @@
     let html = '';
 
     if (p.rerouted && p.rerouted.length) {
-      html += `<div class="note ok">Auto-detected <b>${esc(p.rerouted.map(r=>r.name).join(', '))}</b> as the hanger stock file.</div>`;
+      html += `<div class="note ok">Auto-detected <b>${esc(p.rerouted.map(r=>r.name).join(', '))}</b> as the hanger on-hand file.</div>`;
     }
     if (p.stockError) {
-      html += `<div class="note bad"><b>Stock file not read:</b> ${esc(p.stockError)}<br>Planned as if the yard were empty — every hanger shows as a buy.</div>`;
+      html += `<div class="note bad"><b>On-hand file not read:</b> ${esc(p.stockError)}<br>Planned as if the yard were empty — every hanger shows as a buy.</div>`;
     } else if (!hasStock) {
-      html += '<div class="note"><b>No stock file.</b> Everything below is a full buy, not a shortfall.</div>';
+      html += '<div class="note"><b>No on-hand file.</b> Everything below is a full buy, not a shortfall.</div>';
     } else {
-      html += `<div class="note ok"><b>Stock:</b> ${esc(p.stockFileName || 'file')}</div>`;
+      html += `<div class="note ok"><b>On-hand file:</b> ${esc(p.stockFileName || 'file')}</div>`;
     }
     html += renderWarnings(p.warnings);
 
@@ -80,12 +80,12 @@
       html += `<div class="note ok">All requested hangers are fully covered by available inventory.</div>`;
     }
 
-    // Covered in Stock — only meaningful with a stock file. Sortable and
+    // Covered by on hand — only meaningful with an on-hand file. Sortable and
     // expandable just like the buy list; paintCovered() fills the shell.
     if (hasStock && p.covered.length > 0) {
       html += `
         <details class="sec">
-          <summary>Covered in Stock (${p.covered.length} SKUs)</summary>
+          <summary>Covered by on hand (${p.covered.length} SKUs)</summary>
           ${expandAllButtonHtml('btn-toggle-cov')}
           <div class="tw" style="margin-top:10px"><table id="hangers-covered-table"></table></div>
         </details>
@@ -108,7 +108,7 @@
     if (hasStock && p.covered.length > 0) paintCovered();
     jobs.wire(out, drills);
 
-    // Paint (or repaint) the Covered in Stock table for the current sort — the
+    // Paint (or repaint) the Covered by on hand table for the current sort — the
     // buy list's twin: SKU / Need / Remaining sort, rows expand via `drills`.
     function paintCovered() {
       const table = el('hangers-covered-table');
@@ -117,7 +117,7 @@
         { sku: (r) => r.sku, need: (r) => r.demand, remaining: (r) => r.available - r.demand });
       table.innerHTML = coveredInner(rows);
       PlannerUI.wireSort(table, 'covsort', coveredSort, paintCovered);
-      PlannerUI.resetExpandAll('btn-toggle-cov');
+      PlannerUI.resetExpandAll(out, 'btn-toggle-cov');
     }
 
     function coveredInner(rows) {
@@ -156,7 +156,7 @@
         { sku: (r) => r.sku, need: (r) => r.demand, buy: (r) => r.buyPieces });
       table.innerHTML = buyInner(rows);
       PlannerUI.wireSort(table, 'buysort', buySort, paintBuy);
-      PlannerUI.resetExpandAll('hangers-btn-toggle-drills');
+      PlannerUI.resetExpandAll(out, 'hangers-btn-toggle-drills');
     }
 
     function buyInner(rows) {
@@ -226,7 +226,7 @@
                       <td>${esc(j.deliveryDate || '—')}</td>
                       <td>${esc(j.section || 'Hangers')}</td>
                       <td class="mono">${j.sourceSku
-                        ? `<span class="chip unmatched" title="The material sheet says ${esc(j.sourceSku)}; we stock ${esc(row.sku)} in its place.">${esc(j.sourceSku)}</span>`
+                        ? `<span class="chip unmatched" title="The material sheet says ${esc(j.sourceSku)}; we use the stocked ${esc(row.sku)} in its place.">${esc(j.sourceSku)}</span>`
                         : '<span class="zero-ink">—</span>'}</td>
                       <td class="n"><strong>${fmt(j.qty)}</strong></td>
                     </tr>
@@ -242,7 +242,7 @@
   window.PlannerSections = window.PlannerSections || {};
   window.PlannerSections.hangers = {
     label: 'Hangers',
-    blurb: 'Multi-job hanger and hardware demand consolidated and netted against stock.',
+    blurb: 'Multi-job hanger and hardware demand consolidated and netted against on hand.',
     route: '/api/hangers/plan',
     busyText: 'Analyzing hardware requirements…',
     // Sniff a hanger on-hand file vs a MiTek material summary.
