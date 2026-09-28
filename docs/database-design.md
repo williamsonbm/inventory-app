@@ -1,6 +1,6 @@
 # Database design — steps 2–4
 
-Decided by the owner in the schema grilling of 2026-09-27, and checked by two independent reviews. This file is the source for the step 2, 3 and 4 specs. Q-numbers name the grilling's questions; each decision below is complete without them. S-numbers name the situations in the list below.
+Decided by the owner in the schema grilling of 2026-09-27, and checked by three independent reviews. This file is the source for the step 2, 3 and 4 specs. Q-numbers name the grilling's questions; each decision below is complete without them. S-numbers name the situations in the list below.
 
 **Bottom line.** One shared ledger (the list of every change in quantity) for the families in Inventory, one item catalog, and small tables around them: 22 tables for steps 2–4 (item 17 is two tables), each serving named situations below. On hand and Reorder are calculated from the records, never stored. A count is true when taken (ADR 0002): its moment is when counting starts, and any entry made within 24 hours of a count asks "before or after the count?" Nothing is ever deleted. EWP stays out of Inventory until step 5; LVL is in from step 3. The SQL at the end is illustrative, not for running. Each step's own spec (`/to-spec`) turns this into work.
 
