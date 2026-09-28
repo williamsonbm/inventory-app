@@ -2,7 +2,7 @@
 
 Decided by the owner in the schema grilling of 2026-09-27, and checked by three independent reviews. This file is the source for the step 2, 3 and 4 specs. Q-numbers name the grilling's questions; each decision below is complete without them. S-numbers name the situations in the list below.
 
-**Bottom line.** One shared ledger (the list of every change in quantity) for the families in Inventory, one item catalog, and small tables around them: 22 tables for steps 2–4 (item 17 is two tables), each serving named situations below. On hand and Reorder are calculated from the records, never stored. A count is true when taken (ADR 0002): its moment is when counting starts, and any entry made within 24 hours of a count asks "before or after the count?" Nothing is ever deleted. EWP stays out of Inventory until step 5; LVL is in from step 3. The SQL at the end is illustrative, not for running. Each step's own spec (`/to-spec`) turns this into work.
+**Bottom line.** One shared ledger (the list of every change in quantity) for the families in Inventory, one item catalog, and small tables around them: 22 tables for steps 2–4 (item 17 is two tables), each serving named situations below. On hand and Reorder are calculated from the records, never stored. A count is true when taken (ADR 0002): its moment is when counting starts, and any entry made within one working day of a count asks "before or after the count?" Nothing is ever deleted. EWP stays out of Inventory until step 5; LVL is in from step 3. The SQL at the end is illustrative, not for running. Each step's own spec (`/to-spec`) turns this into work.
 
 The goal is the owner's three-part test (2026-09-27), which replaces #9's "fewest tables":
 1. Every table serves at least one situation on the list below.
@@ -16,9 +16,9 @@ The goal is the owner's three-part test (2026-09-27), which replaces #9's "fewes
 | # | Decision |
 |---|---|
 | Q1, Q3 | The situation list below. **Now** = build now; **Later** = step 5 adds it without changing a table built now. |
-| Q4, Q26 | **An entry made after a count.** When a person enters a build, shipment, Deduct directly, receipt, return or correction, and an affected item was counted **within the last 24 hours** (draft, waiting or approved), the app asks: "Was this before or after the count at 8:00?" *Before* times the entry just before the count's moment, so on hand does not change; *after* times it now. The 24 hours is a setting. A person never types a clock time. Un-build, Un-ship and reversals are not asked: they take the time of the entry they undo. This answers #72's "may a person enter the real time?": **no, only before or after.** |
+| Q4, Q26 | **An entry made after a count.** When a person enters a build, shipment, Deduct directly, receipt, return or correction, and an affected item was counted **within the last working day** (draft, waiting or approved) — since the same time on the previous working day, with weekends skipped, so on Monday at 8:00 the window reaches back to Friday at 8:00, the app asks: "Was this before or after the count at 8:00?" *Before* times the entry just before the count's moment, so on hand does not change; *after* times it now. The window is a setting (one working day, weekends skipped). Holidays are not skipped; the list shown before each count still guards them. A person never types a clock time. Un-build, Un-ship and reversals are not asked: they take the time of the entry they undo. This answers #72's "may a person enter the real time?": **no, only before or after.** |
 | Q25 | **A count's moment is when counting starts**: when someone prints or opens the count sheet. Before printing, the app lists that family's jobs not yet marked built and POs with deliveries not yet received ("enter anything already done or already in the yard"). Entries made during the count are treated as after it. **At approval (Q33)**, for every count line whose item was touched by **any** entry made during the count (build, shipment, receipt, return, correction), the app lists those entries and asks, **for each one**, "Was this item counted after this entry?" — no exact match needed. *Yes* marks that entry as already reflected in the count; on hand then leaves it out (see *On hand* below). No time box on the paper sheet. |
-| Q34 | When **several counts** of an item fall inside the 24-hour window, the before-or-after question lists them all: "Before the 8:00 count / between 8:00 and 10:00 / after 10:00". |
+| Q34 | When **several counts** of an item fall inside the one-working-day window, the before-or-after question lists them all: "Before the 8:00 count / between 8:00 and 10:00 / after 10:00". |
 | Q5 | **One shared ledger**, not one per family. Every family's on hand is a whole count of pieces of one catalog item (eaches; lumber pieces of size + grade + length; EWP and LVL boards of item + length). Linear feet are calculated. |
 | Q6 | S54 (partial shipment) needs nothing: job suffixes (44444R, 44444F, 44444J, 44444L) already let parts ship separately. |
 | Q7, Q11, Q29 | **Returns** from the job site: a return entry linked to the job; the job's shipped record is not edited. Only **hangers, EWP and LVL** can be returned; the database refuses plates and lumber. Returned LVL is entered at its actual length. EWP is cut by the customer, who pays for it, so only whole, uncut EWP boards return. A return from a job not in the app is a **correction** with the reason "Returned from job site" and the job number in its note. No cap on return size (returns are rare). |
@@ -34,7 +34,7 @@ The goal is the owner's three-part test (2026-09-27), which replaces #9's "fewes
 | — | The Overview column is named **Reorder**, not Level: Short / Low / OK. |
 | — | **Stocking status labels** on screen and in the glossary: **Stocked**, **Non-Stock**, **Special Order** (capitalized). |
 | Q16, Q35 | LVL thresholds stay **per depth, in linear feet**. The LVL Overview row per depth shows **Low** against that threshold, and **Short** when **any length** at that depth is short, naming it ("Short: 16′ (−6)"). LVL items carry no threshold of their own. |
-| Q17, Q20 | Times are stored as exact moments (`timestamptz`) and shown in **Eastern Time with daylight saving** (`America/New_York`). "Within 24 hours" and "a count on July 1 closes June" are worked out in Eastern Time. |
+| Q17, Q20 | Times are stored as exact moments (`timestamptz`) and shown in **Eastern Time with daylight saving** (`America/New_York`). "Within one working day" and "a count on July 1 closes June" are worked out in Eastern Time. |
 | Q18 | **Moving the web app's data: opening balance.** Move the catalog, thresholds, pack sizes, open POs and open jobs; the office counts every family on day one, and that count is on hand. Open jobs already built get their build entries timed before the day-one count, so they can still be un-built. History before the move stays readable in the web app, plus a CSV export. |
 | Q21 | An item created by a return or a trim starts **Non-Stock**; any other new item starts **Special Order**. |
 | Q22 | A **suppliers** list in Settings, picked on each PO. |
@@ -137,7 +137,7 @@ Sources: #72 stories, the schema review's §8, ADR 0001/0002, #9, and this grill
 | S68 | A return from a job shipped before the move | Now | ledger (correction) |
 | S69 | A Special Order item received in excess shows its extras (Q32) | Now | items (calculation) |
 | S70 | A receipt (or any entry) made during a count, for an item counted after it (Q33) | Now | counts, ledger |
-| S71 | Two counts of one item within 24 hours; the later one is rejected (Q34) | Now | ledger, counts |
+| S71 | Two counts of one item within one working day; the later one is rejected (Q34) | Now | ledger, counts |
 | S72 | LVL: enough linear feet at a depth, but short at one length (Q35) | Now | (calculation) |
 | S73 | The shop substitutes the next plate size up (Q36) | Now | ledger (swap) |
 | S74 | One item counted or received in two pack sizes (a box of 100 and a band of 20) | Now | count lines, ledger |
@@ -169,7 +169,7 @@ Schema name is chosen at slice time (never a `*_dev` name). Every object is full
 13. **count_lines** — item, packs × pack size + loose = counted quantity (0 allowed: an empty rack), reason when unmatched, and the entries during the count confirmed as already reflected (Q33). One item may have several lines, one per pack size; they add up. The app's expected number is **calculated at approval** and then **kept**, as the record of what the approver saw; an entry marked "before" later does not change it. *S4, S9, S63, S74, story 79.*
 14. **count_corrections** — a corrected quantity for an item on an approved count: revision number (one per correction of the count, shared by every item it changes: "June 2026, revision 2"), item (may be an item not on the original count), new quantity, why, and the action it belongs to (who and when come from the activity log). *Was* is the previous revision's figure. *S11.*
 15. **reasons** — text, retired flag, version. Never deleted once used. *S9, S15, S42, S46, S56.*
-16. **settings** — single values (the 24-hour window), with version. *Q4, S41.*
+16. **settings** — single values (the one-working-day window), with version. *Q4, S41.*
 17. **lumber_purchasable_lengths** and **lumber_grade_redirects** — the Planner's buying options, shared and logged. *S37.*
 
 **Step 4 — jobs**
