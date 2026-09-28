@@ -418,7 +418,13 @@ async function contents(db) {
   });
 }
 
-test('a backup taken by the backup login restores into an empty database (S51)', async () => {
+// This restores onto the same server, where the three logins already exist.
+// The dump carries their grants but not the logins themselves, and not the
+// database-wide default that closes new functions. So a restore onto a new
+// server must create the three logins first, and run migration 001's
+// ALTER DEFAULT PRIVILEGES line afterwards; the restore runbook (part 2) says
+// so. Both checked 2026-09-28 on a second server (PR #78 review, finding 3).
+test('a backup taken by the backup login restores into an empty database on the same server (S51)', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
@@ -510,4 +516,54 @@ test('the owner\'s own direct update cannot leave no active admin either', async
   await firstUser(db);
   await as(db, null, async (owner) =>
     refused(owner.query('UPDATE inv.users SET admin = false'), 'IV422', 'a direct update by the owner'));
+});
+
+// A removed person who is still marked admin is the only case where the
+// active check, not the admin check, is what refuses (PR #78 review, finding 2).
+test('a removed admin cannot act', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const bob = await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
+  await call(db, 'remove_user', ann.id, crypto.randomUUID(), bob.id, bob.version);
+  await refused(call(db, 'add_user', bob.id, crypto.randomUUID(), 'cy@example.com', 'Cy Doe'),
+    'IV403', 'a removed admin adding a person');
+});
+
+// Finding 5: one person must not get another person's result by sending their key.
+test('a retry key sent by another person is refused, even with the same request', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const bob = await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
+  const key = crypto.randomUUID();
+  await call(db, 'add_user', ann.id, key, 'cy@example.com', 'Cy Doe');
+  await refused(call(db, 'add_user', bob.id, key, 'cy@example.com', 'Cy Doe'),
+    'IV410', 'another admin sending the same key and request');
+});
+
+// Finding 6: the owner's direct delete is held to the same rule as an update.
+test('the owner\'s own direct delete cannot leave no active admin either', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
+  await as(db, null, async (owner) => {
+    // Bob has never acted, so no log row refers to him and a delete can reach him.
+    await owner.query('UPDATE inv.users SET admin = false WHERE id = $1', [ann.id]);
+    await refused(owner.query('DELETE FROM inv.users WHERE id = $1', [added.id]),
+      'IV422', 'deleting the only active admin');
+  });
+});
+
+// Finding 4: a function a later migration adds is closed to every login until
+// that migration grants it, so forgetting a REVOKE cannot open it.
+test('a function added after migration 001 can be run by no login', async () => {
+  const db = await freshDatabase();
+  await as(db, null, (owner) => owner.query(
+    'CREATE FUNCTION inv.later_fn() RETURNS int LANGUAGE sql SET search_path = pg_catalog, pg_temp AS $$ SELECT 1 $$'));
+  for (const login of LOGINS) {
+    await as(db, login, (c) =>
+      refused(c.query('SELECT inv.later_fn()'), '42501', `${login} running a later function`));
+  }
 });

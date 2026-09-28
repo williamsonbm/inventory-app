@@ -89,7 +89,8 @@ CREATE TRIGGER bump_version BEFORE UPDATE OF name, active, admin ON inv.users
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
 
 -- The database never leaves no active admin, whatever changes a person's
--- active or admin flag, so nobody can lock everyone out of the user list.
+-- active or admin flag or deletes a person (only the owner can), so nobody
+-- can lock everyone out of the user list.
 CREATE FUNCTION inv.keep_an_admin() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp
@@ -107,7 +108,7 @@ BEGIN
 END
 $$;
 
-CREATE TRIGGER keep_an_admin AFTER UPDATE OF active, admin ON inv.users
+CREATE TRIGGER keep_an_admin AFTER UPDATE OF active, admin OR DELETE ON inv.users
   FOR EACH STATEMENT EXECUTE FUNCTION inv.keep_an_admin();
 
 -- The shape every function returns for a person, and logs as was → now.
@@ -409,17 +410,25 @@ AS $$ SELECT inv.set_user_admin(p_actor, p_key, p_id, p_version, false) $$;
 -- each is created only if missing. They are made without a password: the
 -- owner sets each one outside the repository (ALTER ROLE ... PASSWORD), and
 -- until then no password sign-in can succeed.
+-- Each CREATE ROLE is tried, and "already exists" is accepted. Deliberately
+-- not a check-then-create: two migrations at once on a new server (parallel
+-- test files in CI) would both find no role, and the second CREATE ROLE would
+-- fail. A lock cannot serialize them: advisory locks belong to one database,
+-- and roles to the whole server (both checked 2026-09-28).
 DO $$
 BEGIN
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'inv_app') THEN
+  BEGIN
     CREATE ROLE inv_app LOGIN;       -- the app: reads tables, changes them only through functions
-  END IF;
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'inv_planner') THEN
+  EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+  END;
+  BEGIN
     CREATE ROLE inv_planner LOGIN;   -- the Planner: reads only (ADR 0001); step 3 grants what it reads
-  END IF;
-  IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'inv_backup') THEN
+  EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+  END;
+  BEGIN
     CREATE ROLE inv_backup LOGIN;    -- the nightly pg_dump: reads everything, writes nothing
-  END IF;
+  EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL;
+  END;
 END
 $$;
 
@@ -434,10 +443,12 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA inv GRANT SELECT ON TABLES TO inv_app, inv_ba
 ALTER DEFAULT PRIVILEGES IN SCHEMA inv GRANT SELECT ON SEQUENCES TO inv_backup;
 
 -- Postgres lets everyone run a new function; here nobody may unless named.
--- A later migration must REVOKE on its own new functions too: a per-schema
--- default cannot take this right away (checked 2026-09-28), and the test of
--- which functions each login may run fails until it does.
+-- The REVOKE closes the functions above. The default closes every function
+-- the owner creates later, in any schema of this database: only the
+-- database-wide form can take this right away, the per-schema form cannot
+-- (both checked 2026-09-28). The app uses no function outside inv.
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA inv FROM PUBLIC;
+ALTER DEFAULT PRIVILEGES REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION inv.add_user(bigint, uuid, text, text) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.rename_user(bigint, uuid, bigint, integer, text) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.remove_user(bigint, uuid, bigint, integer) TO inv_app;
