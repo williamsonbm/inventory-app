@@ -14,11 +14,36 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    # The database tests (#77) need a real Postgres of the Supabase project's
+    # major version: 17 ("Postgres 17 is what we currently default to on the
+    # Supabase platform", Supabase changelog, 2026-05-18). Major only, the same
+    # as the pod image: a rebuild takes 17's newest minor.
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      TEST_DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version-file: package.json
           cache: npm
+      # The restore drill runs pg_dump and pg_restore, which refuse a server
+      # newer than themselves; the runner's own client can be older than 17.
+      - name: Install the Postgres 17 client
+        run: |
+          sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+          sudo apt-get install -y --no-install-recommends postgresql-client-17
+          echo /usr/lib/postgresql/17/bin >> "$GITHUB_PATH"
       - run: npm ci
       - run: npm test
