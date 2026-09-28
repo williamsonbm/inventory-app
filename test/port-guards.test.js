@@ -75,7 +75,8 @@ test('the planner reaches no database, in the graph or in the manifest', () => {
   // check misses a package required without being declared; the graph check
   // above misses a package declared but not yet required.
   const { dependencies } = require('../package.json');
-  assert.deepEqual(Object.keys(dependencies).sort(), ['express'],
+  // `pg`: #77 names it. The graph check above proves the planner does not load it.
+  assert.deepEqual(Object.keys(dependencies).sort(), ['express', 'pg'],
     'a new runtime dependency must be named in the spec before it is added');
 });
 
