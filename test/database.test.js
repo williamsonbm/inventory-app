@@ -213,7 +213,7 @@ test('remove and re-activate are logged; a removed person cannot act, and their 
 
   const back = await call(db, 'reactivate_user', ann.id, crypto.randomUUID(), bob.id, 2);
   assert.deepEqual(back, { ...bob, active: true, version: 3 });
-  assert.equal((await logRows(db)).at(-1).action, 'reactivate user');
+  assert.equal((await logRows(db)).at(-1).action, 're-activate user');
   await refused(call(db, 'reactivate_user', ann.id, crypto.randomUUID(), bob.id, 3),
     'IV422', 're-activating someone already active');
 });
@@ -476,4 +476,38 @@ test('two removals at REPEATABLE READ cannot leave no active admin', async () =>
   const active = await as(db, APP, async (app) =>
     (await app.query('SELECT count(*)::int AS n FROM inv.users WHERE active AND admin')).rows[0].n);
   assert.equal(active, 1);
+});
+
+// The retry key is looked up before the role is checked: a person who loses
+// admin (or is removed) by this very change still gets its answer on a retry.
+test('a retry after the change took away the caller\'s own admin answers what the first call answered', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
+  const key = crypto.randomUUID();
+  const first = await call(db, 'revoke_admin', ann.id, key, ann.id, 1);
+  assert.deepEqual(await call(db, 'revoke_admin', ann.id, key, ann.id, 1), first);
+});
+
+test('a retry key reused for a different request is refused, never answered with the old result', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const key = crypto.randomUUID();
+  const bob = await call(db, 'add_user', ann.id, key, 'bob@example.com', 'Bob Ray');
+  await refused(call(db, 'add_user', ann.id, key, 'cy@example.com', 'Cy Doe'),
+    'IV410', 'the same key for another person to add');
+  const renameKey = crypto.randomUUID();
+  await call(db, 'rename_user', ann.id, renameKey, bob.id, 1, 'Robert Ray');
+  await refused(call(db, 'rename_user', ann.id, renameKey, null, 1, 'Robert Ray'),
+    'IV410', 'the same key with no person named');
+  await refused(call(db, 'rename_user', ann.id, renameKey, bob.id, 1, 'Bobby Ray'),
+    'IV410', 'the same key with another new name');
+});
+
+test('the owner\'s own direct update cannot leave no active admin either', async () => {
+  const db = await freshDatabase();
+  await firstUser(db);
+  await as(db, null, async (owner) =>
+    refused(owner.query('UPDATE inv.users SET admin = false'), 'IV422', 'a direct update by the owner'));
 });
