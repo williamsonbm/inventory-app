@@ -154,13 +154,14 @@ _Not_: Special Order — leftovers may still be on hand here.
 
 **Special Order**:
 An item bought only for specific jobs. Any on hand is waiting for those jobs; anything more is
-extra, and the item may be changed to Non-Stock. Availability and lead time are unknown until
-somebody contacts the supplier, so a buy list can flag it but cannot price or size the order.
+extra, and the item may be changed to Non-Stock. Whether the supplier has it, its price and its
+lead time are unknown until somebody contacts the supplier, so a buy list flags it for that call.
 _Avoid_: custom, one-off
 _Not_: Non-Stock — nothing here is bought to keep.
 
 > These three are stages, not fixed buckets. An item stops being *Stocked* the day you stop buying
-> it, is *Non-Stock* while leftovers last, and becomes *Special Order* once they are gone.
+> it, is *Non-Stock* while leftovers last, and a person may change it to *Special Order* once they
+> are gone. A person makes each change; the numbers never do.
 >
 > Staff use *Non-Stock* and *Special Order* interchangeably, and the web app's screens badge a
 > non-stocked depth as "Special Order", so the two words being distinct is a decision this project
