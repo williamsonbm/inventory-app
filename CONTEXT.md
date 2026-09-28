@@ -8,7 +8,8 @@ canonical for the job lifecycle and for every term not listed here; inheriting i
 ticket #7 and is not done. Where a term appears in both files and this one does not say
 otherwise, the web app's definition stands unchanged.
 
-Started 2026-09-06, resolving ticket #4. Extended 2026-09-24 by the UI/UX grilling.
+Started 2026-09-06, resolving ticket #4. Extended 2026-09-24 by the UI/UX grilling and 2026-09-27 by the
+schema grilling (`docs/database-design.md`).
 
 ---
 
@@ -93,7 +94,7 @@ returns.
 _Avoid_: release — the job lifecycle already uses it twice (*Released from Design*, *Release to
 Shop*).
 
-## Counting and levels
+## Counting and reorder
 
 **Monthly count**:
 A full count of one family, taken at the start of a month, that closes the month before. A count
@@ -107,11 +108,12 @@ revision; the original stays.
 _Avoid_: month-end inventory, snapshot
 _Not_: snapshot — a snapshot plans purchases and records nothing.
 
-**Level**:
+**Reorder**:
 How an item's available compares with its threshold: *Short* when available is below zero, *Low*
-when it is zero or more but under the threshold, otherwise *OK*.
-_Avoid_: status, state
-_Not_: stocking status — set by a person; level is worked out from the numbers.
+when it is zero or more and at or below the threshold, otherwise *OK*. For LVL, *Low* compares
+linear feet per depth, and *Short* is checked per length.
+_Avoid_: level, status, state
+_Not_: stocking status — set by a person; reorder is worked out from the numbers.
 
 ---
 
@@ -144,21 +146,23 @@ would otherwise change an item's status with nobody deciding anything.
 An item bought deliberately and kept on hand. It has a reorder threshold.
 _Avoid_: carried, in stock, standard
 
-**Non-stock**:
+**Non-Stock**:
 An item no longer bought deliberately, but which leftovers from past jobs mean you may still hold.
 On hand can be above zero, so a buy list nets against it.
 _Avoid_: non-stocked, non-standard
-_Not_: special order — leftovers may still be on hand here.
+_Not_: Special Order — leftovers may still be on hand here.
 
-**Special order**:
-An item never held. On hand is zero, and availability and lead time are unknown until somebody
-contacts the supplier, so a buy list can flag it but cannot price or size the order.
+**Special Order**:
+An item bought only for specific jobs. Any on hand is waiting for those jobs; anything more is
+extra, and the item may be changed to Non-Stock. Whether the supplier has it, its price and its
+lead time are unknown until somebody contacts the supplier, so a buy list flags it for that call.
 _Avoid_: custom, one-off
-_Not_: non-stock — on hand is zero here.
+_Not_: Non-Stock — nothing here is bought to keep.
 
-> These three are stages, not fixed buckets. An item stops being *stocked* the day you stop buying
-> it, is *non-stock* while leftovers last, and becomes *special order* once they are gone.
+> These three are stages, not fixed buckets. An item stops being *Stocked* the day you stop buying
+> it, is *Non-Stock* while leftovers last, and a person may change it to *Special Order* once they
+> are gone. A person makes each change; the numbers never do.
 >
-> Staff use *non-stock* and *special order* interchangeably, and the web app's screens badge a
+> Staff use *Non-Stock* and *Special Order* interchangeably, and the web app's screens badge a
 > non-stocked depth as "Special Order", so the two words being distinct is a decision this project
 > is making, not existing practice it is describing.
