@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Activity log · Settings</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  activity.html — Settings → Activity log (#77): who did what and when,
+  newest first, a page at a time, filtered by person, action and office day.
+
+  Glue, NOT UNIT-TESTED: the filters and the table need a browser, and this
+  repo has no DOM harness. The route's filters, order, paging and Eastern
+  office days are tested in test/users.test.js; the page is checked by hand
+  (#77, Testing Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">Inventory</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/settings/users" class="here" aria-current="page">Settings</a></nav>
+  <nav class="appbar-nav appbar-tasks" aria-label="Tasks"><a href="/settings/users">Users</a><a href="/settings/activity" class="here" aria-current="page">Activity log</a><a href="/password">Your password</a></nav>
+</header>
+
+<div class="wrap">
+  <form id="filters" class="row">
+    <label class="field">Person <select id="person"><option value="">Everyone</option></select></label>
+    <label class="field">Action <select id="action"><option value="">Every action</option></select></label>
+    <label class="field">From <input id="from" type="date"></label>
+    <label class="field">To <input id="to" type="date"></label>
+    <button>Show</button>
+  </form>
+  <div id="message" role="status"></div>
+  <table>
+    <thead><tr><th>When (Eastern)</th><th>Who</th><th>Action</th><th>Person</th><th>Was → now</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+  <div class="row"><button type="button" class="ghost" id="older" hidden>Older entries</button></div>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+(async () => {
+  const { esc } = PlannerUI;
+  const { showTime } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  if (!await AppHeader.me) return;
+  let before = null;
+  let actionsListed = false;
+
+  // What changed, as was → now: only the fields that differ. An addition has
+  // no "was". A password action has none either, and shows nothing: the log
+  // keeps no password.
+  function describe(action, was, now) {
+    if (!now || action.includes('password')) return '';
+    if (!was) return 'added: ' + now.name + ', ' + now.email;
+    const changed = Object.keys(now).filter((k) => k !== 'version' && JSON.stringify(was[k]) !== JSON.stringify(now[k]));
+    return changed.map((k) => k + ': ' + was[k] + ' → ' + now[k]).join('; ');
+  }
+
+  async function load(more) {
+    const q = new URLSearchParams();
+    for (const id of ['person', 'action', 'from', 'to']) if (el(id).value) q.set(id, el(id).value);
+    if (more) q.set('before', before);
+    const body = await (await fetch('/api/activity?' + q)).json();
+    if (!body.ok) { el('message').innerHTML = '<div class="note bad">' + esc(body.error) + '</div>'; return; }
+    el('message').innerHTML = '';
+    if (!actionsListed) {
+      el('action').insertAdjacentHTML('beforeend', body.actions.map((a) => '<option>' + esc(a) + '</option>').join(''));
+      actionsListed = true;
+    }
+    const html = body.entries.map((e) => '<tr><td>' + esc(showTime(e.at)) + '</td><td>' + esc(e.who) + '</td><td>' +
+      esc(e.action) + '</td><td>' + esc(e.target || '') + '</td><td>' + esc(describe(e.action, e.was, e.now)) + '</td></tr>').join('');
+    if (more) el('rows').insertAdjacentHTML('beforeend', html);
+    else el('rows').innerHTML = html || '<tr><td colspan="5" class="sub">Nothing matches.</td></tr>';
+    before = body.before;
+    el('older').hidden = before === null;
+  }
+
+  const people = await (await fetch('/api/users')).json();
+  if (people.ok) {
+    el('person').insertAdjacentHTML('beforeend',
+      people.users.map((u) => '<option value="' + u.id + '">' + esc(u.name) + '</option>').join(''));
+  }
+  el('filters').addEventListener('submit', (e) => { e.preventDefault(); load(false); });
+  el('older').addEventListener('click', () => load(true));
+  load(false);
+})();
+</script>
+</body>
+</html>

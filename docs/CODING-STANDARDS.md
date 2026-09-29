@@ -13,10 +13,25 @@ repo rule is the sharper one and is meant to bind; the baseline still applies ev
   not in a branch or a copy per family.
 - **Identity, role and mode are decided in one place.** Call sites receive the answer; they do
   not re-derive it.
+- **Derive it server-side.** Identity, role, ownership, prices and quantities come from the
+  server wherever the server can know them, never from the request. `hanger-web-app` shows the
+  cost: F17 emails client-supplied rows to any typed address, F18 records a client-typed
+  submitter, F20 leaves no way to reconstruct what a user did.
+- **Access is default-deny.** A new route is closed until it is deliberately opened, so
+  forgetting to list it fails safe. Here the identity middleware runs before every route, and
+  the open list is exact (`src/app.js`, `OPEN`; swept by `test/sign-in.test.js`).
+- **An invariant that must hold whatever writes the row is a database constraint**, and one
+  two requests can race for is protected there too — not by reading, deciding and then
+  writing in JavaScript. Application validation gives the better message; it is not the
+  guarantee. Use the simplest mechanism the invariant needs. Evidence: `hanger-web-app`
+  finding F9, "no non-negative CHECK on any quantity column".
 - **A cross-cutting request concern lives in middleware** — identity and request context,
   request-wide policy, consistent error shaping. Applied once.
 - **A transaction wraps the business operation whose writes must be atomic**, not the request.
   Several routes may call that one operation.
+- **Client-facing errors carry no stack trace, credential or SQL.** A database refusal meant
+  for people (an `IV` code) passes its message through; every other failure leaves as fixed
+  text.
 - **A failure reports itself.** Handle failures at database, file and API boundaries explicitly;
   never turn them into success or empty data. Name timeout and retry behavior where applicable;
   a timed-out write may have succeeded. Queued is not delivered, and a discarded HTTP status is
@@ -87,6 +102,9 @@ const assert = require('node:assert/strict');
   deducts, and on hand stays overstated.
 - **A change to purchasing data or to a seed constant is its own commit**, with a message that
   says so.
+- **A schema change the deployed app cannot run against needs a written migration and
+  cutover plan** before it ships. This is also the route for expand-and-contract work, which
+  is why `Readers` stays strict.
 - **A material change names its reach and recovery before it runs.** For destructive migrations,
   bulk writes or permission changes, state what can be affected and how to restore it. Reverting
   code is not a data rollback.
@@ -100,8 +118,7 @@ const assert = require('node:assert/strict');
 
 - **Correctness never depends on a process outliving a request.** Vercel shares one instance
   across concurrent invocations, so immutable constants and one reusable client or pool at module
-  scope are correct — a per-request pool multiplies connections. Keep that pool to 1 or 2 per
-  instance (#28).
+  scope are correct — a per-request pool multiplies connections.
 - **Module-scope mutable state is never a channel between two requests.** Configuration written
   from a request body is that channel even when it is reset at the top of each call: add one
   `await` and two concurrent requests cross-contaminate. Read-only files shipped in the deployment
@@ -118,6 +135,15 @@ const assert = require('node:assert/strict');
   state, `search_path` included, so an unqualified name resolves against whatever path comes
   back: an error if nothing matches, and a *different same-named object* if something does.
 - **No schema per material family** (#28).
+- **The database connection (#28).** The app connects through Supabase's transaction-mode
+  pooler on port 6543, over SSL with the certificate verified; port 5432 is for migrations,
+  backups and restores only. One pool at module scope, min 1 and a small max above 1 (a max
+  of 1 serializes the requests Vercel runs side by side), a short idle timeout, drained with
+  `attachDatabasePool`; tune the max against measured waiting time. The pooler drops session
+  state between transactions, so: no named prepared statements, no `SET` or `search_path` on
+  the connection, no session advisory locks, `LISTEN`/`NOTIFY` or temp tables. One checked-out
+  client per unit of work: `BEGIN` → call → `COMMIT`/`ROLLBACK` → `release()` in `finally`
+  (`src/db/database.js`).
 - **Object names carry no environment suffix** (#21). Environments are separate databases.
 - **Scheduled or background work is a new architectural decision**, not a small addition.
 - **A new dependency is a decision, named in the spec before it is added.** Write it, or reuse

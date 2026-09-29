@@ -3,15 +3,16 @@
   "version": "1.0.0",
   "private": true,
   "type": "commonjs",
-  "description": "Materials purchase planner — lumber, plates, hangers and LVL buy lists for a batch of jobs. No database.",
+  "description": "Inventory app: the materials purchase planner (lumber, plates, hangers and LVL buy lists) behind individual sign-in, with Settings for users and the activity log.",
   "scripts": {
-    "start": "node src/planner/server.js",
+    "start": "node src/local.js",
     "test": "node --test"
   },
   "engines": {
     "node": "22.x"
   },
   "dependencies": {
+    "@vercel/functions": "^3.9.9",
     "express": "^4.19.2",
     "pg": "^8.23.0"
   }

@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Users · Settings</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  users.html — Settings → Users (#77): who can sign in, and an admin's changes
+  to that list.
+
+  Glue, NOT UNIT-TESTED: the table and its buttons need a browser, and this
+  repo has no DOM harness. Every route it calls is tested in
+  test/users.test.js, including that each change is refused for a person who
+  is not an admin. That the buttons are hidden from them is checked by hand
+  (#77, Testing Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">Inventory</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/settings/users" class="here" aria-current="page">Settings</a></nav>
+  <nav class="appbar-nav appbar-tasks" aria-label="Tasks"><a href="/settings/users" class="here" aria-current="page">Users</a><a href="/settings/activity">Activity log</a><a href="/password">Your password</a></nav>
+</header>
+
+<div class="wrap wide">
+  <div id="message" role="status"></div>
+
+  <form id="add" class="row" hidden>
+    <label class="field">Name <input id="add-name" required autocomplete="off"></label>
+    <label class="field">Email address <input id="add-email" type="email" required autocomplete="off"></label>
+    <label class="field">Temporary password <input id="add-password" required autocomplete="new-password" minlength="12"></label>
+    <button id="add-btn">Add person</button>
+  </form>
+
+  <div class="tw"><table class="one-line">
+    <thead><tr><th>Name</th><th>Email address</th><th>Active</th><th>Admin</th><th>Last signed in</th><th class="admin-only" hidden></th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+  <p class="sub">An admin sets a temporary password and tells the person in person. At their next sign-in they choose their own.</p>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+(async () => {
+  const { esc } = PlannerUI;
+  const { send, showTime } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  const me = await AppHeader.me;
+  if (!me) return;
+  let users = [];
+
+  // One message area. A save that was not confirmed keeps its body, retry key
+  // included, so "Try again" sends the very same request and acts once.
+  function say(text, kind, retry) {
+    el('message').innerHTML = text
+      ? '<div class="note ' + (kind || '') + '">' + esc(text) + (retry ? ' <button type="button" class="ghost" id="retry">Try again</button>' : '') + '</div>'
+      : '';
+    if (retry) el('retry').addEventListener('click', retry);
+  }
+
+  async function load() {
+    const res = await fetch('/api/users');
+    const body = await res.json();
+    if (!body.ok) return say(body.error, 'bad');
+    users = body.users;
+    paint();
+  }
+
+  // Runs one change. On a stale save, the refusal carries the current row, and
+  // the table shows it, so the other person's change is visible, never lost.
+  async function save(route, body, done) {
+    say('');
+    try {
+      const reply = await send(route, body);
+      say(done(reply.user), 'ok');
+      await load();
+    } catch (err) {
+      if (err.current) users = users.map((u) => (u.id === err.current.id ? { ...u, ...err.current } : u));
+      paint();
+      say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done) : null);
+    }
+  }
+  const change = (route, extra, done) => (u) =>
+    save(route, { key: crypto.randomUUID(), id: u.id, version: u.version, ...extra }, done);
+
+  const ACTIONS = {
+    remove: change('/api/users/remove', {}, (u) => u.name + ' was removed. They can no longer sign in.'),
+    reactivate: change('/api/users/reactivate', {}, (u) => u.name + ' is active again.'),
+    grant: change('/api/users/grant-admin', {}, (u) => u.name + ' is now an admin.'),
+    revoke: change('/api/users/revoke-admin', {}, (u) => u.name + ' is no longer an admin.'),
+  };
+
+  function paint() {
+    document.querySelectorAll('.admin-only').forEach((n) => { n.hidden = !me.admin; });
+    el('add').hidden = !me.admin;
+    el('rows').innerHTML = users.map((u) =>
+      '<tr data-id="' + u.id + '">' +
+      '<td class="name">' + esc(u.name) + '</td><td>' + esc(u.email) + '</td>' +
+      '<td>' + (u.active ? 'Yes' : 'Removed') + '</td><td>' + (u.admin ? 'Yes' : '') + '</td>' +
+      '<td>' + esc(showTime(u.last_signed_in_at)) + '</td>' +
+      (me.admin ? '<td>' +
+        '<button type="button" class="ghost" data-do="rename">Rename</button>' +
+        '<button type="button" class="ghost" data-do="password">Reset password</button>' +
+        (u.admin ? '<button type="button" class="ghost" data-do="revoke">Remove admin</button>'
+                 : '<button type="button" class="ghost" data-do="grant">Make admin</button>') +
+        (u.active ? '<button type="button" class="ghost" data-do="remove">Remove</button>'
+                  : '<button type="button" class="ghost" data-do="reactivate">Re-activate</button>') +
+        '</td>' : '') +
+      '</tr>').join('');
+  }
+
+  // Rename and Reset password open a small form in the row.
+  function rowForm(tr, label, type, onSave) {
+    const cell = tr.lastElementChild;
+    cell.innerHTML = '<input type="' + type + '" aria-label="' + esc(label) + '" placeholder="' + esc(label) + '"> ' +
+      '<button type="button">Save</button><button type="button" class="ghost">Cancel</button>';
+    const [input, ok, cancel] = cell.children;
+    input.focus();
+    cancel.addEventListener('click', paint);
+    ok.addEventListener('click', () => onSave(input.value));
+  }
+
+  el('rows').addEventListener('click', (e) => {
+    const what = e.target.dataset && e.target.dataset.do;
+    if (!what) return;
+    const tr = e.target.closest('tr');
+    const u = users.find((x) => String(x.id) === tr.dataset.id);
+    if (what === 'rename') {
+      return rowForm(tr, 'New name', 'text', (name) =>
+        change('/api/users/rename', { name }, (v) => 'Renamed to ' + v.name + '.')(u));
+    }
+    if (what === 'password') {
+      return rowForm(tr, 'Temporary password', 'text', (password) =>
+        save('/api/users/set-password', { key: crypto.randomUUID(), id: u.id, password },
+          (v) => v.name + ' has a temporary password. Tell them in person; they choose their own at sign-in.'));
+    }
+    ACTIONS[what](u);
+  });
+
+  el('add').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const body = { key: crypto.randomUUID(), name: el('add-name').value, email: el('add-email').value, password: el('add-password').value };
+    save('/api/users/add', body, (u) => {
+      el('add').reset();
+      return u.name + ' was added. Tell them their temporary password in person.';
+    });
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

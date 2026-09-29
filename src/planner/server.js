@@ -1,6 +1,7 @@
 // =============================================================
 // planner/server.js — the DB-FREE entry point.
-// Run with: npm start   →  http://127.0.0.1:3000
+// Run alone with: node src/planner/server.js  →  http://127.0.0.1:3000
+// (npm start runs the whole app instead: src/local.js)
 // =============================================================
 // A purchase planner for four material families — plates, hangers, LVL and
 // lumber. Drop in one or more MiTek "Material Summary" CSVs and get back the
@@ -255,8 +256,10 @@ if (require.main === module) {
     });
 }
 
-// `app`, plus jsonError, the test-only seam the file header names. PORT, HOST
-// and start() are used by the CLI block above and by nothing else in this repo:
+// `app`, plus jsonError, the test-only seam the file header names.
+// BODY_LIMIT_MB and BODY_ERROR_MESSAGES: src/app.js applies the same body
+// limit in front of the Planner and answers its refusals in the same words.
+// PORT, HOST and start() are used by the CLI block above and by nothing else in this repo:
 // their only other caller was the Electron packaging in `materials-planner`,
 // which the port leaves behind. An export with no reader does not ship (#39).
-module.exports = { app, jsonError };
+module.exports = { app, jsonError, BODY_LIMIT_MB, BODY_ERROR_MESSAGES };
