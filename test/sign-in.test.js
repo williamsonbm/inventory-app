@@ -59,6 +59,10 @@ test('after sign-in the page goes where the person meant to go, never to another
     ['//evil.example/', '/'],
     ['/\\evil.example/', '/'],
     ['https://evil.example/', '/'],
+    // A browser drops tabs and line breaks from an address, so each of these is "//evil.example".
+    ['/\t/evil.example', '/'],
+    ['/\n/evil.example', '/'],
+    ['/\r\\evil.example', '/'],
   ]) {
     const res = await post(base, '/api/sign-in', { email: 'ann@example.com', password: 'temporary password 1', next });
     assert.equal((await res.json()).next, expected, `next: ${next}`);
@@ -244,4 +248,86 @@ test('every route the app registers refuses a signed-out request, except the ope
     }
   }
   assert.deepEqual(open.sort(), [...OPEN].sort());
+});
+
+test('with a temporary password, every script and stylesheet the password page loads still answers', async () => {
+  const { base, db } = await startApp();
+  await addFirstUser(db);
+  const cookie = await signIn(base, 'ann@example.com', 'temporary password 1');
+  const page = await get(base, '/password', cookie);
+  assert.equal(page.status, 200);
+  const html = await page.text();
+  const assets = [...html.matchAll(/<(?:script src|link rel="stylesheet" href)="(\/[^"]+)"/g)].map((m) => m[1]);
+  assert.ok(assets.length >= 2, `found the page's files: ${assets}`);
+  for (const asset of assets) {
+    assert.equal((await get(base, asset, cookie)).status, 200, `${asset} for a temporary password`);
+  }
+});
+
+test('Sign out ends the session on the server: the old cookie, or one a late answer puts back, is refused', async () => {
+  const { base, cookie } = await withAdmin();
+  const elsewhere = await signIn(base, 'ann@example.com', 'ann own password');
+  assert.equal((await post(base, '/api/sign-out', {}, cookie)).status, 200);
+  assert.equal((await get(base, '/api/me', cookie)).status, 401, 'the cookie from before Sign out');
+  assert.equal((await get(base, '/api/me', elsewhere)).status, 401, 'another computer');
+  const again = await signIn(base, 'ann@example.com', 'ann own password');
+  assert.equal((await get(base, '/api/me', again)).status, 200, 'a new sign-in works');
+});
+
+test('a person removed and then re-activated is not signed back in by an old cookie', async () => {
+  const { base, db, ann, cookie } = await withAdmin();
+  const bob = await addPerson(db, ann, 'bob@example.com', 'Bob Ray', 'bob temporary 1');
+  const bobCookie = await signInAndChoose(base, 'bob@example.com', 'bob temporary 1', 'bob own password');
+  for (const [route, version] of [['/api/users/remove', 1], ['/api/users/reactivate', 2]]) {
+    const res = await post(base, route, { key: crypto.randomUUID(), id: bob.id, version }, cookie);
+    assert.equal(res.status, 200, await res.text());
+  }
+  assert.equal((await get(base, '/api/me', bobCookie)).status, 401, 'the cookie from before the removal');
+  await signIn(base, 'bob@example.com', 'bob own password');
+});
+
+test('during a lock, a password change says the account is locked, and a change is not a sign-in', async () => {
+  const { base, cookie } = await withAdmin();
+  const signedIn = async (c) => (await (await get(base, '/api/users', c)).json()).users[0].last_signed_in_at;
+  const before = await signedIn(cookie);
+  const res = await post(base, '/api/password',
+    { key: crypto.randomUUID(), current: 'ann own password', password: 'ann second password' }, cookie);
+  assert.equal(res.status, 200);
+  const renewed = cookieFrom(res);
+  assert.equal(await signedIn(renewed), before, 'a password change does not move "last signed in"');
+
+  for (let i = 1; i <= 5; i++) await post(base, '/api/sign-in', { email: 'ann@example.com', password: `guess ${i}` });
+  const locked = await post(base, '/api/password',
+    { key: crypto.randomUUID(), current: 'ann second password', password: 'ann third password' }, renewed);
+  assert.equal(locked.status, 400);
+  assert.deepEqual(await locked.json(),
+    { ok: false, error: 'Too many wrong passwords. Try again in 15 minutes, or ask an admin for a temporary password.' });
+});
+
+test('an address saved with an invisible trailing character still signs in, as typed', async () => {
+  const { base, cookie } = await withAdmin();
+  // U+FEFF often rides along with pasted text. Postgres does not count it as a blank.
+  const email = 'cy@example.com﻿';
+  const add = await post(base, '/api/users/add',
+    { key: crypto.randomUUID(), email, name: 'Cy Doe', password: 'cy temporary 12' }, cookie);
+  assert.equal(add.status, 200, await add.text());
+  await signIn(base, email, 'cy temporary 12');
+});
+
+test('a database that stops answering during sign-in gets the plain message, not "not confirmed"', { timeout: 30000 }, async () => {
+  const { base, db } = await startApp();
+  await addFirstUser(db);
+  const { connect, urlFor } = require('./support/database.js');
+  const owner = await connect(urlFor(db));
+  try {
+    // Holding Ann's row makes the sign-in's save wait until the app gives up on it.
+    await owner.query('BEGIN');
+    await owner.query("SELECT 1 FROM inv.users WHERE email = 'ann@example.com' FOR UPDATE");
+    const res = await post(base, '/api/sign-in', { email: 'ann@example.com', password: 'temporary password 1' });
+    assert.equal(res.status, 503);
+    assert.deepEqual(await res.json(), { ok: false, error: 'The database is not answering. Try again in a minute.' });
+  } finally {
+    await owner.query('ROLLBACK');
+    await owner.end();
+  }
 });

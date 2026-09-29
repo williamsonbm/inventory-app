@@ -80,8 +80,9 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
 
 ## Sign everyone out
 
-For example after a lost laptop. Change `SESSION_SECRET` in Vercel to a new random value and
-redeploy. Every cookie signed with the old secret is refused, so everyone signs in again.
+Sign out in the app ends that person's session on every computer, and removing a person does
+the same. To sign **everyone** out, for example after a lost laptop, change `SESSION_SECRET` in
+Vercel to a new random value and redeploy. Every cookie signed with the old secret is refused, so everyone signs in again.
 Passwords do not change.
 
 To sign out **one** person, an admin sets a temporary password for them in Settings → Users.

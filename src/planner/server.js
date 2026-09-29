@@ -13,9 +13,8 @@
 // where the owner still runs it locally; see issue #41 for why the exclusion
 // exists only in this copy.
 //
-// `jsonError` is exported for src/app.js, whose error shaping hands it every
-// failure that is not the database's, and for test/port-guards.test.js: no
-// route can reach its 500 branch on purpose, so a direct call is the only
+// TEST-ONLY SEAM: `jsonError` is exported for test/port-guards.test.js alone.
+// No route can reach its 500 branch on purpose, so a direct call is the only
 // guard on the "every failure leaves as JSON" rule.
 //
 // UPLOADS — the browser reads the CSVs with FileReader and POSTs them as JSON
@@ -256,8 +255,10 @@ if (require.main === module) {
     });
 }
 
-// `app`, plus jsonError (see the file header for its two callers). PORT, HOST
-// and start() are used by the CLI block above and by nothing else in this repo:
+// `app`, plus jsonError, the test-only seam the file header names.
+// BODY_LIMIT_MB and BODY_ERROR_MESSAGES: src/app.js applies the same body
+// limit in front of the Planner and answers its refusals in the same words.
+// PORT, HOST and start() are used by the CLI block above and by nothing else in this repo:
 // their only other caller was the Electron packaging in `materials-planner`,
 // which the port leaves behind. An export with no reader does not ship (#39).
-module.exports = { app, jsonError };
+module.exports = { app, jsonError, BODY_LIMIT_MB, BODY_ERROR_MESSAGES };

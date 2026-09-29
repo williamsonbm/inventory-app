@@ -12,7 +12,7 @@
 // DateStyle setting, which a shared pooler connection does not promise.
 // A person or page of the wrong type is refused by Postgres (answered 400).
 const PAGE_SIZE = 50;
-const OFFICE_TIME_ZONE = 'America/New_York';
+const OFFICE_TIME_ZONE = 'America/New_York';  // the page shows times in the same zone (app-header.js)
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Answers { error } for a date in any other form, else one page of entries.
@@ -21,7 +21,9 @@ async function readActivity(database, { person, action, from, to, before }) {
   if ([from, to].some((d) => blank(d) !== null && !ISO_DATE.test(d))) {
     return { error: 'A date must be written like 2026-09-29.' };
   }
-  const rows = await database.read(`
+  // The list of actions (for the page's filter) does not depend on the
+  // entries, so the two reads run side by side.
+  const [rows, actionRows] = await Promise.all([database.read(`
     SELECT l.id, l.at, who.name AS who, l.action, target.name AS target,
            l.old_value AS was, l.new_value AS now
       FROM inv.activity_log l
@@ -34,12 +36,13 @@ async function readActivity(database, { person, action, from, to, before }) {
        AND ($5::bigint IS NULL OR l.id < $5)
      ORDER BY l.id DESC
      LIMIT ${PAGE_SIZE + 1}`,
-  [blank(person), blank(action), blank(from), blank(to), blank(before), OFFICE_TIME_ZONE]);
+  [blank(person), blank(action), blank(from), blank(to), blank(before), OFFICE_TIME_ZONE]),
+  database.read('SELECT name FROM inv.actions ORDER BY name')]);
   // One row past the page says whether there is another page, which starts
   // before the last row shown. The ids stay here: `before` is their one reader.
   const page = rows.slice(0, PAGE_SIZE);
   const nextBefore = rows.length > PAGE_SIZE ? page.at(-1).id : null;
-  const actions = (await database.read('SELECT name FROM inv.actions ORDER BY name')).map((r) => r.name);
+  const actions = actionRows.map((r) => r.name);
   return { entries: page.map(({ id, ...entry }) => entry), before: nextBefore, actions };
 }
 

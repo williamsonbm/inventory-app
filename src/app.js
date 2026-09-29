@@ -10,14 +10,12 @@
 const path = require('node:path');
 const express = require('express');
 
-const { app: planner, jsonError } = require('./planner/server.js');
+const { app: planner, BODY_LIMIT_MB, BODY_ERROR_MESSAGES } = require('./planner/server.js');
 const { isRefusal } = require('./db/database.js');
 const { readSession, sessionCookie, clearedCookie, checkSecret } = require('./auth/session.js');
 const { signIn, loadPerson, changePassword } = require('./auth/sign-in.js');
 const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js');
 const { readActivity } = require('./settings/activity.js');
-
-const BODY_LIMIT_MB = 1;  // the Planner's own limit; see src/planner/server.js
 
 // The exact open list: the sign-in page (its script and style are inline, so
 // it needs no other address) and the sign-in route.
@@ -42,10 +40,11 @@ const SETTINGS_FILES = {
 
 // Express 4 does not catch a rejected promise: without this, an async
 // handler that fails leaves the request unanswered until it times out.
-const handle = (fn) => (req, res, next) => fn(req, res, next).catch(next);
+const catchAsync = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 
-function isApi(req) {
-  return req.path.startsWith('/api/');
+// A browser opening a page gets a redirect; anything else gets JSON.
+function wantsPage(req) {
+  return req.method === 'GET' && !req.path.startsWith('/api/');
 }
 
 function createApp({ database, sessionSecret }) {
@@ -58,14 +57,15 @@ function createApp({ database, sessionSecret }) {
   });
 
   // Identity and role, decided here for every request (CODING-STANDARDS.md, Seams).
-  app.use(handle(async (req, res, next) => {
+  app.use(catchAsync(async (req, res, next) => {
     if (OPEN.has(`${req.method} ${req.path}`)) return next();
     const session = readSession(req.headers.cookie, sessionSecret);
     const person = session && await loadPerson(database, session.userId);
     // Read from the database on every request, so a removal stops the person
     // on their very next click. A cookie from before the person's latest
-    // password change is refused, so a new password signs them out everywhere else.
-    if (!person || !person.active || person.password_changed_at !== session.passwordChangedAt) {
+    // password change or sign-out is refused (see src/auth/session.js).
+    if (!person || !person.active || person.password_changed_at !== session.passwordChangedAt
+        || person.sign_outs !== session.signOuts) {
       return refuseSignedOut(req, res);
     }
     req.user = person;
@@ -73,15 +73,20 @@ function createApp({ database, sessionSecret }) {
     // (400 days in Chrome) never signs out a person who keeps using the app.
     signInHere(res, person);
     if (person.password_temporary && !TEMPORARY_OPEN.has(`${req.method} ${req.path}`)) {
-      if (req.method === 'GET' && !isApi(req)) return res.redirect(302, '/password');
+      if (wantsPage(req)) return res.redirect(302, '/password');
       return res.status(403).json({ ok: false, error: 'Choose your own password first.' });
     }
     next();
   }));
 
   app.get('/sign-in', (_req, res) => res.sendFile(path.join(__dirname, 'auth', 'sign-in.html')));
-  app.post('/api/sign-in', handle(async (req, res) => {
-    const person = await signIn(database, req.body?.email, req.body?.password);
+  app.post('/api/sign-in', catchAsync(async (req, res) => {
+    // Any database failure here is "not answering" (#77, story 13): a lost
+    // answer to the attempt's save changes nothing the person can check.
+    const person = await signIn(database, req.body?.email, req.body?.password).catch((err) => {
+      if (err.unconfirmed) Object.assign(err, { unconfirmed: false, unreachable: true });
+      throw err;
+    });
     if (!person) return res.status(401).json({ ok: false, error: 'The email or password is wrong.' });
     signInHere(res, person);
     res.json({ ok: true, next: pathOnThisSite(req.body.next) });
@@ -92,26 +97,27 @@ function createApp({ database, sessionSecret }) {
   }
 
   // Settings → Your password, and "choose your password" after a temporary one.
-  app.post('/api/password', handle(async (req, res) => {
+  app.post('/api/password', catchAsync(async (req, res) => {
     const { error, person } = await changePassword(database, req.user, req.body || {});
     if (error) return res.status(400).json({ ok: false, error });
     signInHere(res, person);
     res.json({ ok: true });
   }));
 
-  app.post('/api/sign-out', (_req, res) => {
+  app.post('/api/sign-out', catchAsync(async (req, res) => {
+    await database.save('sign_out', [req.user.id]);
     res.set('Set-Cookie', clearedCookie());
     res.json({ ok: true });
-  });
+  }));
 
   // Settings → Users. Everyone sees the list; only an admin changes it. The
   // role was decided by the identity middleware above; the database function
   // checks it again.
-  app.get('/api/users', handle(async (_req, res) => {
+  app.get('/api/users', catchAsync(async (_req, res) => {
     res.json({ ok: true, users: await listUsers(database) });
   }));
   for (const route of Object.keys(USER_CHANGES)) {
-    app.post(route, adminOnly, handle(async (req, res) => {
+    app.post(route, adminOnly, catchAsync(async (req, res) => {
       const { error, user } = await saveUserChange(database, req.user, route, req.body || {});
       if (error) return res.status(400).json({ ok: false, error });
       res.json({ ok: true, user });
@@ -119,7 +125,7 @@ function createApp({ database, sessionSecret }) {
   }
 
   // Settings → Activity log. Everyone can read it.
-  app.get('/api/activity', handle(async (req, res) => {
+  app.get('/api/activity', catchAsync(async (req, res) => {
     const { error, ...page } = await readActivity(database, req.query);
     if (error) return res.status(400).json({ ok: false, error });
     res.json({ ok: true, ...page });
@@ -134,21 +140,25 @@ function createApp({ database, sessionSecret }) {
   app.use(planner);
   // An API address nobody registered answers JSON, like every other refusal.
   app.use('/api/', (_req, res) => res.status(404).json({ ok: false, error: 'There is no such address.' }));
-  app.use(databaseError);
-  app.use(jsonError);
+  app.use(appError);
 
   function signInHere(res, person) {
     res.set('Set-Cookie', sessionCookie(
-      { userId: Number(person.id), passwordChangedAt: person.password_changed_at }, sessionSecret));
+      { userId: Number(person.id), passwordChangedAt: person.password_changed_at, signOuts: person.sign_outs },
+      sessionSecret));
   }
   return app;
 }
 
 // The page the person tried to open before signing in, if it is an address
-// on this site; else the Planner. "//host" and "/\\host" are other sites to a
-// browser, so a path must start with one "/" followed by neither.
+// on this site; else the Planner. Deliberately resolved the way a browser
+// resolves it, not matched by a pattern: a browser drops tabs and line breaks
+// and reads "\" as "/", so "/\t/evil.example" passed a pattern and still
+// went to another site.
 function pathOnThisSite(next) {
-  return typeof next === 'string' && /^\/(?![/\\])/.test(next) ? next : '/';
+  if (typeof next !== 'string' || !next.startsWith('/')) return '/';
+  const url = new URL(next, 'http://this.site');
+  return url.origin === 'http://this.site' ? url.pathname + url.search + url.hash : '/';
 }
 
 function adminOnly(req, res, next) {
@@ -157,7 +167,7 @@ function adminOnly(req, res, next) {
 }
 
 function refuseSignedOut(req, res) {
-  if (req.method === 'GET' && !isApi(req)) {
+  if (wantsPage(req)) {
     return res.redirect(302, `/sign-in?next=${encodeURIComponent(req.originalUrl)}`);
   }
   res.status(401).json({ ok: false, error: 'Please sign in.' });
@@ -167,18 +177,15 @@ function refuseSignedOut(req, res) {
 // Their messages are written for people, so they reach the page as they are.
 const REFUSAL_STATUS = { IV400: 400, IV403: 403, IV409: 409, IV410: 409, IV422: 422 };
 
-// Connection failures: the network, the pooler, or a database shutting down.
-const UNREACHABLE_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN']);
-function isUnreachable(err) {
-  return UNREACHABLE_CODES.has(err.code) || /^(08|53|57P)/.test(err.code || '')
-    || /timeout|Connection terminated/i.test(err.message || '');
-}
-
-// Error shaping for the database. Every other failure goes on to the
-// Planner's jsonError, which also answers body-size and bad-JSON refusals.
-// Fixed text only, never the error's own message: that can carry SQL.
-function databaseError(err, req, res, next) {
+// Error shaping, applied once for the whole app: every failure leaves as
+// { ok: false, error }. Fixed text only, except a database refusal written
+// for people: an error's own message can carry SQL or a request body.
+// The Planner keeps its own jsonError for `npm start`; its failures stop there.
+function appError(err, req, res, next) {
   if (res.headersSent) return next(err);
+  if (err.type in BODY_ERROR_MESSAGES) {
+    return res.status(err.status).json({ ok: false, error: BODY_ERROR_MESSAGES[err.type] });
+  }
   if (isRefusal(err)) {
     const body = { ok: false, error: err.message };
     if (err.code === 'IV409') body.current = JSON.parse(err.detail);
@@ -189,15 +196,18 @@ function databaseError(err, req, res, next) {
   if (/^2[23]/.test(err.code || '')) {
     return res.status(400).json({ ok: false, error: 'The request was refused.' });
   }
+  // Same words as `send` in src/settings/app-header.js, for an answer that never arrives.
   if (err.unconfirmed) {
     console.error(`save not confirmed: ${err.code || ''} ${err.message}`);
     return res.status(503).json({ ok: false, error: 'The save was not confirmed. Check whether it happened before you try again.' });
   }
-  if (isUnreachable(err)) {
+  if (err.unreachable) {
     console.error(`database not answering: ${err.code || ''} ${err.message}`);
     return res.status(503).json({ ok: false, error: 'The database is not answering. Try again in a minute.' });
   }
-  next(err);
+  if (err.status) return res.status(err.status).json({ ok: false, error: 'The request was refused.' });
+  console.error(err.stack || String(err));
+  res.status(500).json({ ok: false, error: 'The app hit an unexpected error.' });
 }
 
 module.exports = { createApp };

@@ -1,8 +1,8 @@
 // The session cookie (#77): the app's own signed cookie, no refresh tokens.
-// It carries the person's id and the time their password last changed, as
-// the database reported it. The identity middleware refuses a cookie whose
-// time differs from the row's, so a new password signs the person out on
-// every other computer.
+// It carries the person's id, the time their password last changed as the
+// database reported it, and their count of sign-outs. The identity middleware
+// refuses a cookie whose time or count differs from the row's, so a new
+// password, a Sign out or a removal ends every session the person had.
 //
 // Deliberately the password's own time, not the time the cookie was issued:
 // comparing an issue time taken from the app's clock with a change time taken
@@ -23,14 +23,10 @@ function mac(payload, secret) {
   return crypto.createHmac('sha256', secret).update(payload).digest('base64url');
 }
 
-function sessionValue({ userId, passwordChangedAt }, secret) {
-  const payload = Buffer.from(JSON.stringify({ u: userId, p: passwordChangedAt })).toString('base64url');
-  return `${payload}.${mac(payload, secret)}`;
-}
-
 // The Set-Cookie header that signs a person in on this computer.
-function sessionCookie(session, secret) {
-  return `${COOKIE}=${sessionValue(session, secret)}; Path=/; Max-Age=${MAX_AGE_SECONDS}; HttpOnly; Secure; SameSite=Lax`;
+function sessionCookie({ userId, passwordChangedAt, signOuts }, secret) {
+  const payload = Buffer.from(JSON.stringify({ u: userId, p: passwordChangedAt, s: signOuts })).toString('base64url');
+  return `${COOKIE}=${payload}.${mac(payload, secret)}; Path=/; Max-Age=${MAX_AGE_SECONDS}; HttpOnly; Secure; SameSite=Lax`;
 }
 
 // The Set-Cookie header that signs this computer out.
@@ -49,8 +45,9 @@ function readSession(cookieHeader, secret) {
   const given = Buffer.from(signature);
   if (given.length !== expected.length || !crypto.timingSafeEqual(given, expected)) return null;
   try {
-    const { u, p } = JSON.parse(Buffer.from(payload, 'base64url').toString());
-    return Number.isSafeInteger(u) && typeof p === 'string' ? { userId: u, passwordChangedAt: p } : null;
+    const { u, p, s } = JSON.parse(Buffer.from(payload, 'base64url').toString());
+    return Number.isSafeInteger(u) && typeof p === 'string' && Number.isSafeInteger(s)
+      ? { userId: u, passwordChangedAt: p, signOuts: s } : null;
   } catch {
     return null;
   }

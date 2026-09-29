@@ -37,7 +37,7 @@ async function main() {
   const name = await ask('Name: ');
   // The typed password is not echoed, so it stays out of the terminal's scrollback.
   rl._writeToOutput = () => {};
-  const password = await ask('Temporary password (at least 12 characters, not shown): ');
+  const password = await ask('Temporary password (not shown): ');
   rl.close();
   process.stdout.write('\n');
   const problem = passwordProblem(password);

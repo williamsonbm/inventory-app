@@ -300,10 +300,11 @@ test('no login can insert, update, delete or empty any table (S62)', async () =>
   }
 });
 
-test('the app runs only its nine functions; the Planner and backup logins run none', async () => {
+test('the app runs only its eleven functions; the Planner and backup logins run none', async () => {
   const db = await freshDatabase();
   const APP_FUNCTIONS = ['add_user', 'change_password', 'grant_admin', 'reactivate_user',
-    'record_sign_in', 'remove_user', 'rename_user', 'revoke_admin', 'set_password'];
+    'record_password_check', 'remove_user', 'rename_user', 'revoke_admin', 'set_password',
+    'sign_out', 'tidy'];
   const rows = await as(db, null, async (owner) => (await owner.query(`
     SELECT p.proname AS name,
            pg_catalog.has_function_privilege('inv_app', p.oid, 'EXECUTE') AS app,

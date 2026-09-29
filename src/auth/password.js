@@ -21,7 +21,8 @@ const P = 1;
 const KEY_BYTES = 32;
 // scrypt needs 128 × N × r bytes (32 MiB here); Node's default ceiling is
 // exactly 32 MiB and refuses it, so the ceiling is raised to twice the need.
-const MAX_MEM = 2 * 128 * N * R;
+const memoryFor = (n, r) => 2 * 128 * n * r;
+const MAX_MEM = memoryFor(N, R);
 
 const MIN_LENGTH = 12;
 const MAX_LENGTH = 200;  // caps the work one request can cause
@@ -35,10 +36,17 @@ function passwordProblem(password) {
   return null;
 }
 
+// False for input that cannot be any stored password, so it is refused before
+// scrypt runs: the cap limits the work one request can cause. A character can
+// take two UTF-16 units, so this is the cheap bound on MAX_LENGTH characters.
+function couldBePassword(password) {
+  return typeof password === 'string' && password.length <= 2 * MAX_LENGTH;
+}
+
 // One accented letter can be typed as one character or as two; NFC makes both
 // the same, so a password typed on another computer still matches.
 function derive(password, salt, n, r, p) {
-  return scrypt(password.normalize('NFC'), salt, KEY_BYTES, { N: n, r, p, maxmem: 2 * 128 * n * r });
+  return scrypt(password.normalize('NFC'), salt, KEY_BYTES, { N: n, r, p, maxmem: memoryFor(n, r) });
 }
 
 async function hashPassword(password) {
@@ -56,7 +64,7 @@ async function checkPassword(password, stored) {
   const salt = Buffer.from(parts[4], 'base64');
   const expected = Buffer.from(parts[5], 'base64');
   if (!Number.isInteger(n) || !Number.isInteger(r) || !Number.isInteger(p)
-      || 2 * 128 * n * r > MAX_MEM || salt.length === 0 || expected.length !== KEY_BYTES) {
+      || memoryFor(n, r) > MAX_MEM || salt.length === 0 || expected.length !== KEY_BYTES) {
     return false;
   }
   // scrypt refuses settings it cannot use (N not a power of two); that is a bad hash, not a crash.
@@ -64,4 +72,4 @@ async function checkPassword(password, stored) {
   return key !== null && crypto.timingSafeEqual(key, expected);
 }
 
-module.exports = { hashPassword, checkPassword, passwordProblem };
+module.exports = { hashPassword, checkPassword, passwordProblem, couldBePassword };

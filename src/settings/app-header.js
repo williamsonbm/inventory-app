@@ -57,6 +57,7 @@ window.AppHeader = (() => {
         method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
       });
     } catch {
+      // Same words as the app's 503 for an unconfirmed save (src/app.js, appError).
       throw Object.assign(new Error('The save was not confirmed. Check whether it happened before you try again.'), { unconfirmed: true });
     }
     const reply = await res.json().catch(() => ({ ok: false, error: 'The app gave an answer it could not read.' }));
@@ -65,6 +66,7 @@ window.AppHeader = (() => {
   }
 
   // A time as the office clock shows it: Eastern Time with daylight saving (Q17).
+  // The same zone as OFFICE_TIME_ZONE in src/settings/activity.js, which picks the days.
   const officeTime = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short',
   });

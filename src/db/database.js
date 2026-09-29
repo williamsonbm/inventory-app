@@ -19,7 +19,20 @@ const { attachDatabasePool } = require('@vercel/functions');
 const FUNCTION_NAME = /^[a-z_]+$/;
 const SQLSTATE = /^[0-9A-Z]{5}$/;
 
+// Marks a failure of the connection, not of the request, as `unreachable`:
+// an error with no SQLSTATE (the network, a timeout), or one of the classes
+// Postgres uses for a connection it cannot serve (08 connection, 53 out of
+// resources, 57P shutting down). The app answers "not answering" for these.
+function markUnreachable(err) {
+  const code = err.code || '';
+  if (!SQLSTATE.test(code) || /^(08|53|57P)/.test(code)) err.unreachable = true;
+  return err;
+}
+
 function openDatabase(connectionString, { ca } = {}) {
+  if (ca && /[?&]sslmode=/.test(connectionString)) {
+    throw new Error('The connection string carries sslmode, which would override the CA certificate; remove it.');
+  }
   const pool = new Pool({
     connectionString,
     ...(ca ? { ssl: { ca, rejectUnauthorized: true } } : {}),
@@ -42,20 +55,24 @@ function openDatabase(connectionString, { ca } = {}) {
   return {
     // One read, run as a single statement.
     async read(sql, params = []) {
-      return (await pool.query(sql, params)).rows;
+      try {
+        return (await pool.query(sql, params)).rows;
+      } catch (err) {
+        throw markUnreachable(err);
+      }
     },
 
     // Runs inv.<name>(...args) in its own transaction and returns its answer.
     // Each database function writes its activity-log row in the same save.
     // An error that Postgres itself reported (it carries a SQLSTATE) means the
-    // transaction did not commit. Any other error (a dropped connection, a
-    // timeout) is marked `unconfirmed`: the save may or may not have happened,
-    // and the page's retry key makes a retry safe either way.
+    // transaction did not commit. Any other error after the call was sent (a
+    // dropped connection, a timeout) is marked `unconfirmed`: the save may or
+    // may not have happened, and the page's retry key makes a retry safe.
     async save(name, args) {
       if (!FUNCTION_NAME.test(name)) throw new Error(`not a database function name: ${name}`);
       const params = args.map((_, i) => `$${i + 1}`).join(', ');
-      const client = await pool.connect();  // a failure here sent nothing
-      let broken = null;
+      const client = await pool.connect().catch((err) => { throw markUnreachable(err); });
+      let broken;
       try {
         await client.query('BEGIN');
         const { rows: [{ result }] } = await client.query(`SELECT inv.${name}(${params}) AS result`, args);
@@ -64,10 +81,10 @@ function openDatabase(connectionString, { ca } = {}) {
       } catch (err) {
         await client.query('ROLLBACK').catch((e) => { broken = e; });
         if (!SQLSTATE.test(err.code || '')) err.unconfirmed = true;
-        throw err;
+        throw markUnreachable(err);
       } finally {
         // A client that could not roll back is closed, not reused.
-        client.release(broken || undefined);
+        client.release(broken);
       }
     },
 
