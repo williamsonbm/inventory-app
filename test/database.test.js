@@ -13,79 +13,24 @@
 // it the tests fail, never skip, so a green run always means they ran.
 // =============================================================
 
-const { test, after } = require('node:test');
+const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { Client } = require('pg');
 
-const { migrate } = require('../src/db/migrate.js');
+const { urlFor, connect, freshDatabase, as } = require('./support/database.js');
 
-const ADMIN_URL = process.env.TEST_DATABASE_URL;
-
-// One database per test, named for this process so parallel test files and
-// leftovers from an interrupted run never collide.
-let created = 0;
-const databases = [];
-
-function urlFor(database, user) {
-  const url = new URL(ADMIN_URL);
-  url.pathname = `/${database}`;
-  if (user) url.username = user;
-  return url.toString();
-}
-
-async function connect(url) {
-  const client = new Client({ connectionString: url });
-  await client.connect();
-  return client;
-}
-
-async function freshDatabase({ migrated = true } = {}) {
-  assert.ok(ADMIN_URL,
-    'TEST_DATABASE_URL is not set. Run pg-test-up in the pod; CI sets it in test.yml.');
-  const name = `inv_test_${process.pid}_${++created}`;
-  const admin = await connect(ADMIN_URL);
-  try {
-    await admin.query(`CREATE DATABASE ${name}`);
-  } finally {
-    await admin.end();
-  }
-  databases.push(name);
-  if (migrated) await migrate(urlFor(name));
-  return name;
-}
-
-after(async () => {
-  if (!ADMIN_URL) return;
-  const admin = await connect(ADMIN_URL);
-  try {
-    for (const name of databases) {
-      await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
-    }
-  } finally {
-    await admin.end();
-  }
-});
-
-// Runs `fn` with a client connected to `database` as `user` (the owner when
-// omitted), and always disconnects.
-async function as(database, user, fn) {
-  const client = await connect(urlFor(database, user));
-  try {
-    return await fn(client);
-  } finally {
-    await client.end();
-  }
-}
+// The database stores a password hash and never reads it, so any non-empty
+// text stands in for one here. The app's own hashing is in password.test.js.
+const HASH = 'a stand-in for a password hash';
 
 // Adds the first person as the owner and returns them, so a test can act as them.
 async function firstUser(db) {
   return as(db, null, async (owner) => {
     const { rows: [{ person }] } = await owner.query(
-      'SELECT inv.add_first_user($1, $2) AS person', [' Ann@Example.com ', ' Ann Lee ']);
+      'SELECT inv.add_first_user($1, $2, $3) AS person', [' Ann@Example.com ', ' Ann Lee ', HASH]);
     return person;
   });
 }
@@ -111,7 +56,7 @@ test('the first-person setup refuses to run once anyone exists', async () => {
   await firstUser(db);
   await as(db, null, async (owner) => {
     await assert.rejects(
-      owner.query('SELECT inv.add_first_user($1, $2)', ['bob@example.com', 'Bob Ray']),
+      owner.query('SELECT inv.add_first_user($1, $2, $3)', ['bob@example.com', 'Bob Ray', HASH]),
       /already has people/);
   });
 });
@@ -135,7 +80,7 @@ async function logRows(db) {
 test('the app adds a person, and one log row says who did it and what changed', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), ' Bob@Example.COM ', ' Bob Ray ');
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), ' Bob@Example.COM ', ' Bob Ray ', HASH);
   assert.deepEqual(bob, { id: bob.id, email: 'bob@example.com', name: 'Bob Ray', active: true, admin: false, version: 1 });
 
   const log = await logRows(db);
@@ -169,7 +114,7 @@ test('impossible people are refused: blank name, no @, two @, a duplicate in oth
     ['an address already listed, with a non-breaking space after it', 'ann@example.com\u00a0', 'Ann Again'],
   ];
   for (const [label, email, name] of cases) {
-    await refused(call(db, 'add_user', ann.id, crypto.randomUUID(), email, name), 'IV400', label);
+    await refused(call(db, 'add_user', ann.id, crypto.randomUUID(), email, name, HASH), 'IV400', label);
   }
   assert.equal((await logRows(db)).length, 1, 'no refusal leaves a log row');
 });
@@ -177,7 +122,7 @@ test('impossible people are refused: blank name, no @, two @, a duplicate in oth
 test('a rename is logged was → now, and a rename from a stale version is refused with the current row', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
 
   const renamed = await call(db, 'rename_user', ann.id, crypto.randomUUID(), bob.id, 1, 'Robert Ray');
   assert.deepEqual(renamed, { ...bob, name: 'Robert Ray', version: 2 });
@@ -197,14 +142,14 @@ test('a rename is logged was → now, and a rename from a stale version is refus
 test('remove and re-activate are logged; a removed person cannot act, and their history stays', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   const bobAdd = (await logRows(db)).at(-1);
 
   const removed = await call(db, 'remove_user', ann.id, crypto.randomUUID(), bob.id, 1);
   assert.deepEqual(removed, { ...bob, active: false, version: 2 });
   assert.equal((await logRows(db)).at(-1).action, 'remove user');
 
-  await refused(call(db, 'add_user', bob.id, crypto.randomUUID(), 'cy@example.com', 'Cy Doe'),
+  await refused(call(db, 'add_user', bob.id, crypto.randomUUID(), 'cy@example.com', 'Cy Doe', HASH),
     'IV403', 'a removed person acting');
   await refused(call(db, 'remove_user', ann.id, crypto.randomUUID(), bob.id, 2),
     'IV422', 'removing someone already removed');
@@ -221,10 +166,10 @@ test('remove and re-activate are logged; a removed person cannot act, and their 
 test('only an admin changes the user list', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   const key = () => crypto.randomUUID();
   for (const [label, fn, ...args] of [
-    ['add', 'add_user', 'cy@example.com', 'Cy Doe'],
+    ['add', 'add_user', 'cy@example.com', 'Cy Doe', HASH],
     ['rename', 'rename_user', ann.id, 1, 'Ann B'],
     ['remove', 'remove_user', ann.id, 1],
     ['re-activate', 'reactivate_user', ann.id, 1],
@@ -239,7 +184,7 @@ test('only an admin changes the user list', async () => {
 test('making someone an admin and taking it away are logged was → now', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   const made = await call(db, 'grant_admin', ann.id, crypto.randomUUID(), bob.id, 1);
   assert.deepEqual(made, { ...bob, admin: true, version: 2 });
   const log = (await logRows(db)).at(-1);
@@ -258,7 +203,7 @@ test('making someone an admin and taking it away are logged was → now', async 
 test('the last active admin cannot be removed or lose admin, not even by themselves', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   await refused(call(db, 'remove_user', ann.id, crypto.randomUUID(), ann.id, 1),
     'IV422', 'removing the last active admin');
   await refused(call(db, 'revoke_admin', ann.id, crypto.randomUUID(), ann.id, 1),
@@ -271,8 +216,8 @@ test('a retry with the same key acts once and answers what the first call answer
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const key = crypto.randomUUID();
-  const first = await call(db, 'add_user', ann.id, key, 'bob@example.com', 'Bob Ray');
-  const again = await call(db, 'add_user', ann.id, key, 'bob@example.com', 'Bob Ray');
+  const first = await call(db, 'add_user', ann.id, key, 'bob@example.com', 'Bob Ray', HASH);
+  const again = await call(db, 'add_user', ann.id, key, 'bob@example.com', 'Bob Ray', HASH);
   assert.deepEqual(again, first);
   assert.equal((await logRows(db)).length, 2, 'the setup row and one add');
 
@@ -287,8 +232,8 @@ test('two connections racing with the same retry key make one change (S22, S52)'
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const key = crypto.randomUUID();
-  const sql = 'SELECT inv.add_user($1, $2, $3, $4) AS result';
-  const args = [ann.id, key, 'bob@example.com', 'Bob Ray'];
+  const sql = 'SELECT inv.add_user($1, $2, $3, $4, $5) AS result';
+  const args = [ann.id, key, 'bob@example.com', 'Bob Ray', HASH];
   const one = await connect(urlFor(db, APP));
   const two = await connect(urlFor(db, APP));
   try {
@@ -355,9 +300,10 @@ test('no login can insert, update, delete or empty any table (S62)', async () =>
   }
 });
 
-test('the app runs only its six functions; the Planner and backup logins run none', async () => {
+test('the app runs only its nine functions; the Planner and backup logins run none', async () => {
   const db = await freshDatabase();
-  const APP_FUNCTIONS = ['add_user', 'grant_admin', 'reactivate_user', 'remove_user', 'rename_user', 'revoke_admin'];
+  const APP_FUNCTIONS = ['add_user', 'change_password', 'grant_admin', 'reactivate_user',
+    'record_sign_in', 'remove_user', 'rename_user', 'revoke_admin', 'set_password'];
   const rows = await as(db, null, async (owner) => (await owner.query(`
     SELECT p.proname AS name,
            pg_catalog.has_function_privilege('inv_app', p.oid, 'EXECUTE') AS app,
@@ -427,7 +373,7 @@ async function contents(db) {
 test('a backup taken by the backup login restores into an empty database on the same server (S51)', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   await call(db, 'rename_user', ann.id, crypto.randomUUID(), bob.id, 1, 'Robert Ray');
   await call(db, 'remove_user', ann.id, crypto.randomUUID(), bob.id, 2);
 
@@ -447,7 +393,7 @@ test('a backup taken by the backup login restores into an empty database on the 
     assert.deepEqual(await contents(empty), await contents(db));
 
     // The restored copy works, rights included: the app can make a change on it.
-    const cy = await call(empty, 'add_user', ann.id, crypto.randomUUID(), 'cy@example.com', 'Cy Doe');
+    const cy = await call(empty, 'add_user', ann.id, crypto.randomUUID(), 'cy@example.com', 'Cy Doe', HASH);
     assert.equal(cy.email, 'cy@example.com');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -459,7 +405,7 @@ test('a backup taken by the backup login restores into an empty database on the 
 test('two removals at REPEATABLE READ cannot leave no active admin', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   const bob = await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
   const sql = 'SELECT inv.remove_user($1, $2, $3, $4) AS result';
   const one = await connect(urlFor(db, APP));
@@ -489,7 +435,7 @@ test('two removals at REPEATABLE READ cannot leave no active admin', async () =>
 test('a retry after the change took away the caller\'s own admin answers what the first call answered', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
   const key = crypto.randomUUID();
   const first = await call(db, 'revoke_admin', ann.id, key, ann.id, 1);
@@ -500,8 +446,8 @@ test('a retry key reused for a different request is refused, never answered with
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const key = crypto.randomUUID();
-  const bob = await call(db, 'add_user', ann.id, key, 'bob@example.com', 'Bob Ray');
-  await refused(call(db, 'add_user', ann.id, key, 'cy@example.com', 'Cy Doe'),
+  const bob = await call(db, 'add_user', ann.id, key, 'bob@example.com', 'Bob Ray', HASH);
+  await refused(call(db, 'add_user', ann.id, key, 'cy@example.com', 'Cy Doe', HASH),
     'IV410', 'the same key for another person to add');
   const renameKey = crypto.randomUUID();
   await call(db, 'rename_user', ann.id, renameKey, bob.id, 1, 'Robert Ray');
@@ -523,10 +469,10 @@ test('the owner\'s own direct update cannot leave no active admin either', async
 test('a removed admin cannot act', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   const bob = await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
   await call(db, 'remove_user', ann.id, crypto.randomUUID(), bob.id, bob.version);
-  await refused(call(db, 'add_user', bob.id, crypto.randomUUID(), 'cy@example.com', 'Cy Doe'),
+  await refused(call(db, 'add_user', bob.id, crypto.randomUUID(), 'cy@example.com', 'Cy Doe', HASH),
     'IV403', 'a removed admin adding a person');
 });
 
@@ -534,11 +480,11 @@ test('a removed admin cannot act', async () => {
 test('a retry key sent by another person is refused, even with the same request', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   const bob = await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
   const key = crypto.randomUUID();
-  await call(db, 'add_user', ann.id, key, 'cy@example.com', 'Cy Doe');
-  await refused(call(db, 'add_user', bob.id, key, 'cy@example.com', 'Cy Doe'),
+  await call(db, 'add_user', ann.id, key, 'cy@example.com', 'Cy Doe', HASH);
+  await refused(call(db, 'add_user', bob.id, key, 'cy@example.com', 'Cy Doe', HASH),
     'IV410', 'another admin sending the same key and request');
 });
 
@@ -546,7 +492,7 @@ test('a retry key sent by another person is refused, even with the same request'
 test('the owner\'s own direct delete cannot leave no active admin either', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
-  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray');
+  const added = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   await call(db, 'grant_admin', ann.id, crypto.randomUUID(), added.id, 1);
   await as(db, null, async (owner) => {
     // Bob has never acted, so no log row refers to him and a delete can reach him.

@@ -35,8 +35,8 @@ Four rules from real mistakes. Not optional.
 
 ## Writing code
 
-Read `docs/CODING-STANDARDS.md` before writing, reviewing or testing code. Database and
-access-control rules stay in #28 until the database slice starts.
+Read `docs/CODING-STANDARDS.md` before writing, reviewing or testing code. It holds the
+database and access-control rules too, moved there from #28 by step 2 (#77).
 
 **Precedence.** Recorded decisions in `docs/CODING-STANDARDS.md`, `CONTEXT.md` and accepted
 ADRs beat generic skill advice; an ADR wins between them. A task may change a decision:

@@ -31,15 +31,18 @@
 // warnings are the nine old per-job warnings, job-prefixed. Every other
 // recorded file is still the pre-port capture.
 //
-// This test boots the LOCAL src/planner/server.js and compares its
-// response, for all 50 sheets, against the recorded JSON above. It cannot
-// pass until that file exists (build order step 2) — that is expected, not
-// a bug in this test.
+// This test boots the whole app (src/app.js), signs in as a test user, and
+// compares the response, for all 50 sheets, against the recorded JSON above.
+// Since #77 every route sits behind the identity middleware; passing through
+// it unchanged proves that signing in changed no buy list. It needs a test
+// database for the sign-in (TEST_DATABASE_URL; see test/support/database.js).
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+
+const { withAdmin } = require('./support/app.js');
 
 const FIXTURES = path.join(__dirname, 'port-fixtures');
 
@@ -68,12 +71,8 @@ function loadRecorded(family, withStock) {
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 
-test('recorded-output proof: all four routes match the pre-port build, all 50 sheets, with and without stock', async (t) => {
-  const { app } = require('../src/planner/server.js');
-  const server = app.listen(0);
-  t.after(() => server.close());
-  const { port } = server.address();
-  const base = `http://127.0.0.1:${port}`;
+test('recorded-output proof: all four routes match the pre-port build, all 50 sheets, with and without stock', async () => {
+  const { base, cookie } = await withAdmin();
 
   const sheets = loadSheets();
   assert.equal(sheets.length, 50, 'the committed corpus should still hold 50 sheets');
@@ -85,7 +84,7 @@ test('recorded-output proof: all four routes match the pre-port build, all 50 sh
 
       const res = await fetch(base + route, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', cookie },
         body: JSON.stringify(body),
       });
       const json = await res.json();

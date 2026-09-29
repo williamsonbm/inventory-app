@@ -25,7 +25,8 @@
   Replaces the four family pages; their old addresses redirect here with the
   family selected (src/planner/server.js).
 
-  This file is glue: the header, the family filter, the file panel, and the
+  This file is glue: the header (its theme switch, name and Sign out are in
+  src/settings/app-header.js), the family filter, the file panel, and the
   runner that posts to each family's plan route and hands the response to that
   family's section (src/planner/<family>-section.js). NOT UNIT-TESTED: the
   tabs, the saved filter, the theme switch and the print buttons need a browser,
@@ -38,10 +39,12 @@
   <div class="appbar-primary">
     <span class="appbar-brand">Inventory</span>
     <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
   </div>
-  <!-- One mode until Jobs, Inventory and Settings ship (spec #72): no tab
+  <!-- Planner and Settings until Jobs and Inventory ship (spec #72): no tab
        leads nowhere. The Planner has no tasks yet, so no task row. -->
-  <nav class="appbar-nav" aria-label="Modes"><a href="/" class="here" aria-current="page">Planner</a></nav>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/" class="here" aria-current="page">Planner</a><a href="/settings/users">Settings</a></nav>
   <div class="appbar-filter">
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"></div>
@@ -60,6 +63,7 @@
   <div id="sections"></div>
 </div>
 
+<script src="/app-header.js"></script>
 <script src="/csvPile.js"></script>
 <script src="/planner-ui.js"></script>
 <script src="/lumber-section.js"></script>
@@ -73,30 +77,6 @@
   // Screen order, and the order of the filter buttons.
   const FAMILIES = ['lumber', 'plates', 'hangers', 'lvl'];
   const sections = window.PlannerSections;
-
-  // ── Theme switch ───────────────────────────────────────────────────────────
-  const root = document.documentElement;
-  const themeBtn = el('theme-btn');
-  const paintThemeBtn = () => { themeBtn.textContent = root.dataset.theme === 'dark' ? '☀' : '☾'; };
-  paintThemeBtn();
-  let themeChosen = false;
-  themeBtn.addEventListener('click', () => {
-    themeChosen = true;
-    root.dataset.theme = root.dataset.theme === 'dark' ? 'light' : 'dark';
-    try { localStorage.setItem('app.theme', root.dataset.theme); } catch { /* storage blocked: this visit only */ }
-    paintThemeBtn();
-  });
-  // Until the user picks a theme, follow the computer's setting as it changes.
-  try { themeChosen = !!localStorage.getItem('app.theme'); } catch { /* storage blocked */ }
-  const followComputer = (e) => {
-    if (themeChosen) return;
-    root.dataset.theme = e.matches ? 'dark' : 'light';
-    paintThemeBtn();
-  };
-  const darkQuery = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)');
-  // addListener is the older name; Safari before 14 has only that one.
-  if (darkQuery && darkQuery.addEventListener) darkQuery.addEventListener('change', followComputer);
-  else if (darkQuery && darkQuery.addListener) darkQuery.addListener(followComputer);
 
   // ── One section per family ─────────────────────────────────────────────────
   const familyParts = {};   // family -> { sec, out, busy, drills }

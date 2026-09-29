@@ -7,7 +7,7 @@
 // invisible in normal use and easy to break by accident, so none of them has a
 // natural home in a family test file:
 //
-//   1. the module graph reaches no database and no .env
+//   1. the Planner's module graph loads no database driver and no .env
 //   2. every response is marked no-store
 //   3. "/" serves the Planner, and the old family addresses redirect to it
 //   4. a request body over the size cap is refused before any handler runs
@@ -49,12 +49,13 @@ async function withServer(fn) {
 }
 
 // ---- 1. the negative constraint ---------------------------------------------
-// The planner's defining constraint is NEGATIVE: it must run with no Postgres
-// and no .env. That is easy to break by accident — one convenience `require`
-// would drag in `pg` and `dotenv` and the tool would demand a database on
-// startup. So the module graph is asserted here rather than left to a grep.
+// The Planner's defining constraint is NEGATIVE: its modules load no Postgres
+// driver and no .env. Since #77 the whole app has a database (src/app.js), but
+// the Planner itself still reads and writes none. That is easy to break by
+// accident — one convenience `require` would drag in `pg`. This file loads
+// only src/planner/server.js, so require.cache is the Planner's own graph.
 
-test('the planner reaches no database, in the graph or in the manifest', () => {
+test('the Planner loads no database driver, and the manifest holds only named dependencies', () => {
   const loaded = Object.keys(require.cache);
   const forbidden = ['node_modules/pg/', 'node_modules/pg-pool/', 'node_modules/dotenv/'];
   for (const f of forbidden) {
@@ -75,8 +76,9 @@ test('the planner reaches no database, in the graph or in the manifest', () => {
   // check misses a package required without being declared; the graph check
   // above misses a package declared but not yet required.
   const { dependencies } = require('../package.json');
-  // `pg`: #77 names it. The graph check above proves the planner does not load it.
-  assert.deepEqual(Object.keys(dependencies).sort(), ['express', 'pg'],
+  // `pg` and `@vercel/functions`: #77 names both. The graph check above proves
+  // the Planner does not load the driver.
+  assert.deepEqual(Object.keys(dependencies).sort(), ['@vercel/functions', 'express', 'pg'],
     'a new runtime dependency must be named in the spec before it is added');
 });
 

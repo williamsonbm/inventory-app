@@ -1,0 +1,202 @@
+-- Step 2, part 2 (#77): passwords, kept by the app itself.
+-- The app hashes each password in Node (src/auth/password.js); the database
+-- stores only the hash and never sees the password. Every name is fully
+-- qualified, inside function bodies too (#28). Refusal codes: see 001.
+--
+-- Material change, named: adds six columns to inv.users, replaces
+-- inv.add_first_user and inv.add_user with versions that take a password hash,
+-- and adds three functions. Reach: inv.users, which holds no row on the live
+-- database yet (the first-user setup waits for this migration). If it did, the
+-- NOT NULL password_hash would refuse the migration, and the runner applies
+-- nothing from a file that fails. Recovery: none needed; nothing is deleted.
+
+ALTER TABLE inv.users
+  ADD COLUMN password_hash text NOT NULL CHECK (password_hash <> ''),
+  -- Set by an admin or the setup command; until the person chooses their own,
+  -- the app sends every page to "choose your password".
+  ADD COLUMN password_temporary boolean NOT NULL DEFAULT true,
+  -- A session cookie carries the value this had when it was issued; a cookie
+  -- carrying an older one is refused, so a new password signs the person out
+  -- everywhere else.
+  ADD COLUMN password_changed_at timestamptz NOT NULL DEFAULT pg_catalog.now(),
+  -- The guessing limit: wrong passwords in a row, and the lock they cause.
+  ADD COLUMN wrong_passwords integer NOT NULL DEFAULT 0 CHECK (wrong_passwords >= 0),
+  ADD COLUMN locked_until timestamptz,
+  ADD COLUMN last_signed_in_at timestamptz;
+
+-- Setting another person's temporary password is an admin's job; changing
+-- one's own is everyone's.
+INSERT INTO inv.actions (name, admin_only) VALUES
+  ('set password', true), ('change password', false);
+
+-- The first person now arrives with a temporary password.
+DROP FUNCTION inv.add_first_user(text, text);
+CREATE FUNCTION inv.add_first_user(p_email text, p_name text, p_password_hash text) RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  u inv.users;
+  v_email text := pg_catalog.lower(inv.tidy(p_email));
+BEGIN
+  -- Two setups at once would both see an empty table without the lock.
+  LOCK TABLE inv.users IN SHARE ROW EXCLUSIVE MODE;
+  IF EXISTS (SELECT FROM inv.users) THEN
+    RAISE EXCEPTION 'The database already has people; add more in Settings → Users.'
+      USING ERRCODE = 'IV422';
+  END IF;
+  PERFORM inv.check_person(v_email, p_name);
+  PERFORM inv.check_password_hash(p_password_hash);
+  INSERT INTO inv.users (email, name, admin, password_hash)
+  VALUES (v_email, inv.tidy(p_name), true, p_password_hash)
+  RETURNING * INTO u;
+  INSERT INTO inv.activity_log
+    (retry_key, request_hash, actor_id, action, target_table, target_id, new_value)
+  VALUES (pg_catalog.gen_random_uuid(),
+          pg_catalog.sha256(pg_catalog.convert_to(
+            pg_catalog.jsonb_build_object('email', p_email, 'name', p_name)::text, 'UTF8')),
+          u.id, 'add user', 'users', u.id, inv.user_json(u));
+  RETURN inv.user_json(u);
+END
+$$;
+
+-- A missing hash is a bug in the app, but it is refused plainly all the same.
+CREATE FUNCTION inv.check_password_hash(p_password_hash text) RETURNS void
+LANGUAGE plpgsql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF p_password_hash IS NULL OR p_password_hash = '' THEN
+    RAISE EXCEPTION 'A password is required.' USING ERRCODE = 'IV400';
+  END IF;
+END
+$$;
+
+-- Settings → Users → Add, now with a temporary password.
+-- Deliberately, the hash is not part of the request the retry key checks
+-- (the first argument to inv.claim_action's p_request). Each hash has a fresh
+-- random salt, so a retry of the same add sends a different hash, and with the
+-- hash in the request every retry would be refused as a different request.
+DROP FUNCTION inv.add_user(bigint, uuid, text, text);
+CREATE FUNCTION inv.add_user(p_actor bigint, p_key uuid, p_email text, p_name text, p_password_hash text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  u inv.users;
+  v_email text := pg_catalog.lower(inv.tidy(p_email));
+BEGIN
+  LOCK TABLE inv.users IN SHARE ROW EXCLUSIVE MODE;  -- see 001's inv.add_user
+  a := inv.claim_action(p_actor, p_key, 'add user', 'users', NULL,
+                        pg_catalog.jsonb_build_object('email', p_email, 'name', p_name));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  PERFORM inv.check_person(v_email, p_name);
+  PERFORM inv.check_password_hash(p_password_hash);
+  IF EXISTS (SELECT FROM inv.users WHERE email = v_email) THEN
+    RAISE EXCEPTION '% is already on the list.', v_email USING ERRCODE = 'IV400';
+  END IF;
+  INSERT INTO inv.users (email, name, password_hash) VALUES (v_email, inv.tidy(p_name), p_password_hash)
+  RETURNING * INTO u;
+  RETURN inv.finish_action(a.log_id, u.id, NULL, inv.user_json(u));
+END
+$$;
+
+-- Settings → Users → Set a temporary password, for a person who forgot theirs.
+-- It also lifts a guessing lock, and signs the person out everywhere.
+-- No version check: a password is not one of the fields an open screen edits,
+-- so it neither needs one nor moves one (see 001's bump_version trigger).
+-- The log row carries the person, never the hash; the hash stays out of the
+-- retry request too (see inv.add_user above).
+CREATE FUNCTION inv.set_password(p_actor bigint, p_key uuid, p_id bigint, p_password_hash text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  u inv.users;
+BEGIN
+  LOCK TABLE inv.users IN SHARE ROW EXCLUSIVE MODE;  -- see 001's inv.add_user
+  a := inv.claim_action(p_actor, p_key, 'set password', 'users', p_id,
+                        pg_catalog.jsonb_build_object('id', p_id));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  PERFORM inv.check_password_hash(p_password_hash);
+  UPDATE inv.users
+     SET password_hash = p_password_hash, password_temporary = true,
+         password_changed_at = pg_catalog.clock_timestamp(),
+         wrong_passwords = 0, locked_until = NULL
+   WHERE id = p_id
+  RETURNING * INTO u;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'That person is not on the list.' USING ERRCODE = 'IV400';
+  END IF;
+  RETURN inv.finish_action(a.log_id, u.id, NULL, inv.user_json(u));
+END
+$$;
+
+-- Settings → Your password, and "choose your password" after a temporary one.
+-- The app has already checked the current password; this stores the new hash
+-- and signs the person out everywhere else (the app gives this computer a new
+-- cookie). The hash stays out of the log and the retry request.
+CREATE FUNCTION inv.change_password(p_actor bigint, p_key uuid, p_password_hash text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  u inv.users;
+BEGIN
+  LOCK TABLE inv.users IN SHARE ROW EXCLUSIVE MODE;  -- see 001's inv.add_user
+  a := inv.claim_action(p_actor, p_key, 'change password', 'users', p_actor,
+                        pg_catalog.jsonb_build_object());
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  PERFORM inv.check_password_hash(p_password_hash);
+  UPDATE inv.users
+     SET password_hash = p_password_hash, password_temporary = false,
+         password_changed_at = pg_catalog.clock_timestamp()
+   WHERE id = p_actor
+  RETURNING * INTO u;
+  RETURN inv.finish_action(a.log_id, u.id, NULL, inv.user_json(u));
+END
+$$;
+
+-- Records one password check, after the app has made it, and answers whether
+-- it counts as right: a sign-in, or the current password typed to change it. The database decides the guessing
+-- limit, so two copies of the app cannot each allow a guess the other counted:
+-- during a lock the answer is no, whatever the password, and the attempt is not
+-- counted; a right password clears the count; the 5th wrong one in a row
+-- starts a 15-minute lock and restarts the count. A removed person is refused.
+-- Not an activity-log entry: sign-ins are not changes (#77).
+-- Deliberately one UPDATE, not a SELECT ... FOR UPDATE and then an UPDATE:
+-- the second statement would ask for a stronger table lock while holding a
+-- row lock, and could deadlock with a change to people, which takes its table
+-- lock first and then reads the actor's row.
+CREATE FUNCTION inv.record_sign_in(p_id bigint, p_password_ok boolean) RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_allowed boolean;
+BEGIN
+  UPDATE inv.users
+     SET wrong_passwords = CASE WHEN p_password_ok OR wrong_passwords + 1 >= 5 THEN 0
+                                ELSE wrong_passwords + 1 END,
+         locked_until = CASE WHEN NOT p_password_ok AND wrong_passwords + 1 >= 5
+                             THEN pg_catalog.now() + interval '15 minutes' END,
+         last_signed_in_at = CASE WHEN p_password_ok THEN pg_catalog.now() ELSE last_signed_in_at END
+   WHERE id = p_id AND active
+     AND (locked_until IS NULL OR locked_until <= pg_catalog.now())
+  RETURNING p_password_ok INTO v_allowed;
+  RETURN coalesce(v_allowed, false);
+END
+$$;
+
+-- 001's default already closes every new function to everyone; these open
+-- the four the app calls.
+GRANT EXECUTE ON FUNCTION inv.add_user(bigint, uuid, text, text, text) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.set_password(bigint, uuid, bigint, text) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.change_password(bigint, uuid, text) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.record_sign_in(bigint, boolean) TO inv_app;

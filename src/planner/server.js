@@ -13,8 +13,9 @@
 // where the owner still runs it locally; see issue #41 for why the exclusion
 // exists only in this copy.
 //
-// TEST-ONLY SEAM: `jsonError` is exported for test/port-guards.test.js alone.
-// No route can reach its 500 branch on purpose, so a direct call is the only
+// `jsonError` is exported for src/app.js, whose error shaping hands it every
+// failure that is not the database's, and for test/port-guards.test.js: no
+// route can reach its 500 branch on purpose, so a direct call is the only
 // guard on the "every failure leaves as JSON" rule.
 //
 // UPLOADS — the browser reads the CSVs with FileReader and POSTs them as JSON
@@ -255,7 +256,7 @@ if (require.main === module) {
     });
 }
 
-// `app`, plus jsonError, the test-only seam the file header names. PORT, HOST
+// `app`, plus jsonError (see the file header for its two callers). PORT, HOST
 // and start() are used by the CLI block above and by nothing else in this repo:
 // their only other caller was the Electron packaging in `materials-planner`,
 // which the port leaves behind. An export with no reader does not ship (#39).

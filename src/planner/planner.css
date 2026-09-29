@@ -58,6 +58,15 @@ a{color:var(--accent)}
 .themebtn{margin-left:auto;background:transparent;border:1px solid var(--line-strong);border-radius:8px;
   color:var(--ink);font-size:15px;line-height:1;padding:4px 9px}
 .themebtn:hover{background:var(--surface-2)}
+.appbar-user{font-size:14px;color:var(--muted)}
+.appbar-signout{padding:4px 12px;font-size:13px}
+/* Settings (#77): the task row under the modes, and its forms. */
+.appbar-tasks{border-top:0;padding-top:0}
+.appbar-tasks a{font-size:13px}
+.field{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+.field input,.field select,td input{font:inherit;font-size:14px;padding:6px 9px;border:1px solid var(--line-strong);
+  border-radius:6px;background:var(--card);color:var(--ink)}
+td button{padding:3px 10px;font-size:12.5px;margin:0 4px 4px 0}
 .appbar-nav{display:flex;flex-wrap:wrap;gap:14px;padding:8px 22px;border-top:1px solid var(--line)}
 .appbar-nav a{color:var(--accent);text-decoration:none;font-size:14px;padding:2px 0;
   border-bottom:2px solid transparent;white-space:nowrap}

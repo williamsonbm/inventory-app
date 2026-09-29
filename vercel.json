@@ -1,7 +1,7 @@
 {
   "functions": {
     "index.js": {
-      "includeFiles": "src/planner/**"
+      "includeFiles": "src/**"
     }
   }
 }
