@@ -71,6 +71,9 @@ function createApp({ database, sessionSecret }) {
     req.user = person;
     // Renewed on every use, so the browser's cap on a cookie's life
     // (400 days in Chrome) never signs out a person who keeps using the app.
+    // Known limitation (PR #79 review): a slow request that began before a
+    // password change can put back the older cookie, which is then refused,
+    // so the person signs in again. It lets no one in.
     signInHere(res, person);
     if (person.password_temporary && !TEMPORARY_OPEN.has(`${req.method} ${req.path}`)) {
       if (wantsPage(req)) return res.redirect(302, '/password');
@@ -104,9 +107,12 @@ function createApp({ database, sessionSecret }) {
     res.json({ ok: true });
   }));
 
+  // The cookie is cleared first, so this computer is signed out even when the
+  // save that signs out the other computers fails (PR #79 review). The page
+  // tells the person when that happens.
   app.post('/api/sign-out', catchAsync(async (req, res) => {
-    await database.save('sign_out', [req.user.id]);
     res.set('Set-Cookie', clearedCookie());
+    await database.save('sign_out', [req.user.id]);
     res.json({ ok: true });
   }));
 

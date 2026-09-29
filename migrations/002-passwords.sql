@@ -143,7 +143,11 @@ $$;
 -- The app has already checked the current password; this stores the new hash
 -- and signs the person out everywhere else (the app gives this computer a new
 -- cookie). The hash stays out of the log and the retry request.
-CREATE FUNCTION inv.change_password(p_actor bigint, p_key uuid, p_password_hash text)
+-- p_session_stamp is the password time the session cookie carries. If the
+-- password changed after the app checked the session (an admin's reset, for
+-- example), the change is refused, so the older session cannot undo the reset
+-- (PR #79 review).
+CREATE FUNCTION inv.change_password(p_actor bigint, p_key uuid, p_session_stamp text, p_password_hash text)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
@@ -156,6 +160,10 @@ BEGIN
   a := inv.claim_action(p_actor, p_key, 'change password', 'users', p_actor,
                         pg_catalog.jsonb_build_object());
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  IF (SELECT (EXTRACT(epoch FROM password_changed_at) * 1000000)::bigint::text
+        FROM inv.users WHERE id = p_actor) IS DISTINCT FROM p_session_stamp THEN
+    RAISE EXCEPTION 'Your password was changed somewhere else. Sign in again.' USING ERRCODE = 'IV422';
+  END IF;
   PERFORM inv.check_password_hash(p_password_hash);
   UPDATE inv.users
      SET password_hash = p_password_hash, password_temporary = false,
@@ -257,7 +265,7 @@ $$;
 -- trimming rule it was stored with.
 GRANT EXECUTE ON FUNCTION inv.add_user(bigint, uuid, text, text, text) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.set_password(bigint, uuid, bigint, text) TO inv_app;
-GRANT EXECUTE ON FUNCTION inv.change_password(bigint, uuid, text) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.change_password(bigint, uuid, text, text) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.record_password_check(bigint, boolean, boolean) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.sign_out(bigint) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.tidy(text) TO inv_app;

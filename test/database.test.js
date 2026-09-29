@@ -514,3 +514,23 @@ test('a function added after migration 001 can be run by no login', async () => 
       refused(c.query('SELECT inv.later_fn()'), '42501', `${login} running a later function`));
   }
 });
+
+// The time of the latest password change, as the session cookie carries it.
+async function passwordStamp(db, id) {
+  return as(db, null, async (owner) => (await owner.query(
+    'SELECT (EXTRACT(epoch FROM password_changed_at) * 1000000)::bigint::text AS stamp FROM inv.users WHERE id = $1',
+    [id])).rows[0].stamp);
+}
+
+// PR #79 review, finding 2: an admin's reset between the app's check of the
+// session and the save must win, not be overwritten by the older session.
+test('a password change from a session older than the latest password change is refused', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const before = await passwordStamp(db, ann.id);
+  await call(db, 'set_password', ann.id, crypto.randomUUID(), ann.id, 'an admin reset');
+  await refused(call(db, 'change_password', ann.id, crypto.randomUUID(), before, HASH),
+    'IV422', 'a change from the session before the reset');
+  const done = await call(db, 'change_password', ann.id, crypto.randomUUID(), await passwordStamp(db, ann.id), HASH);
+  assert.equal(done.id, ann.id);
+});

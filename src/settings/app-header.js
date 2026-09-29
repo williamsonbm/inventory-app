@@ -41,8 +41,21 @@ window.AppHeader = (() => {
     el('user-name').textContent = body.user.name;
     return body.user;
   });
+  // The server clears this computer's cookie even when it cannot record the
+  // sign-out; then the person is told that other computers may still be
+  // signed in, instead of being sent on as if all went well.
+  // A request that never arrived cleared nothing, so that case stays here.
   el('sign-out').addEventListener('click', async () => {
-    await fetch('/api/sign-out', { method: 'POST' }).catch(() => {});
+    const res = await fetch('/api/sign-out', { method: 'POST' }).catch(() => null);
+    if (!res) {
+      window.alert('Sign out did not reach the app, so this computer is still signed in. Try again.');
+      return;
+    }
+    const reply = await res.json().catch(() => ({ ok: false }));
+    if (!reply.ok) {
+      window.alert('This computer is signed out, but the app could not confirm it for your other computers. '
+        + 'If you are signed in elsewhere, sign out there too, or ask an admin to set you a temporary password.');
+    }
     location.assign('/sign-in');
   });
 

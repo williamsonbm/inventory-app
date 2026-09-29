@@ -331,3 +331,14 @@ test('a database that stops answering during sign-in gets the plain message, not
     await owner.end();
   }
 });
+
+test('a Sign out the database cannot record still signs this computer out', async () => {
+  const { base, db, cookie } = await withAdmin();
+  // The owner takes the right away, so the save of the sign-out fails.
+  await as(db, null, (owner) => owner.query('REVOKE EXECUTE ON FUNCTION inv.sign_out(bigint) FROM inv_app'));
+  const res = await post(base, '/api/sign-out', {}, cookie);
+  assert.notEqual(res.status, 200, 'the failure is reported, not hidden');
+  const cookies = res.headers.getSetCookie().filter((c) => c.startsWith('inv_session='));
+  assert.equal(cookies.length, 1);
+  assert.match(cookies[0], /^inv_session=; .*Max-Age=0/, 'this computer is signed out all the same');
+});

@@ -61,7 +61,8 @@ async function changePassword(database, person, { key, current, password }) {
     return { error: 'Too many wrong passwords. Try again in 15 minutes, or ask an admin for a temporary password.' };
   }
   if (answer !== 'right') return { error: 'The current password is wrong.' };
-  await database.save('change_password', [person.id, key, await hashPassword(password)]);
+  await database.save('change_password',
+    [person.id, key, person.password_changed_at, await hashPassword(password)]);
   return { person: await loadPerson(database, person.id) };
 }
 
