@@ -27,7 +27,11 @@ test('two hashes of one password differ, and neither contains the password', asy
 });
 
 test('a stored value that is not a hash of ours checks false, never throws', async () => {
-  for (const stored of ['', 'not a hash', 'scrypt$1$2$3$$', null]) {
+  // The last one passes every shape check, so it reaches scrypt, which refuses
+  // an N that is not a power of two.
+  const salt = Buffer.alloc(16).toString('base64');
+  const key = Buffer.alloc(32).toString('base64');
+  for (const stored of ['', 'not a hash', 'scrypt$1$2$3$$', null, `scrypt$3$8$1$${salt}$${key}`]) {
     assert.equal(await checkPassword('correct horse battery', stored), false, `stored: ${stored}`);
   }
 });
