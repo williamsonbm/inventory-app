@@ -15,7 +15,7 @@
 // concurrent requests, and a pool per request would multiply connections (#28).
 //
 // It never calls listen. Vercel owns the listener in the cloud. `npm start`
-// runs the Planner alone, with no database and no sign-in (src/planner/server.js).
+// runs the same app on this computer against a local database (src/local.js).
 const express = require('express');
 const { createApp } = require('./src/app.js');
 const { openDatabase } = require('./src/db/database.js');

@@ -5,7 +5,7 @@
   "type": "commonjs",
   "description": "Inventory app: the materials purchase planner (lumber, plates, hangers and LVL buy lists) behind individual sign-in, with Settings for users and the activity log.",
   "scripts": {
-    "start": "node src/planner/server.js",
+    "start": "node src/local.js",
     "test": "node --test"
   },
   "engines": {

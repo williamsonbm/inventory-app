@@ -186,7 +186,7 @@ const REFUSAL_STATUS = { IV400: 400, IV403: 403, IV409: 409, IV410: 409, IV422: 
 // Error shaping, applied once for the whole app: every failure leaves as
 // { ok: false, error }. Fixed text only, except a database refusal written
 // for people: an error's own message can carry SQL or a request body.
-// The Planner keeps its own jsonError for `npm start`; its failures stop there.
+// The Planner keeps its own jsonError, for running it alone; its failures stop there.
 function appError(err, req, res, next) {
   if (res.headersSent) return next(err);
   if (err.type in BODY_ERROR_MESSAGES) {

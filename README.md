@@ -52,10 +52,21 @@ Under the `claude-pod` alias both sit at `/workspace/`; elsewhere the path diffe
 
 ```sh
 npm install
-npm start      # the Planner alone: node src/planner/server.js, no database, no sign-in
-pg-test-up     # in the pod: start the test Postgres (TEST_DATABASE_URL)
-npm test       # node --test; the database and whole-app tests need the test Postgres
+npm start      # the whole app at http://127.0.0.1:3000, on a local practice database (inv_local)
+npm test       # node --test; needs a Postgres too (TEST_DATABASE_URL)
 ```
+
+Both need a Postgres 17. In the pod, run `pg-test-up`. On your own computer, start one in a
+container once; it keeps its data until you remove it:
+
+```sh
+podman run -d --name inv-postgres -p 127.0.0.1:5432:5432 \
+  -e POSTGRES_HOST_AUTH_METHOD=trust -v inv-postgres:/var/lib/postgresql/data docker.io/library/postgres:17
+podman start inv-postgres   # after a restart of the computer
+```
+
+The first `npm start` prints the command that adds you as the first admin. The local database
+is for trying the app by hand; the deployed app uses Supabase (`docs/runbook.md`).
 
 Node 22.x. Runtime dependencies: Express, `pg` and `@vercel/functions` (#77).
 

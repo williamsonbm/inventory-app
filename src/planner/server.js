@@ -1,6 +1,7 @@
 // =============================================================
 // planner/server.js — the DB-FREE entry point.
-// Run with: npm start   →  http://127.0.0.1:3000
+// Run alone with: node src/planner/server.js  →  http://127.0.0.1:3000
+// (npm start runs the whole app instead: src/local.js)
 // =============================================================
 // A purchase planner for four material families — plates, hangers, LVL and
 // lumber. Drop in one or more MiTek "Material Summary" CSVs and get back the
