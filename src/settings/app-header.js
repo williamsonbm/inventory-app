@@ -51,8 +51,10 @@ window.AppHeader = (() => {
       window.alert('Sign out did not reach the app, so this computer is still signed in. Try again.');
       return;
     }
+    // A 401 means this session had already ended (signed out in another tab,
+    // or the person was removed): nothing is left to sign out, so no warning.
     const reply = await res.json().catch(() => ({ ok: false }));
-    if (!reply.ok) {
+    if (!reply.ok && res.status !== 401) {
       window.alert('This computer is signed out, but the app could not confirm it for your other computers. '
         + 'If you are signed in elsewhere, sign out there too, or ask an admin to set you a temporary password.');
     }
