@@ -90,7 +90,7 @@ That signs them out on every computer.
 
 ## Someone forgot their password
 
-An admin opens Settings → Users, clicks **Set temporary password** on the person's row, and
+An admin opens Settings → Users, clicks **Reset password** on the person's row, and
 tells them the temporary password in person. It also lifts a lock from wrong guesses. At their
 next sign-in they choose their own.
 

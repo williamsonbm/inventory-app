@@ -39,7 +39,7 @@
   <nav class="appbar-nav appbar-tasks" aria-label="Tasks"><a href="/settings/users" class="here" aria-current="page">Users</a><a href="/settings/activity">Activity log</a><a href="/password">Your password</a></nav>
 </header>
 
-<div class="wrap">
+<div class="wrap wide">
   <div id="message" role="status"></div>
 
   <form id="add" class="row" hidden>
@@ -49,10 +49,10 @@
     <button id="add-btn">Add person</button>
   </form>
 
-  <table>
+  <div class="tw"><table class="one-line">
     <thead><tr><th>Name</th><th>Email address</th><th>Active</th><th>Admin</th><th>Last signed in</th><th class="admin-only" hidden></th></tr></thead>
     <tbody id="rows"></tbody>
-  </table>
+  </table></div>
   <p class="sub">An admin sets a temporary password and tells the person in person. At their next sign-in they choose their own.</p>
 </div>
 
@@ -117,8 +117,8 @@
       '<td>' + (u.active ? 'Yes' : 'Removed') + '</td><td>' + (u.admin ? 'Yes' : '') + '</td>' +
       '<td>' + esc(showTime(u.last_signed_in_at)) + '</td>' +
       (me.admin ? '<td>' +
-        '<button type="button" class="ghost" data-do="rename">Change name</button>' +
-        '<button type="button" class="ghost" data-do="password">Set temporary password</button>' +
+        '<button type="button" class="ghost" data-do="rename">Rename</button>' +
+        '<button type="button" class="ghost" data-do="password">Reset password</button>' +
         (u.admin ? '<button type="button" class="ghost" data-do="revoke">Remove admin</button>'
                  : '<button type="button" class="ghost" data-do="grant">Make admin</button>') +
         (u.active ? '<button type="button" class="ghost" data-do="remove">Remove</button>'
@@ -127,7 +127,7 @@
       '</tr>').join('');
   }
 
-  // Change name and Set temporary password open a small form in the row.
+  // Rename and Reset password open a small form in the row.
   function rowForm(tr, label, type, onSave) {
     const cell = tr.lastElementChild;
     cell.innerHTML = '<input type="' + type + '" aria-label="' + esc(label) + '" placeholder="' + esc(label) + '"> ' +
