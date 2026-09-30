@@ -22,8 +22,15 @@ Steps 1 to 4 were done on 2026-09-29 for migration 001: Postgres is in the pod i
 Supabase project exists, migration 001 is applied, and the three logins have passwords.
 
 1. **Postgres in the pod image.** Done.
-2. **The Supabase project** on the $25 plan, East US (North Virginia), with "Enable Data API"
+2. **The Supabase project** in East US (North Virginia), with "Enable Data API"
    and "Automatically expose new tables" off, and "Enable automatic RLS" off. Done.
+
+   **It is on the Free plan for now** (owner, 2026-09-30), not the $25 Pro plan that
+   `docs/database-design.md` (Q10) plans for go-live. Supabase's pricing page, checked
+   2026-09-30, gives the Free plan's limits: "Free projects are paused after 1 week of
+   inactivity", automatic backups "Not included", and a "Limit of 2 active projects". A
+   paused project stops answering, so sign-in fails until it is restored from the
+   dashboard. Move to Pro before go-live.
 3. **Run the migrations.** It applies only the files the database does not have yet, each in
    its own transaction.
 
