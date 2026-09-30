@@ -73,4 +73,44 @@ async function as(database, user, fn) {
   }
 }
 
-module.exports = { urlFor, connect, freshDatabase, as };
+// The database stores a password hash and never reads it, so any non-empty
+// text stands in for one here. The app's own hashing is in password.test.js.
+const HASH = 'a stand-in for a password hash';
+
+// Adds the first person as the owner and returns them, so a test can act as them.
+async function firstUser(db) {
+  return as(db, null, async (owner) => {
+    const { rows: [{ person }] } = await owner.query(
+      'SELECT inv.add_first_user($1, $2, $3) AS person', [' Ann@Example.com ', ' Ann Lee ', HASH]);
+    return person;
+  });
+}
+
+const APP = 'inv_app';
+
+// Calls one of the app's functions as the app's login and returns its answer.
+async function call(db, fn, ...args) {
+  return as(db, APP, async (app) => {
+    const params = args.map((_, i) => `$${i + 1}`).join(', ');
+    const { rows: [{ result }] } = await app.query(`SELECT inv.${fn}(${params}) AS result`, args);
+    return result;
+  });
+}
+
+async function logRows(db) {
+  return as(db, APP, async (app) =>
+    (await app.query('SELECT * FROM inv.activity_log ORDER BY id')).rows);
+}
+
+// Asserts that `promise` is refused with the SQLSTATE `code`, and returns the error.
+async function refused(promise, code, label) {
+  const err = await promise.then(
+    () => assert.fail(`${label}: expected a refusal with ${code}, but it succeeded`),
+    (e) => e);
+  assert.equal(err.code, code, `${label}: ${err.message}`);
+  return err;
+}
+
+module.exports = {
+  urlFor, connect, freshDatabase, as, HASH, APP, firstUser, call, logRows, refused,
+};
