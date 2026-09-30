@@ -70,10 +70,17 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    ```
 
    And in the dashboard: Settings → API shows the Data API off.
-8. **Time one password check on Vercel.** The target is under 250 ms. In the pod it measured
-   a median of 162 ms (2026-09-29). Sign in once on the deployed app and read the request's
-   duration in Vercel's logs for `POST /api/sign-in`. If it is over the target, lower `N` in
-   `src/auth/password.js`: old hashes keep working, because each hash carries its own settings.
+8. **Check that sign-in is quick on Vercel.** The password check is slow on purpose, so that a
+   stolen copy of the hashes is hard to guess; in the pod one check takes a median of 162 ms
+   (2026-09-29). Sign in once on the deployed app. If it is noticeably slow (several seconds),
+   lower `N` in `src/auth/password.js`: old hashes keep working, because each hash carries its
+   own settings. Done 2026-09-29: sign-in felt fast.
+
+   **Do not judge this by the duration in Vercel's log.** On 2026-09-29 the log showed
+   6,814 ms for `POST /api/sign-in`, but the page answered at once. The extra is about
+   5 seconds, the same as `idleTimeoutMillis` in `src/db/database.js`. Probably Vercel counts
+   the time until the idle database connections close, after the answer is sent. This is not
+   proven.
 9. **The nightly backup**: a private repository with the workflow, its secrets and the
    encryption public key, and the company drive chosen (#77, Backups). Not in this repository.
 10. **One practice restore** (below), into an empty database, before go-live.
