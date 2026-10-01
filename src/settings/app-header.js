@@ -1,12 +1,13 @@
 // app-header.js — the header every signed-in page shares (#77): the theme
 // switch, the signed-in person's name, and Sign out. Also `send`, the one way
-// a page posts a change.
+// a page posts a change, `say`, its message area, and `itemLabel`.
 //
 // Glue, NOT UNIT-TESTED: it needs a browser, and this repo has no DOM harness.
 // The routes it calls are tested in test/sign-in.test.js and
 // test/users.test.js; the header is checked by hand (#77, Testing Decisions).
 //
-// Expects #theme-btn, #user-name and #sign-out in the page. The theme itself
+// Expects #theme-btn, #user-name and #sign-out in the page, and #message
+// where it calls `say`. The theme itself
 // is set before first paint by a small inline script in each page's <head>.
 window.AppHeader = (() => {
   const el = (id) => document.getElementById(id);
@@ -80,6 +81,33 @@ window.AppHeader = (() => {
     return reply;
   }
 
+  // Shows one message in #message, or clears it when `text` is empty. A save
+  // that was not confirmed passes `retry`, which keeps its body, retry key
+  // included, so "Try again" sends the very same request and acts once.
+  function say(text, kind, retry) {
+    const box = el('message');
+    box.replaceChildren();
+    if (!text) return;
+    const note = document.createElement('div');
+    note.className = 'note ' + (kind || '');
+    note.textContent = text;
+    if (retry) {
+      const again = document.createElement('button');
+      Object.assign(again, { type: 'button', className: 'ghost', textContent: 'Try again' });
+      again.addEventListener('click', retry);
+      note.append(' ', again);
+    }
+    box.append(note);
+  }
+
+  // An item as people name it: "LUS28", "2x4 #2 16′",
+  // "2.1 RigidLam LVL 1-3/4 x 11-7/8 26′". The same words as inv.item_label.
+  function itemLabel(i) {
+    if (i.sku) return i.sku;
+    if (i.product) return `${i.product} x ${i.size} ${i.length_ft}′`;
+    return `${i.size} ${i.grade} ${i.length_ft}′`;
+  }
+
   // A time as the office clock shows it: Eastern Time with daylight saving (Q17).
   // The same zone as OFFICE_TIME_ZONE in src/settings/activity.js, which picks the days.
   const officeTime = new Intl.DateTimeFormat('en-US', {
@@ -87,5 +115,5 @@ window.AppHeader = (() => {
   });
   const showTime = (iso) => (iso ? officeTime.format(new Date(iso)) : '—');
 
-  return { me, send, showTime };
+  return { me, send, say, itemLabel, showTime };
 })();

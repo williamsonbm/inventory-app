@@ -80,7 +80,7 @@
 <script>
 (async () => {
   const { esc } = PlannerUI;
-  const { send } = AppHeader;
+  const { send, say, itemLabel } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -101,19 +101,6 @@
   let tab = null;       // the open size (lumber) or depth (LVL) tab
   let renaming = null;  // the item the rename form is for
 
-  function say(text, kind, retry) {
-    el('message').innerHTML = text
-      ? '<div class="note ' + (kind || '') + '">' + esc(text) + (retry ? ' <button type="button" class="ghost" id="retry">Try again</button>' : '') + '</div>'
-      : '';
-    if (retry) el('retry').addEventListener('click', retry);
-  }
-
-  // An item as people name it: "LUS28", "2x4 #2 16′", "2.1 RigidLam LVL 1-3/4 x 11-7/8 26′".
-  function label(i) {
-    if (i.sku) return i.sku;
-    if (i.product) return i.product + ' x ' + i.size + ' ' + i.length_ft + '′';
-    return i.size + ' ' + i.grade + ' ' + i.length_ft + '′';
-  }
   const familyName = (code) => (families.find((f) => f.code === code) || { name: code }).name;
   const family = () => el('family').value;
 
@@ -129,7 +116,7 @@
   // depth, so neither repeats it in a column.
   const COL = {
     family: { head: 'Family', width: 10, sort: (i) => familyName(i.family), cell: (i) => esc(familyName(i.family)) },
-    item: { head: 'Item', width: 30, sort: (i) => label(i), cell: (i) => esc(label(i)), name: true },
+    item: { head: 'Item', width: 30, sort: (i) => itemLabel(i), cell: (i) => esc(itemLabel(i)), name: true },
     sku: { head: 'SKU', width: 30, sort: (i) => i.sku, cell: (i) => esc(i.sku), name: true },
     product: { head: 'Product', width: 26, sort: (i) => i.product, cell: (i) => esc(i.product), name: true },
     grade: { head: 'Grade', width: 14, sort: (i) => gradeRank(i.grade), cell: (i) => esc(i.grade), name: true },
@@ -211,7 +198,7 @@
       .filter((i) => (!family() || i.family === family()) && shown.has(i.stocking) && (retired || i.active))
       .filter((i) => !v.tab || i[v.tab] === tab)
       .filter((i) => {
-        const text = (label(i) + ' ' + (i.note || '')).toLowerCase();
+        const text = (itemLabel(i) + ' ' + (i.note || '')).toLowerCase();
         return words.every((w) => text.includes(w));
       })
       .sort((a, b) => {
@@ -265,7 +252,7 @@
     const raw = e.target.value.trim();
     const value = field === 'threshold' ? (raw === '' ? null : Number(raw)) : field === 'note' ? (raw || null) : raw;
     save('/api/items/edit', { key: crypto.randomUUID(), id: item.id, version: item.version, changes: { [field]: value } },
-      (i) => label(i) + ': saved.');
+      (i) => itemLabel(i) + ': saved.');
   });
 
   el('rows').addEventListener('click', (e) => {
@@ -274,7 +261,7 @@
     const item = itemOf(e.target);
     if (what === 'rename') return openRename(item);
     save('/api/items/' + what, { key: crypto.randomUUID(), id: item.id, version: item.version },
-      (i) => label(i) + (i.active ? ' is in use again.' : ' was retired. Its history stays.'));
+      (i) => itemLabel(i) + (i.active ? ' is in use again.' : ' was retired. Its history stays.'));
   });
 
   el('head').addEventListener('click', (e) => {
@@ -336,7 +323,7 @@
     e.preventDefault();
     save('/api/items/add', { key: crypto.randomUUID(), family: el('add-family').value, identity: identityFrom(el('add-fields')) }, (i) => {
       el('add').hidden = true;
-      return label(i) + ' was added as Special Order with no threshold. Set its stocking status in its row.';
+      return itemLabel(i) + ' was added as Special Order with no threshold. Set its stocking status in its row.';
     });
   });
 
@@ -344,17 +331,17 @@
   function openRename(item) {
     renaming = item;
     el('add').hidden = true;
-    el('rename-from').textContent = label(item);
+    el('rename-from').textContent = itemLabel(item);
     el('rename-fields').innerHTML = identityInputs(item.family, item);
     el('rename').hidden = false;
   }
   el('rename-cancel').addEventListener('click', () => { el('rename').hidden = true; });
   el('rename').addEventListener('submit', (e) => {
     e.preventDefault();
-    const was = label(renaming);
+    const was = itemLabel(renaming);
     save('/api/items/rename', { key: crypto.randomUUID(), id: renaming.id, version: renaming.version, identity: identityFrom(el('rename-fields')) }, (i) => {
       el('rename').hidden = true;
-      return was + ' is now ' + label(i) + '.';
+      return was + ' is now ' + itemLabel(i) + '.';
     });
   });
 

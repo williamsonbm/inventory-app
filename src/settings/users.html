@@ -61,20 +61,11 @@
 <script>
 (async () => {
   const { esc } = PlannerUI;
-  const { send, showTime } = AppHeader;
+  const { send, say, showTime } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
   let users = [];
-
-  // One message area. A save that was not confirmed keeps its body, retry key
-  // included, so "Try again" sends the very same request and acts once.
-  function say(text, kind, retry) {
-    el('message').innerHTML = text
-      ? '<div class="note ' + (kind || '') + '">' + esc(text) + (retry ? ' <button type="button" class="ghost" id="retry">Try again</button>' : '') + '</div>'
-      : '';
-    if (retry) el('retry').addEventListener('click', retry);
-  }
 
   async function load() {
     const res = await fetch('/api/users');

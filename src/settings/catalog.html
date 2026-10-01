@@ -53,13 +53,12 @@
 <script>
 (async () => {
   const { esc } = PlannerUI;
-  const { send } = AppHeader;
+  const { send, say, itemLabel } = AppHeader;
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
 
   const input = (attrs, value) => '<input ' + attrs + ' value="' + esc(value ?? '') + '">';
   const button = (what, text) => '<button type="button" class="ghost" data-do="' + what + '">' + esc(text) + '</button>';
-  const itemLabel = (i) => i.sku || (i.product ? i.product + ' x ' + i.size + ' ' + i.length_ft + '′' : i.size + ' ' + i.grade + ' ' + i.length_ft + '′');
 
   // Each section: its title, what it loads, its add form, its table, and what
   // a click or a changed cell in a row saves. `rows` is what paint() lists;
@@ -184,13 +183,6 @@
     const body = await fetch(route).then((r) => r.json()).catch(() => ({ ok: false, error: 'This page did not load. Reload it to try again.' }));
     if (!body.ok) throw new Error(body.error);
     return body;
-  }
-
-  function say(text, kind, retry) {
-    el('message').innerHTML = text
-      ? '<div class="note ' + (kind || '') + '">' + esc(text) + (retry ? ' <button type="button" class="ghost" id="retry">Try again</button>' : '') + '</div>'
-      : '';
-    if (retry) el('retry').addEventListener('click', retry);
   }
 
   function paint() {

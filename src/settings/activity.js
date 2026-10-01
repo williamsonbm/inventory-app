@@ -54,17 +54,18 @@ async function readActivity(database, { person, action, from, to, before }) {
 }
 
 // What a change touched, in the words its screen uses, for a row that is not
-// about a person. `row` is the change's saved value (now, or was when there
-// is no now); `item` is the item a change to an item or a pack size is about.
-function targetName(table, item, row) {
-  if (table === 'items') return item ? itemLabel(item) : 'the catalog';  // the import touches many items
-  if (table === 'pack_sizes') return `${itemLabel(item)} ${row.kind}`;
-  if (table === 'suppliers') return row.name;
-  if (table === 'reasons') return row.text;
-  if (table === 'lvl_depth_thresholds') return `LVL ${row.depth}″`;
-  if (table === 'lumber_purchasable_lengths') return `${row.size} ${row.grade}`;
-  if (table === 'lumber_grade_redirects') return `${row.size} ${row.from_grade}`;
-  return null;
-}
+// about a person, by the table it changed. `row` is the change's saved value
+// (now, or was when there is no now); `item` is the item a change to an item
+// or a pack size is about.
+const TARGET_NAMES = {
+  items: (item) => (item ? itemLabel(item) : 'the catalog'),  // the import touches many items
+  pack_sizes: (item, row) => `${itemLabel(item)} ${row.kind}`,
+  suppliers: (_item, row) => row.name,
+  reasons: (_item, row) => row.text,
+  lvl_depth_thresholds: (_item, row) => `LVL ${row.depth}″`,
+  lumber_purchasable_lengths: (_item, row) => `${row.size} ${row.grade}`,
+  lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
+};
+const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
 
 module.exports = { readActivity };
