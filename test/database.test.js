@@ -268,7 +268,7 @@ test('the app runs only its granted functions; the Planner and backup logins run
   const db = await freshDatabase();
   const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'change_pack_size', 'change_password',
     'edit_item', 'grant_admin', 'reactivate_user',
-    'record_password_check', 'remove_user', 'rename_item', 'rename_supplier', 'rename_user', 'retire_item', 'retire_reason', 'revoke_admin',
+    'record_password_check', 'remove_lumber_group', 'remove_user', 'rename_item', 'rename_supplier', 'rename_user', 'retire_item', 'retire_reason', 'revoke_admin',
     'set_grade_redirect', 'set_lumber_lengths', 'set_lvl_depth_threshold', 'set_password', 'sign_out', 'tidy', 'unretire_item', 'unretire_reason'];
   const rows = await as(db, null, async (owner) => (await owner.query(`
     SELECT p.proname AS name,

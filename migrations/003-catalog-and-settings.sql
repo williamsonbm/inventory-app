@@ -204,7 +204,7 @@ INSERT INTO inv.actions (name, admin_only) VALUES ('add item', false), ('rename 
   ('add pack size', false), ('change pack size', false), ('set LVL depth threshold', false),
   ('add supplier', false), ('rename supplier', false),
   ('add reason', false), ('retire reason', false), ('un-retire reason', false),
-  ('set lumber lengths', false), ('set grade redirect', false),
+  ('set lumber lengths', false), ('set grade redirect', false), ('remove lumber group', false),
   ('import catalog', true);
 
 -- The shape every function returns for an item, and logs as was → now.
@@ -857,6 +857,43 @@ BEGIN
 END
 $$;
 
+-- Planner → Lumber: removes a size and grade added by mistake. Only a group
+-- that is not bought (no length switched on) and that no redirect names, from
+-- it or to it, so a buy list never loses a group it uses.
+CREATE FUNCTION inv.remove_lumber_group(
+  p_actor bigint, p_key uuid, p_size text, p_grade text, p_version integer)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  was inv.lumber_purchasable_lengths;
+BEGIN
+  a := inv.claim_action(p_actor, p_key, 'remove lumber group', 'lumber_purchasable_lengths', NULL,
+                        pg_catalog.jsonb_build_object('size', p_size, 'grade', p_grade, 'version', p_version));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  SELECT * INTO was FROM inv.lumber_purchasable_lengths
+   WHERE size = inv.tidy(p_size) AND grade = inv.tidy(p_grade) FOR UPDATE;
+  IF NOT FOUND OR was.version IS DISTINCT FROM p_version THEN
+    RAISE EXCEPTION 'Someone else changed % % since you opened this screen.', p_size, p_grade
+      USING ERRCODE = 'IV409', DETAIL = coalesce(inv.lumber_lengths_json(was)::text, 'null');
+  END IF;
+  IF pg_catalog.cardinality(was.lengths) > 0 THEN
+    RAISE EXCEPTION '% % has lengths switched on. Switch them off before you remove it.', was.size, was.grade
+      USING ERRCODE = 'IV422';
+  END IF;
+  IF EXISTS (SELECT FROM inv.lumber_grade_redirects r
+              WHERE r.size = was.size AND r.to_grade IS NOT NULL
+                AND (r.from_grade = was.grade OR r.to_grade = was.grade)) THEN
+    RAISE EXCEPTION 'A redirect names % %. Clear it before you remove it.', was.size, was.grade
+      USING ERRCODE = 'IV422';
+  END IF;
+  DELETE FROM inv.lumber_purchasable_lengths WHERE size = was.size AND grade = was.grade;
+  RETURN inv.finish_action(a.log_id, NULL, inv.lumber_lengths_json(was), NULL);
+END
+$$;
+
 -- Planner → Lumber → "Redirect to": p_to_grade null clears the redirect.
 -- p_version is null for a size and grade redirected for the first time.
 CREATE FUNCTION inv.set_grade_redirect(
@@ -1009,4 +1046,5 @@ GRANT EXECUTE ON FUNCTION inv.retire_reason(bigint, uuid, bigint, integer) TO in
 GRANT EXECUTE ON FUNCTION inv.unretire_reason(bigint, uuid, bigint, integer) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.set_lumber_lengths(bigint, uuid, text, text, integer, numeric[]) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.set_grade_redirect(bigint, uuid, text, text, integer, text) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.remove_lumber_group(bigint, uuid, text, text, integer) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.rename_item(bigint, uuid, bigint, integer, jsonb) TO inv_app;

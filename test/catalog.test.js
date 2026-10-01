@@ -377,3 +377,30 @@ test('a lumber group that differs from another only in capitals, or holds a "|",
   await refused(set('2x4|2x6', 'SS'), '23514', 'a size with "|"');
   await set('2x4', 'SS');
 });
+
+test('a lumber group is removed only when no length is switched on and no redirect names it', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const lengths = (size, grade, version, list) =>
+    call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), size, grade, version, list);
+  const remove = (size, grade, version) => call(db, 'remove_lumber_group', ann.id, crypto.randomUUID(), size, grade, version);
+
+  await lengths('2x4', '1650', null, []);
+  await refused(remove('2x4', '#2', 1), 'IV422', 'a group with lengths switched on');
+  await call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x4', '1650', null, 'DSS');
+  await refused(remove('2x4', '1650', 1), 'IV422', 'a group redirected to another grade');
+  await call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x4', '1650', 1, null);
+  await call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x4', '#1', null, '1650');
+  await refused(remove('2x4', '1650', 1), 'IV422', 'a group another grade is redirected to');
+  await call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x4', '#1', 1, null);
+  await refused(remove('2x4', '1650', 9), 'IV409', 'a group changed since the screen read it');
+
+  await remove('2x4', '1650', 1);
+  const left = await as(db, APP, async (app) =>
+    (await app.query("SELECT 1 FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '1650'")).rows);
+  assert.deepEqual(left, [], 'removed');
+  const last = (await logRows(db)).at(-1);
+  assert.equal(last.action, 'remove lumber group');
+  assert.deepEqual(last.old_value, { size: '2x4', grade: '1650', lengths: [], version: 1 });
+  assert.equal(last.new_value, null);
+});
