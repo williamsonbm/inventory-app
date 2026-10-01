@@ -53,6 +53,7 @@ test('the import adds the catalog, pack sizes and LVL depth thresholds, and repo
   ]);
   assert.deepEqual(report.added, { items: 378, pack_sizes: 209, lvl_depth_thresholds: 7 });
   assert.deepEqual(report.skipped, { items: 0, pack_sizes: 0, lvl_depth_thresholds: 0 });
+  assert.deepEqual(report.skipped_items, []);
 
   await as(db, APP, async (app) => {
     const one = async (sql, params) => (await app.query(sql, params)).rows;
@@ -80,7 +81,7 @@ test('the import adds the catalog, pack sizes and LVL depth thresholds, and repo
 
   const log = (await logRows(db)).at(-1);
   assert.equal(log.action, 'import catalog');
-  assert.deepEqual(log.new_value, { added: report.added, skipped: report.skipped });
+  assert.deepEqual(log.new_value, { added: report.added, skipped: report.skipped, skipped_items: [] });
 });
 
 test('a second import adds only what is new and never overwrites an edit made in the app', async () => {
@@ -94,6 +95,11 @@ test('a second import adds only what is new and never overwrites an edit made in
   const again = await importCatalog(urlFor(db), FILES, 'ann@example.com');
   assert.deepEqual(again.added, { items: 0, pack_sizes: 0, lvl_depth_thresholds: 0 });
   assert.deepEqual(again.skipped, { items: 378, pack_sizes: 209, lvl_depth_thresholds: 7 });
+  // #81 story 96: the import names each item it skipped, as people name it.
+  assert.equal(again.skipped_items.length, 378);
+  for (const label of ['LUS28', 'MT18HS 3x8', '2.1 RigidLam LVL 1-3/4 x 11-7/8 48′']) {
+    assert.ok(again.skipped_items.includes(label), `${label} is listed as skipped`);
+  }
   const [after] = await as(db, APP, async (app) =>
     (await app.query("SELECT threshold FROM inv.items WHERE sku = 'LUS28'")).rows);
   assert.equal(after.threshold, 999);

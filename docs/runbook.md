@@ -140,7 +140,8 @@ a refused row leaves nothing imported. Try it on the local practice database fir
    ```
 
 3. **Read what it printed**: how many items, pack sizes and LVL thresholds it added and skipped,
-   and a line for each thing it left out (NAILED, the per-length LVL thresholds it dropped, a
+   a line for each item it skipped because it was already in the catalog, and a line for each
+   thing it left out (NAILED, the per-length LVL thresholds it dropped, a
    Special Order SKU missing from its export). Then check a few items in Inventory → Overview.
 
 ## Sign everyone out

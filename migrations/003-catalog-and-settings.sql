@@ -50,6 +50,32 @@ CREATE TRIGGER bump_version BEFORE UPDATE OF sku, product, size, grade, length_f
   ON inv.items
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
 
+-- An item fills exactly the name fields its family lists, whatever writes the
+-- row: a family with none (EWP until step 5) holds no items. inv.new_item
+-- gives the plain message first; this is the guarantee. A trigger, not a
+-- CHECK, because the fields are data in inv.families.
+CREATE FUNCTION inv.check_item_identity() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_filled text[];
+BEGIN
+  SELECT coalesce(pg_catalog.array_agg(key ORDER BY key), '{}') INTO v_filled
+    FROM pg_catalog.jsonb_each(pg_catalog.to_jsonb(NEW))
+   WHERE key IN ('sku', 'product', 'size', 'grade', 'length_ft') AND value <> 'null';
+  IF NOT EXISTS (SELECT 1 FROM inv.families f
+                  WHERE f.code = NEW.family AND v_filled @> f.identity AND v_filled <@ f.identity) THEN
+    RAISE EXCEPTION 'A % item fills exactly its family''s name fields.', NEW.family USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_identity BEFORE INSERT OR UPDATE OF family, sku, product, size, grade, length_ft
+  ON inv.items
+  FOR EACH ROW EXECUTE FUNCTION inv.check_item_identity();
+
 -- Known pack, box, carton and pallet sizes per item (Q13), shown as a choice
 -- on receipts and counts. Each receipt and count line keeps its own copy of
 -- the size it used, so correcting a size here changes no line already saved.
@@ -122,7 +148,9 @@ INSERT INTO inv.reasons (text, built_in) VALUES
 CREATE TABLE inv.lumber_purchasable_lengths (
   size    text NOT NULL CHECK (size = inv.tidy(size) AND size <> ''),
   grade   text NOT NULL CHECK (grade = inv.tidy(grade) AND grade <> ''),
-  lengths integer[] NOT NULL,
+  -- Whole feet above 0; none means the group is not bought.
+  lengths integer[] NOT NULL
+          CHECK (0 < ALL (lengths) AND pg_catalog.array_position(lengths, NULL) IS NULL),
   version integer NOT NULL DEFAULT 1,
   PRIMARY KEY (size, grade)
 );
@@ -854,7 +882,8 @@ $$;
 -- src/db/import-catalog.js over the direct connection, never by the app: the
 -- app's login cannot run it. One save: it all succeeds or nothing changes (S21).
 -- It only adds. An item already in the catalog is skipped with its pack
--- sizes, so running it again never overwrites an edit made in the app.
+-- sizes, so running it again never overwrites an edit made in the app. It
+-- answers the counts added and skipped, and each skipped item by name (#81 story 96).
 --   p_admin_email  the admin the activity log names as the importer
 --   p_items        [{family, identity, stocking, threshold}]
 --   p_pack_sizes   [{family, identity, kind, pieces}]
@@ -871,6 +900,7 @@ DECLARE
   v inv.items;
   v_id bigint;
   v_added bigint[] := '{}';
+  v_skipped text[] := '{}';
   v_lf jsonb;
   n_items int := 0; n_packs int := 0; n_depths int := 0;
   s_items int := 0; s_packs int := 0; s_depths int := 0;
@@ -890,7 +920,7 @@ BEGIN
     VALUES (v.family, v.sku, v.product, v.size, v.grade, v.length_ft, r ->> 'stocking', (r ->> 'threshold')::integer)
     ON CONFLICT DO NOTHING
     RETURNING id INTO v_id;
-    IF v_id IS NULL THEN s_items := s_items + 1;
+    IF v_id IS NULL THEN s_items := s_items + 1; v_skipped := v_skipped || inv.item_label(v);
     ELSE n_items := n_items + 1; v_added := v_added || v_id;
     END IF;
   END LOOP;
@@ -935,7 +965,8 @@ BEGIN
 
   RETURN inv.finish_action(a.log_id, NULL, NULL, pg_catalog.jsonb_build_object(
     'added', pg_catalog.jsonb_build_object('items', n_items, 'pack_sizes', n_packs, 'lvl_depth_thresholds', n_depths),
-    'skipped', pg_catalog.jsonb_build_object('items', s_items, 'pack_sizes', s_packs, 'lvl_depth_thresholds', s_depths)));
+    'skipped', pg_catalog.jsonb_build_object('items', s_items, 'pack_sizes', s_packs, 'lvl_depth_thresholds', s_depths),
+    'skipped_items', pg_catalog.to_jsonb(v_skipped)));
 END
 $$;
 

@@ -141,7 +141,8 @@ function catalogFromFiles(files) {
 
 // Imports the catalog into the database at `url` as the owner, naming the
 // admin `adminEmail` as the importer. Returns what was added and skipped,
-// and the notes about what was left out. A refusal leaves nothing saved.
+// each skipped item by name, and the notes about what was left out. A
+// refusal leaves nothing saved.
 async function importCatalog(url, files, adminEmail) {
   const { items, packSizes, depths, notes } = catalogFromFiles(files);
   const client = new Client({ connectionString: url });
@@ -178,6 +179,7 @@ if (require.main === module) {
     (r) => {
       console.log(`Added ${r.added.items} items, ${r.added.pack_sizes} pack sizes, ${r.added.lvl_depth_thresholds} LVL depth thresholds.`);
       console.log(`Skipped (already there) ${r.skipped.items} items, ${r.skipped.pack_sizes} pack sizes, ${r.skipped.lvl_depth_thresholds} LVL depth thresholds.`);
+      for (const item of r.skipped_items) console.log(`  Skipped, already in the catalog: ${item}`);
       for (const note of r.notes) console.log(note);
     },
     (err) => {

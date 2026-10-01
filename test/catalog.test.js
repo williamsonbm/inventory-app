@@ -320,3 +320,29 @@ test('adding an item that is retired says to un-retire it instead', async () => 
   const err = await refused(call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LU24' }), 'IV400', 'a retired item');
   assert.equal(err.message, 'LU24 is in the catalog but retired; un-retire it instead.');
 });
+
+test('the database refuses an item that does not fill exactly its family\'s name fields, whatever writes it', async () => {
+  const db = await freshDatabase();
+  await as(db, null, async (owner) => {
+    const insert = (columns, values) => owner.query(
+      `INSERT INTO inv.items (${columns}) VALUES (${values.map((_, i) => `$${i + 1}`).join(', ')})`, values);
+    await refused(insert('family, sku, size', ['plates', 'MT18HS 3x8', '2x4']), '23514', 'a plate with a size');
+    await refused(insert('family, sku', ['lumber', '2x4']), '23514', 'lumber named by a SKU');
+    await refused(insert('family, size, grade', ['lumber', '2x4', '#2']), '23514', 'lumber with no length');
+    await refused(insert('family, sku', ['ewp', 'BCI 6000']), '23514', 'an EWP item before step 5');
+    await insert('family, size, grade, length_ft', ['lumber', '2x4', '#2', 8]);
+    await refused(owner.query("UPDATE inv.items SET sku = 'X' WHERE family = 'lumber'"), '23514', 'a SKU added to lumber');
+  });
+});
+
+test('the database refuses a lumber length that is not above 0, whatever writes it', async () => {
+  const db = await freshDatabase();
+  await as(db, null, async (owner) => {
+    const set = (lengths) => owner.query(
+      "UPDATE inv.lumber_purchasable_lengths SET lengths = $1 WHERE size = '2x4' AND grade = '#2'", [lengths]);
+    await refused(set([8, 0]), '23514', 'a length of 0');
+    await refused(set([-2]), '23514', 'a negative length');
+    await refused(set([8, null]), '23514', 'a blank length');
+    await set([]);
+  });
+});
