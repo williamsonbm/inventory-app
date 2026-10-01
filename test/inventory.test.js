@@ -42,12 +42,13 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
 
   const { families, items } = await read(ctx, '/api/items');
   assert.deepEqual(items, [back.body.item]);
-  // EWP stays out of Inventory until step 5, so the family filter leaves it out.
+  // EWP stays out of Inventory until step 5, so the family tabs leave it out.
+  // The web app's order, with LVL where its EWP tab is.
   assert.deepEqual(families, [
-    { code: 'plates', name: 'Plates', identity: ['sku'] },
     { code: 'hangers', name: 'Hangers', identity: ['sku'] },
-    { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'] },
+    { code: 'plates', name: 'Plates', identity: ['sku'] },
     { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'] },
+    { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'] },
   ]);
 
   // S41: a second screen still holding version 1 sees the other save.

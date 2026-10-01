@@ -18,7 +18,8 @@ function itemLabel(i) {
   return `${i.size} ${i.grade} ${i.length_ft}′`;
 }
 
-// The families Inventory holds, for the family filter and "+ Add item", and
+// The families Inventory holds, for the family tabs (in the web app's order,
+// LVL where its EWP tab is) and "+ Add item", and
 // every item. A family with no identity fields (EWP until step 5) cannot hold
 // items, so it is left out. The version rides along so a save can say which
 // version it read (S41).
@@ -27,7 +28,7 @@ async function listCatalog(database) {
     database.read(`
       SELECT code, name, identity FROM inv.families
        WHERE identity IS NOT NULL
-       ORDER BY pg_catalog.array_position(ARRAY['plates', 'hangers', 'lumber', 'lvl'], code)`),
+       ORDER BY pg_catalog.array_position(ARRAY['hangers', 'plates', 'lvl', 'lumber'], code)`),
     database.read(`
       SELECT id::int, family, sku, product, size, grade, length_ft, stocking, threshold, note, active, version
         FROM inv.items ORDER BY family, sku, product, size, grade, length_ft`),
