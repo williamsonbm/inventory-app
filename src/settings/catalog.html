@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Settings</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  catalog.html — the catalog's Settings pages (#81 part 1): Pack sizes,
+  Suppliers, Reasons and LVL thresholds. One page served at four addresses
+  (src/app.js); it shows the section its address names. Deliberately one
+  file, not four: the four differ only in their table and form, and each
+  would repeat the same header, message and save code.
+
+  Glue, NOT UNIT-TESTED: the tables need a browser, and this repo has no DOM
+  harness. Every route it calls is tested in test/inventory.test.js. The
+  layout is checked by hand (#81, Testing Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">Inventory</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users" class="here" aria-current="page">Settings</a><a href="/activity">Activity Log</a></nav>
+  <nav class="appbar-nav appbar-tasks" aria-label="Tasks" id="tasks"><a href="/settings/users">Users</a><a href="/settings/pack-sizes">Pack sizes</a><a href="/settings/suppliers">Suppliers</a><a href="/settings/reasons">Reasons</a><a href="/settings/lvl-thresholds">LVL thresholds</a><a href="/password">Your password</a></nav>
+</header>
+
+<div class="wrap wide">
+  <div id="message" role="status"></div>
+  <form id="add" class="row"></form>
+  <div class="row"><label class="field" id="search-field" hidden>Search <input id="search" type="search" autocomplete="off"></label></div>
+  <div class="tw"><table class="one-line catalog"><thead id="head"></thead><tbody id="rows"></tbody></table></div>
+  <p class="sub" id="help"></p>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+(async () => {
+  const { esc } = PlannerUI;
+  const { send } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  if (!await AppHeader.me) return;
+
+  const input = (attrs, value) => '<input ' + attrs + ' value="' + esc(value ?? '') + '">';
+  const button = (what, text) => '<button type="button" class="ghost" data-do="' + what + '">' + esc(text) + '</button>';
+  const itemLabel = (i) => i.sku || (i.product ? i.product + ' x ' + i.size + ' ' + i.length_ft + '′' : i.size + ' ' + i.grade + ' ' + i.length_ft + '′');
+
+  // Each section: its title, what it loads, its add form, its table, and what
+  // a click or a changed cell in a row saves. `rows` is what paint() lists;
+  // each row's `id` finds it again when a cell changes.
+  const SECTIONS = {
+    'pack-sizes': {
+      title: 'Pack sizes',
+      help: 'Packs, boxes, cartons and pallets, in pieces. Changing a size here changes no receipt or count already saved: each keeps the size it was entered with.',
+      async load() {
+        const [catalog, packs] = await Promise.all([get('/api/items'), get('/api/pack-sizes')]);
+        this.items = catalog.items;
+        this.packs = packs.pack_sizes;
+      },
+      addForm() {
+        return '<label class="field">Item <input id="f-item" list="item-list" required autocomplete="off"></label>' +
+          '<datalist id="item-list">' + this.items.filter((i) => i.active).map((i) => '<option value="' + esc(itemLabel(i)) + '">').join('') + '</datalist>' +
+          '<label class="field">Kind <select id="f-kind"><option>pack</option><option>box</option><option>carton</option><option>pallet</option></select></label>' +
+          '<label class="field">Pieces <input id="f-pieces" type="number" min="1" step="1" required style="width:7em"></label><button>Add pack size</button>';
+      },
+      addBody() {
+        const item = this.items.find((i) => itemLabel(i) === el('f-item').value.trim());
+        if (!item) throw new Error('Pick an item from the list.');
+        return ['/api/pack-sizes/add', { item_id: item.id, kind: el('f-kind').value, pieces: Number(el('f-pieces').value) }];
+      },
+      head: '<tr><th>Item</th><th>Pack sizes, in pieces</th></tr>',
+      rows(words) {
+        const byItem = new Map();
+        for (const p of this.packs) byItem.set(p.item_id, (byItem.get(p.item_id) || []).concat(p));
+        return this.items
+          .filter((i) => byItem.has(i.id) || i.family === 'plates')
+          .filter((i) => words.every((w) => itemLabel(i).toLowerCase().includes(w)))
+          .map((i) => {
+            const packs = byItem.get(i.id) || [];
+            const cells = packs.map((p) => '<label class="field">' + esc(p.kind) + ' ' +
+              input('type="number" min="1" step="1" style="width:6em" data-pack="' + p.id + '" aria-label="' + esc(p.kind) + ' pieces"', p.pieces) + '</label>');
+            // S18: a plate with no pallet size has an unknown one, never a guess.
+            if (i.family === 'plates' && !packs.some((p) => p.kind === 'pallet')) cells.push('<span class="sub">pallet size unknown</span>');
+            return '<tr><td class="name">' + esc(itemLabel(i)) + '</td><td>' + cells.join(' ') + '</td></tr>';
+          });
+      },
+      onChange(target) {
+        const p = this.packs.find((x) => String(x.id) === target.dataset.pack);
+        return ['/api/pack-sizes/change', { id: p.id, version: p.version, pieces: Number(target.value) }];
+      },
+      saved(reply) { this.packs = upsert(this.packs, reply.pack_size, 'id'); return 'Pack size saved.'; },
+      current(row) { this.packs = upsert(this.packs, row, 'id'); },
+    },
+
+    suppliers: {
+      title: 'Suppliers',
+      help: 'Picked on each PO, so each supplier is spelled one way.',
+      async load() { this.list = (await get('/api/suppliers')).suppliers; },
+      addForm: () => '<label class="field">Name <input id="f-name" required autocomplete="off"></label><button>Add supplier</button>',
+      addBody: () => ['/api/suppliers/add', { name: el('f-name').value }],
+      head: '<tr><th>Name</th></tr>',
+      rows(words) {
+        return this.list.filter((s) => words.every((w) => s.name.toLowerCase().includes(w)))
+          .map((s) => '<tr><td>' + input('data-id="' + s.id + '" aria-label="Supplier name"', s.name) + '</td></tr>');
+      },
+      onChange(target) {
+        const s = this.list.find((x) => String(x.id) === target.dataset.id);
+        return ['/api/suppliers/rename', { id: s.id, version: s.version, name: target.value }];
+      },
+      saved(reply) { this.list = upsert(this.list, reply.supplier, 'id'); return reply.supplier.name + ' saved.'; },
+      current(row) { this.list = upsert(this.list, row, 'id'); },
+    },
+
+    reasons: {
+      title: 'Reasons',
+      help: 'Picked for a correction, an unmatched count line or a closed PO line. A reason is retired, never deleted, so old records keep it. The app itself uses the reasons marked "used by the app", so those cannot be retired.',
+      async load() { this.list = (await get('/api/reasons')).reasons; },
+      addForm: () => '<label class="field">Reason <input id="f-text" required autocomplete="off"></label><button>Add reason</button>',
+      addBody: () => ['/api/reasons/add', { text: el('f-text').value }],
+      head: '<tr><th>Reason</th><th></th></tr>',
+      rows(words) {
+        return this.list.filter((r) => words.every((w) => r.text.toLowerCase().includes(w)))
+          .map((r) => '<tr data-id="' + r.id + '"' + (r.active ? '' : ' class="sub"') + '><td>' + esc(r.text) + (r.active ? '' : ' (retired)') + '</td><td>' +
+            (r.built_in ? '<span class="sub">used by the app</span>' : button(r.active ? 'retire' : 'unretire', r.active ? 'Retire' : 'Un-retire')) + '</td></tr>');
+      },
+      onClick(what, id) {
+        const r = this.list.find((x) => String(x.id) === id);
+        return ['/api/reasons/' + what, { id: r.id, version: r.version }];
+      },
+      saved(reply) { this.list = upsert(this.list, reply.reason, 'id'); return '"' + reply.reason.text + '" saved.'; },
+      current(row) { this.list = upsert(this.list, row, 'id'); },
+    },
+
+    'lvl-thresholds': {
+      title: 'LVL thresholds',
+      help: 'LVL is reordered per depth, in linear feet (a board of 48′ is 48 linear feet). Blank means "not set"; 0 means "reorder when none are left".',
+      async load() { this.list = (await get('/api/lvl-depth-thresholds')).thresholds; },
+      head: '<tr><th>Depth</th><th>Threshold (linear feet)</th></tr>',
+      rows() {
+        return this.list.map((t) => '<tr><td>' + esc(t.depth) + '″</td><td>' +
+          input('type="number" min="0" step="1" style="width:8em" data-depth="' + esc(t.depth) + '" aria-label="Threshold for ' + esc(t.depth) + '"', t.threshold_lf) + '</td></tr>');
+      },
+      onChange(target) {
+        const t = this.list.find((x) => x.depth === target.dataset.depth);
+        return ['/api/lvl-depth-thresholds/set', {
+          depth: t.depth, version: t.version, threshold_lf: target.value.trim() === '' ? null : Number(target.value),
+        }];
+      },
+      saved(reply) { this.list = upsert(this.list, reply.threshold, 'depth'); return reply.threshold.depth + '″ threshold saved.'; },
+      current(row) { this.list = upsert(this.list, row, 'depth'); },
+    },
+  };
+
+  const name = location.pathname.split('/').pop();
+  const section = SECTIONS[name];
+  document.title = section.title + ' · Settings';
+  for (const a of el('tasks').children) {
+    if (a.getAttribute('href') === location.pathname) { a.className = 'here'; a.setAttribute('aria-current', 'page'); }
+  }
+  el('help').textContent = section.help;
+  el('head').innerHTML = section.head;
+  el('search-field').hidden = !['pack-sizes', 'suppliers', 'reasons'].includes(name);
+
+  function upsert(list, row, key) {
+    return list.some((x) => x[key] === row[key]) ? list.map((x) => (x[key] === row[key] ? row : x)) : list.concat(row);
+  }
+  async function get(route) {
+    const body = await fetch(route).then((r) => r.json()).catch(() => ({ ok: false, error: 'This page did not load. Reload it to try again.' }));
+    if (!body.ok) throw new Error(body.error);
+    return body;
+  }
+
+  function say(text, kind, retry) {
+    el('message').innerHTML = text
+      ? '<div class="note ' + (kind || '') + '">' + esc(text) + (retry ? ' <button type="button" class="ghost" id="retry">Try again</button>' : '') + '</div>'
+      : '';
+    if (retry) el('retry').addEventListener('click', retry);
+  }
+
+  function paint() {
+    const words = el('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    el('rows').innerHTML = section.rows(words).join('');
+  }
+
+  // Runs one change. On a stale save, the refusal carries the current row,
+  // and the table shows it, so the other person's change is visible, never lost.
+  async function save([route, body], done) {
+    say('');
+    const sent = { key: crypto.randomUUID(), ...body };
+    const attempt = async () => {
+      try {
+        say(section.saved(await send(route, sent)), 'ok');
+        if (done) done();
+      } catch (err) {
+        if (err.current) section.current(err.current);
+        say(err.message, 'bad', err.unconfirmed ? attempt : null);
+      }
+      paint();
+    };
+    await attempt();
+  }
+
+  el('rows').addEventListener('change', (e) => { if (section.onChange) save(section.onChange(e.target)); });
+  el('rows').addEventListener('click', (e) => {
+    const what = e.target.dataset && e.target.dataset.do;
+    if (what) save(section.onClick(what, e.target.closest('tr').dataset.id));
+  });
+  el('search').addEventListener('input', paint);
+  el('add').addEventListener('submit', (e) => {
+    e.preventDefault();
+    try {
+      save(section.addBody(), () => el('add').reset());
+    } catch (err) {
+      say(err.message, 'bad');
+    }
+  });
+
+  try {
+    await section.load();
+  } catch (err) {
+    return say(err.message, 'bad');
+  }
+  if (section.addForm) el('add').innerHTML = section.addForm(); else el('add').hidden = true;
+  paint();
+})();
+</script>
+</body>
+</html>

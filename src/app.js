@@ -16,6 +16,10 @@ const { readSession, sessionCookie, clearedCookie, checkSecret } = require('./au
 const { signIn, loadPerson, changePassword } = require('./auth/sign-in.js');
 const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js');
 const { readActivity } = require('./settings/activity.js');
+const {
+  listCatalog, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
+} = require('./inventory/catalog.js');
+const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
 // The exact open list: the sign-in page (its script and style are inline, so
 // it needs no other address) and the sign-in route.
@@ -30,12 +34,19 @@ const TEMPORARY_OPEN = new Set([
 ]);
 
 // The signed-in pages and script this file serves, each by an explicit route
-// (never express.static; see src/planner/server.js).
-const SETTINGS_FILES = {
-  '/settings/users': ['users.html', 'text/html'],
-  '/settings/activity': ['activity.html', 'text/html'],
-  '/password': ['password.html', 'text/html'],
-  '/app-header.js': ['app-header.js', 'application/javascript'],
+// (never express.static; see src/planner/server.js). Paths are from src/.
+// The four catalog Settings pages are one file, which shows the section its
+// address names.
+const PAGE_FILES = {
+  '/inventory': ['inventory/overview.html', 'text/html'],
+  '/settings/users': ['settings/users.html', 'text/html'],
+  '/settings/pack-sizes': ['settings/catalog.html', 'text/html'],
+  '/settings/suppliers': ['settings/catalog.html', 'text/html'],
+  '/settings/reasons': ['settings/catalog.html', 'text/html'],
+  '/settings/lvl-thresholds': ['settings/catalog.html', 'text/html'],
+  '/activity': ['settings/activity.html', 'text/html'],
+  '/password': ['settings/password.html', 'text/html'],
+  '/app-header.js': ['settings/app-header.js', 'application/javascript'],
 };
 
 // Express 4 does not catch a rejected promise: without this, an async
@@ -95,8 +106,8 @@ function createApp({ database, sessionSecret }) {
     res.json({ ok: true, next: pathOnThisSite(req.body.next) });
   }));
 
-  for (const [route, [file, type]] of Object.entries(SETTINGS_FILES)) {
-    app.get(route, (_req, res) => res.type(type).sendFile(path.join(__dirname, 'settings', file)));
+  for (const [route, [file, type]] of Object.entries(PAGE_FILES)) {
+    app.get(route, (_req, res) => res.type(type).sendFile(path.join(__dirname, file)));
   }
 
   // Settings → Your password, and "choose your password" after a temporary one.
@@ -130,7 +141,23 @@ function createApp({ database, sessionSecret }) {
     }));
   }
 
-  // Settings → Activity log. Everyone can read it.
+  // Inventory → Overview and the catalog's Settings. Everyone reads and
+  // changes them (#81, "Admin-only actions").
+  app.get('/api/items', catchAsync(async (_req, res) => {
+    res.json({ ok: true, ...await listCatalog(database) });
+  }));
+  for (const route of Object.keys(SETTINGS_LISTS)) {
+    app.get(route, catchAsync(async (_req, res) => {
+      res.json({ ok: true, ...await listSettings(database, route) });
+    }));
+  }
+  for (const route of Object.keys(CATALOG_CHANGES)) {
+    app.post(route, catchAsync(async (req, res) => {
+      res.json({ ok: true, ...await saveCatalogChange(database, req.user, route, req.body || {}) });
+    }));
+  }
+
+  // The Activity Log, its own mode (owner, 2026-10-01). Everyone can read it.
   app.get('/api/activity', catchAsync(async (req, res) => {
     const { error, ...page } = await readActivity(database, req.query);
     if (error) return res.status(400).json({ ok: false, error });
@@ -142,6 +169,22 @@ function createApp({ database, sessionSecret }) {
     const { name, admin, password_temporary: passwordTemporary } = req.user;
     res.json({ ok: true, user: { name, admin, passwordTemporary } });
   });
+
+  // The Planner's lumber buying options come from the database, shared by
+  // every computer (S37). The menu route answers ahead of the Planner's own,
+  // which serves only the engine's default. A lumber plan always runs with
+  // the shared options: whatever menu or redirects the request carries are
+  // replaced here, so an old page's own copy cannot change a buy list.
+  // Deliberately here and not in src/planner/server.js: the Planner module
+  // reaches no database (test/port-guards.test.js).
+  app.get('/api/lumber/menu', catchAsync(async (_req, res) => {
+    res.json({ ok: true, ...await readLumberOptions(database), gradeOrder: GRADE_STRENGTH_ORDER });
+  }));
+  app.post('/api/lumber/plan', catchAsync(async (req, _res, next) => {
+    const { menu, redirects } = await readLumberOptions(database);
+    Object.assign(req.body, { menu, redirects });
+    next();
+  }));
 
   app.use(planner);
   // An API address nobody registered answers JSON, like every other refusal.

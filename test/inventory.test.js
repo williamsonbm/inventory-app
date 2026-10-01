@@ -1,0 +1,152 @@
+// =============================================================
+// inventory.test.js — the catalog and its Settings, over HTTP (#81 part 1, seam 3).
+// Run with: pg-test-up, then npm test  (node --test)
+// =============================================================
+// Boots the whole app against a fresh database, signs in as the first admin,
+// and uses the app's own routes. What the database refuses on its own is in
+// catalog.test.js; that every route refuses a signed-out request is in
+// sign-in.test.js's sweep.
+// =============================================================
+
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+
+const { get, post, withAdmin } = require('./support/app.js');
+
+// Posts one change as the signed-in admin and returns the status and parsed answer.
+async function change(ctx, route, body) {
+  const res = await post(ctx.base, route, { key: crypto.randomUUID(), ...body }, ctx.cookie);
+  return { status: res.status, body: await res.json() };
+}
+
+async function read(ctx, route) {
+  const res = await get(ctx.base, route, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  return res.json();
+}
+
+test('the Overview lists the catalog, and its cells add, edit and retire items', async () => {
+  const ctx = await withAdmin();
+  const added = await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } });
+  assert.equal(added.status, 200, added.body.error);
+  const item = added.body.item;
+  assert.equal(item.stocking, 'Special Order');
+
+  const edited = await change(ctx, '/api/items/edit', { id: item.id, version: 1, changes: { stocking: 'Stocked', threshold: 40 } });
+  assert.deepEqual(edited.body.item, { ...item, stocking: 'Stocked', threshold: 40, version: 2 });
+  const retired = await change(ctx, '/api/items/retire', { id: item.id, version: 2 });
+  assert.equal(retired.body.item.active, false);
+  const back = await change(ctx, '/api/items/unretire', { id: item.id, version: 3 });
+  assert.equal(back.body.item.active, true);
+
+  const { families, items } = await read(ctx, '/api/items');
+  assert.deepEqual(items, [back.body.item]);
+  // EWP stays out of Inventory until step 5, so the family filter leaves it out.
+  assert.deepEqual(families, [
+    { code: 'plates', name: 'Plates', identity: ['sku'] },
+    { code: 'hangers', name: 'Hangers', identity: ['sku'] },
+    { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'] },
+    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'] },
+  ]);
+
+  // S41: a second screen still holding version 1 sees the other save.
+  const stale = await change(ctx, '/api/items/edit', { id: item.id, version: 1, changes: { note: 'x' } });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(stale.body.current, back.body.item);
+  const blank = await change(ctx, '/api/items/add', { family: 'plates', identity: { sku: ' ' } });
+  assert.equal(blank.status, 400);
+  assert.match(blank.body.error, /Plates items are named by: sku/);
+});
+
+test('Settings lists and changes pack sizes, suppliers, reasons and LVL depth thresholds', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  await change(ctx, '/api/items/add', { family: 'lvl', identity: { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 } });
+
+  const carton = (await change(ctx, '/api/pack-sizes/add', { item_id: hanger.id, kind: 'carton', pieces: 50 })).body.pack_size;
+  const fixed = (await change(ctx, '/api/pack-sizes/change', { id: carton.id, version: 1, pieces: 25 })).body.pack_size;
+  assert.equal(fixed.pieces, 25);
+  assert.deepEqual((await read(ctx, '/api/pack-sizes')).pack_sizes, [fixed]);
+
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Boise Cascade' })).body.supplier;
+  const renamed = (await change(ctx, '/api/suppliers/rename', { id: supplier.id, version: 1, name: 'Boise Cascade BMD' })).body.supplier;
+  assert.deepEqual((await read(ctx, '/api/suppliers')).suppliers, [renamed]);
+
+  const reason = (await change(ctx, '/api/reasons/add', { text: 'Miscounted' })).body.reason;
+  const retired = (await change(ctx, '/api/reasons/retire', { id: reason.id, version: 1 })).body.reason;
+  const back = (await change(ctx, '/api/reasons/unretire', { id: reason.id, version: 2 })).body.reason;
+  assert.equal(retired.active, false);
+  const { reasons } = await read(ctx, '/api/reasons');
+  assert.equal(reasons.length, 6, 'the five built in, and Miscounted');
+  assert.deepEqual(reasons.find((r) => r.id === reason.id), back);
+
+  const depth = (await change(ctx, '/api/lvl-depth-thresholds/set', { depth: '14', version: null, threshold_lf: 720 })).body.threshold;
+  assert.deepEqual(depth, { depth: '14', threshold_lf: 720, version: 1 });
+  // Every depth an LVL item has is listed, with or without a threshold yet.
+  assert.deepEqual((await read(ctx, '/api/lvl-depth-thresholds')).thresholds, [depth]);
+
+  const zero = await change(ctx, '/api/pack-sizes/add', { item_id: hanger.id, kind: 'box', pieces: 0 });
+  assert.equal(zero.status, 400);
+});
+
+// A made-up material sheet: ten 2x4 #2 at 8′ and three 2x6 #2 at 12′.
+const LUMBER_SHEET = `Material Summary,Sample Truss Co,,,
+Quote Date:,4/16/2026,Job Number:,50001R,
+Order Date:,5/20/2026,Product:,Roof,
+Delivery Date:,6/24/2026,,,
+Job Name:,Lot 50 Sample A,Delivery Area,,
+LUMBER SUMMARY,,,,,,,,,,
+SKU,Qty,LENGTH,MATERIAL NAME,USAGE,SQ. FEET,LINEAL FEET,BOARD FOOT,COST,COST PER,TOTAL
+,,,False,,,,,,,
+2x4sp2,10,8-00-00,2x4 SP No.2,Regular,,80.00,53.30,,,
+2x4sp2,10,,,,,80.00,,,,
+,,,False,,,,,,,
+2x6sp2,3,12-00-00,2x6 SP No.2,Regular,,36.00,,,,
+2x6sp2,3,,,,,36.00,,,,
+`;
+
+test('the Planner plans lumber with the shared buying options, never a copy the page sends', async () => {
+  const ctx = await withAdmin();
+  const before = await read(ctx, '/api/lumber/menu');
+  assert.deepEqual(before.menu['2x4|#2'], [6, 7, 8, 10, 12, 14, 16, 20], "the engine's default, from the database");
+
+  const lengths = await change(ctx, '/api/lumber/lengths',
+    { size: '2x4', grade: '#2', version: before.versions.lengths['2x4|#2'], lengths: [16] });
+  assert.equal(lengths.status, 200, lengths.body.error);
+  const redirect = await change(ctx, '/api/lumber/redirect', { size: '2x6', from_grade: '#2', version: null, to_grade: 'DSS' });
+  assert.equal(redirect.status, 200, redirect.body.error);
+  const after = await read(ctx, '/api/lumber/menu');
+  assert.deepEqual([after.menu['2x4|#2'], after.redirects], [[16], { '2x6|#2': 'DSS' }]);
+
+  // An old page still sends the menu it kept on its own computer.
+  const res = await post(ctx.base, '/api/lumber/plan', {
+    files: [{ name: 'a.csv', text: LUMBER_SHEET }], menu: { '2x4|#2': [8] }, redirects: {},
+  }, ctx.cookie);
+  const plan = await res.json();
+  assert.equal(res.status, 200, plan.error);
+  const row = (key) => plan.bySizeGrade.find((r) => r.key === key);
+  assert.deepEqual([...new Set(row('2x4|#2').draws.map((d) => d.stockLengthFt))], [16], 'cut from the shared 16′ only');
+  assert.deepEqual(row('2x6|#2').redirect, { toLabel: '2x6 DSS', lf: 36 }, 'the shared redirect applies');
+});
+
+test('the Activity Log names the item, pack size, supplier or reason each change touched', async () => {
+  const ctx = await withAdmin();
+  const item = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'BOGUS26' } })).body.item;
+  await change(ctx, '/api/pack-sizes/add', { item_id: item.id, kind: 'carton', pieces: 50 });
+  await change(ctx, '/api/suppliers/add', { name: 'Boise Cascade' });
+  await change(ctx, '/api/reasons/add', { text: 'Miscounted' });
+  await change(ctx, '/api/items/add', { family: 'lvl', identity: { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 } });
+  await change(ctx, '/api/lvl-depth-thresholds/set', { depth: '14', version: null, threshold_lf: 720 });
+  await change(ctx, '/api/lumber/lengths', { size: '2x4', grade: '#2', version: 1, lengths: [8] });
+
+  const { entries } = await read(ctx, '/api/activity');
+  assert.deepEqual(entries.slice(0, 7).map((e) => [e.action, e.target]), [
+    ['set lumber lengths', '2x4 #2'],
+    ['set LVL depth threshold', 'LVL 14″'],
+    ['add item', '2.1 RigidLam LVL 1-3/4 x 14 48′'],
+    ['add reason', 'Miscounted'],
+    ['add supplier', 'Boise Cascade'],
+    ['add pack size', 'BOGUS26 carton'],
+    ['add item', 'BOGUS26'],
+  ]);
+});

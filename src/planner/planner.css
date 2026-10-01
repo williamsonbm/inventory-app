@@ -312,3 +312,14 @@ tr.grp.non-stock td:first-child{border-left-color:var(--bad)}
   #lum-grp-table tbody{break-inside:avoid}
   .wrap{max-width:none;padding:0}
 }
+
+/* The hidden attribute always hides, even on an element a rule above gives
+   display:flex (.row): without this, a hidden form.row stays on screen. */
+[hidden]{display:none !important}
+
+/* Inventory and its Settings: cells centered on the row's boxes, and fixed
+   column widths, so the columns stay put when the family filter changes. */
+table.catalog{table-layout:fixed;width:100%}
+table.catalog td{vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+table.catalog td input:not([type="number"]){width:100%;box-sizing:border-box}
+th[data-sort]{cursor:pointer}

@@ -147,6 +147,14 @@ async function importCatalog(url, files, adminEmail) {
   const client = new Client({ connectionString: url });
   await client.connect();
   try {
+    // The database refuses anyone but an active admin too, but its message
+    // ("Only an active user can make changes") does not say the address is
+    // the problem, so the owner is told that here first.
+    const { rows } = await client.query(
+      'SELECT 1 FROM inv.users WHERE email = pg_catalog.lower(pg_catalog.btrim($1)) AND active AND admin', [adminEmail]);
+    if (!rows.length) {
+      throw Object.assign(new Error(`No active admin has the address ${adminEmail}.`), { code: 'IV403' });
+    }
     const { rows: [{ result }] } = await client.query(
       'SELECT inv.import_catalog($1, $2, $3, $4) AS result',
       [adminEmail, JSON.stringify(items), JSON.stringify(packSizes), JSON.stringify(depths)]);

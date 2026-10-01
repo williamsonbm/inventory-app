@@ -94,6 +94,36 @@ returns.
 _Avoid_: release — the job lifecycle already uses it twice (*Released from Design*, *Release to
 Shop*).
 
+## The catalog
+
+**Item**:
+One thing the catalog holds, named the way its family names things: a SKU for plates and hangers
+(MT18HS 3x8); size, grade and length for lumber (2x4 `#2` 16′); product, depth and length for LVL
+(2.1 RigidLam LVL 1-3/4 x 11-7/8, 26′). EWP items arrive with step 5.
+_Avoid_: SKU as the general word — lumber and LVL items have none; product
+_Not_: family — plates, hangers, lumber, LVL and EWP are the families an item belongs to.
+
+**Pack size**:
+A known number of pieces in one pack, box, carton or pallet of an item. *Carton* is Simpson's word
+for a hanger pack. A receipt or count line keeps its own copy of the size it used, so correcting a
+pack size changes no line already saved. A plate with no pallet size listed has an unknown one.
+_Avoid_: pack factor, unit
+
+**LVL threshold**:
+The reorder threshold for one LVL depth, in linear feet. An LVL item has no threshold of its own.
+_Avoid_: LVL item threshold
+
+**Reason**:
+Why a correction, an unmatched count line or a closed PO line happened, picked from the list in
+Settings → Reasons. The reasons the app relies on cannot be retired.
+_Avoid_: note — a note is free text; a reason is picked from the list.
+
+**Retire**:
+Take an item or a reason out of use without deleting it. Its history stays, and *un-retire* brings
+it back.
+_Avoid_: delete, archive, deactivate
+_Not_: remove — a person is removed, not retired.
+
 ## Counting and reorder
 
 **Monthly count**:

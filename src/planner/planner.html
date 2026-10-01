@@ -44,7 +44,7 @@
   </div>
   <!-- Planner and Settings until Jobs and Inventory ship (spec #72): no tab
        leads nowhere. The Planner has no tasks yet, so no task row. -->
-  <nav class="appbar-nav" aria-label="Modes"><a href="/" class="here" aria-current="page">Planner</a><a href="/settings/users">Settings</a></nav>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/" class="here" aria-current="page">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
   <div class="appbar-filter">
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"></div>
@@ -178,11 +178,10 @@
     parts.busy.hidden = files.isEmpty();
     if (files.isEmpty()) return;
     try {
-      const options = section.planOptions ? await section.planOptions() : {};
       const res = await fetch(section.route, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ files: jobFiles, stock: files.getOnHand(family), ...options }),
+        body: JSON.stringify({ files: jobFiles, stock: files.getOnHand(family) }),
       });
       const data = await res.json();
       if (run !== runs[family]) return;

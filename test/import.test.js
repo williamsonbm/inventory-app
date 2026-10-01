@@ -109,7 +109,8 @@ test('one bad row saves nothing, and only an active admin can be named as the im
   fs.writeFileSync(bad, 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted\nLUS28,0,0,0,0,-5,,\n');
   await refused(importCatalog(urlFor(db), { ...FILES, hangers: bad }, 'ann@example.com'), 'IV400', 'a negative threshold');
   await refused(importCatalog(urlFor(db), FILES, 'bob@example.com'), 'IV403', 'a person who is not an admin');
-  await refused(importCatalog(urlFor(db), FILES, 'nobody@example.com'), 'IV403', 'an address not on the list');
+  const err = await refused(importCatalog(urlFor(db), FILES, 'you@example.com'), 'IV403', 'an address not on the list');
+  assert.equal(err.message, 'No active admin has the address you@example.com.');
   assert.deepEqual(await counts(db), [], 'nothing was saved');
 });
 

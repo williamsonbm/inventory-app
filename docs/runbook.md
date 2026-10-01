@@ -92,6 +92,57 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    encryption public key, and the company drive chosen (#77, Backups). Not in this repository.
 10. **One practice restore** (below), into an empty database, before go-live.
 
+## Import the catalog
+
+The one-time import of the web app's items, thresholds, stocking statuses and pack sizes (#81
+part 1). It only adds: an item already in the catalog is skipped with its pack sizes, so a
+second run changes nothing and never overwrites an edit made in the app. It is one save:
+a refused row leaves nothing imported. Try it on the local practice database first
+(`DIRECT_DATABASE_URL=postgres://postgres@127.0.0.1:5432/inv_local`).
+
+1. **Get the files.** Keep them outside the repository.
+   - From the web app's screens, the on-hand export of plates, hangers and lumber, and the EWP
+     export with "hide non-stocked" **unticked** (with it ticked, the export is empty). Only the
+     LVL rows of the EWP export are read.
+   - `special-order.csv`, from the web app's read-only login. The schema names are those in the
+     web app's own schema files; check them before you run it.
+
+     ```sql
+     SELECT 'plates' AS family, sku_display AS sku FROM plates_dev.plate_special_order_sku WHERE active
+     UNION ALL
+     SELECT 'hangers', sku_display FROM hangers_dev.hanger_special_order_sku WHERE active;
+     ```
+
+   - `lvl-depth-thresholds.csv`, written by hand from the answer to
+     `SELECT depth, threshold_lf FROM ewp_lvl_depth_threshold`. The web app writes a depth as
+     `11-78`; this file writes it as on the product name, `11-7/8`. A depth with no threshold
+     (24″) has a blank value, and its LVL items become Special Order. No 22″ line: the company
+     no longer carries that depth.
+
+     ```csv
+     depth,threshold_lf
+     9-1/2,1200
+     11-7/8,960
+     14,720
+     16,720
+     18,480
+     20,480
+     24,
+     ```
+
+     These are the web app's starting values; the live ones may differ.
+2. **Run it** with the owner login over the direct connection, naming the admin the activity
+   log shows as the importer:
+
+   ```sh
+   DIRECT_DATABASE_URL="$OWNER_URL" node src/db/import-catalog.js you@example.com \
+     plates.csv hangers.csv lumber.csv ewp.csv special-order.csv lvl-depth-thresholds.csv
+   ```
+
+3. **Read what it printed**: how many items, pack sizes and LVL thresholds it added and skipped,
+   and a line for each thing it left out (NAILED, the per-length LVL thresholds it dropped, a
+   Special Order SKU missing from its export). Then check a few items in Inventory → Overview.
+
 ## Sign everyone out
 
 Sign out in the app ends that person's session on every computer, and removing a person does

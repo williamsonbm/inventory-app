@@ -1,4 +1,4 @@
-// Settings → Activity log (#77): who did what and when, newest first, a page
+// The Activity Log (#77; its own mode since #81 part 1): who did what and when, newest first, a page
 // at a time. Filters by person, by date range and by action; the family
 // filter joins in step 3.
 //
@@ -11,6 +11,8 @@
 // would also read "yesterday", and would read 06/07/2026 by the connection's
 // DateStyle setting, which a shared pooler connection does not promise.
 // A person or page of the wrong type is refused by Postgres (answered 400).
+const { itemLabel } = require('../inventory/catalog.js');
+
 const PAGE_SIZE = 50;
 const OFFICE_TIME_ZONE = 'America/New_York';  // the page shows times in the same zone (app-header.js)
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -24,11 +26,14 @@ async function readActivity(database, { person, action, from, to, before }) {
   // The list of actions (for the page's filter) does not depend on the
   // entries, so the two reads run side by side.
   const [rows, actionRows] = await Promise.all([database.read(`
-    SELECT l.id, l.at, who.name AS who, l.action, target.name AS target,
-           l.old_value AS was, l.new_value AS now
+    SELECT l.id, l.at, who.name AS who, l.action, l.target_table, target.name AS target,
+           pg_catalog.to_jsonb(item) AS item, l.old_value AS was, l.new_value AS now
       FROM inv.activity_log l
       JOIN inv.users who ON who.id = l.actor_id
       LEFT JOIN inv.users target ON l.target_table = 'users' AND target.id = l.target_id
+      LEFT JOIN inv.items item ON (l.target_table = 'items' AND item.id = l.target_id)
+        OR (l.target_table = 'pack_sizes'
+            AND item.id = (COALESCE(l.new_value, l.old_value) ->> 'item_id')::bigint)
      WHERE ($1::bigint IS NULL OR l.actor_id = $1)
        AND ($2::text IS NULL OR l.action = $2)
        AND ($3::date IS NULL OR l.at >= ($3::date)::timestamp AT TIME ZONE $6)
@@ -43,7 +48,23 @@ async function readActivity(database, { person, action, from, to, before }) {
   const page = rows.slice(0, PAGE_SIZE);
   const nextBefore = rows.length > PAGE_SIZE ? page.at(-1).id : null;
   const actions = actionRows.map((r) => r.name);
-  return { entries: page.map(({ id, ...entry }) => entry), before: nextBefore, actions };
+  const entries = page.map(({ id, target_table: table, item, target, ...entry }) =>
+    ({ ...entry, target: target ?? targetName(table, item, entry.now || entry.was) }));
+  return { entries, before: nextBefore, actions };
+}
+
+// What a change touched, in the words its screen uses, for a row that is not
+// about a person. `row` is the change's saved value (now, or was when there
+// is no now); `item` is the item a change to an item or a pack size is about.
+function targetName(table, item, row) {
+  if (table === 'items') return item ? itemLabel(item) : 'the catalog';  // the import touches many items
+  if (table === 'pack_sizes') return `${itemLabel(item)} ${row.kind}`;
+  if (table === 'suppliers') return row.name;
+  if (table === 'reasons') return row.text;
+  if (table === 'lvl_depth_thresholds') return `LVL ${row.depth}″`;
+  if (table === 'lumber_purchasable_lengths') return `${row.size} ${row.grade}`;
+  if (table === 'lumber_grade_redirects') return `${row.size} ${row.from_grade}`;
+  return null;
 }
 
 module.exports = { readActivity };

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Activity log · Settings</title>
+<title>Activity Log</title>
 <script>
   // Theme before first paint; same key and rule as the Planner's header.
   (function () {
@@ -19,7 +19,7 @@
 </head>
 <body>
 <!--
-  activity.html — Settings → Activity log (#77): who did what and when,
+  activity.html — the Activity Log (#77; its own mode since #81 part 1): who did what and when,
   newest first, a page at a time, filtered by person, action and office day.
 
   Glue, NOT UNIT-TESTED: the filters and the table need a browser, and this
@@ -34,8 +34,8 @@
     <span class="appbar-user" id="user-name"></span>
     <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
   </div>
-  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/settings/users" class="here" aria-current="page">Settings</a></nav>
-  <nav class="appbar-nav appbar-tasks" aria-label="Tasks"><a href="/settings/users">Users</a><a href="/settings/activity" class="here" aria-current="page">Activity log</a><a href="/password">Your password</a></nav>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity" class="here" aria-current="page">Activity Log</a></nav>
+  <nav class="appbar-nav appbar-tasks" aria-label="Tasks"><a href="/activity" class="here" aria-current="page">Activity Log</a></nav>
 </header>
 
 <div class="wrap">
