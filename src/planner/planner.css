@@ -63,7 +63,13 @@ a{color:var(--accent)}
 /* Settings (#77): the task row under the modes, and its forms. */
 .appbar-tasks{border-top:0;padding-top:0}
 .appbar-tasks a{font-size:13px}
+/* Settings: its tasks in labelled groups, a line between them (owner, 2026-10-01). */
+.appbar-tasks .task-group{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;
+  color:var(--muted);padding:3px 0}
+.appbar-tasks a + .task-group{border-left:1px solid var(--line-strong);padding-left:14px}
 .field{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+/* A label beside its box, several to a line: pack sizes in Settings. */
+.field.inline{display:inline-flex;flex-direction:row;align-items:center;gap:6px;margin-right:14px}
 .field input,.field select,td input{font:inherit;font-size:14px;padding:6px 9px;border:1px solid var(--line-strong);
   border-radius:6px;background:var(--card);color:var(--ink)}
 td button{padding:3px 10px;font-size:12.5px;margin:0 4px 4px 0}
