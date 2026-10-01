@@ -117,7 +117,8 @@ a refused row leaves nothing imported. Try it on the local practice database fir
      `SELECT depth, threshold_lf FROM ewp_lvl_depth_threshold`. The web app writes a depth as
      `11-78`; this file writes it as on the product name, `11-7/8`. A depth with no threshold
      (24″) has a blank value, and its LVL items become Special Order. No 22″ line: the company
-     no longer carries that depth.
+     no longer keeps that depth. The import refuses a depth that no LVL item has, and saves
+     nothing.
 
      ```csv
      depth,threshold_lf

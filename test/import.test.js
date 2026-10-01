@@ -17,13 +17,13 @@ const path = require('node:path');
 const { freshDatabase, urlFor, as, APP, firstUser, call, logRows, refused, HASH } = require('./support/database.js');
 const { importCatalog } = require('../src/db/import-catalog.js');
 
-const STOCK = path.join(__dirname, 'port-fixtures', 'stock');
+const ON_HAND_EXPORTS = path.join(__dirname, 'port-fixtures', 'stock');  // the Planner's recorded exports
 const HERE = path.join(__dirname, 'import-fixtures');
 const FILES = {
-  plates: path.join(STOCK, 'plate-stock-20260902.csv'),
-  hangers: path.join(STOCK, 'hanger-stock-20260902.csv'),
-  lumber: path.join(STOCK, 'lumber-stock-20260902.csv'),
-  ewp: path.join(HERE, 'ewp-stock-20260930.csv'),
+  plates: path.join(ON_HAND_EXPORTS, 'plate-stock-20260902.csv'),
+  hangers: path.join(ON_HAND_EXPORTS, 'hanger-stock-20260902.csv'),
+  lumber: path.join(ON_HAND_EXPORTS, 'lumber-stock-20260902.csv'),
+  ewp: path.join(HERE, 'ewp-on-hand-20260930.csv'),
   specialOrder: path.join(HERE, 'special-order.csv'),
   lvlDepthThresholds: path.join(HERE, 'lvl-depth-thresholds.csv'),
 };
@@ -117,6 +117,18 @@ test('one bad row saves nothing, and only an active admin can be named as the im
   await refused(importCatalog(urlFor(db), FILES, 'bob@example.com'), 'IV403', 'a person who is not an admin');
   const err = await refused(importCatalog(urlFor(db), FILES, 'you@example.com'), 'IV403', 'an address not on the list');
   assert.equal(err.message, 'No active admin has the address you@example.com.');
+  assert.deepEqual(await counts(db), [], 'nothing was saved');
+});
+
+test('a depth in the LVL thresholds file that no LVL item has is refused, and nothing is saved', async () => {
+  const db = await freshDatabase();
+  await firstUser(db);
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'import-'));
+  const typo = path.join(dir, 'lvl-depth-thresholds.csv');
+  fs.writeFileSync(typo, 'depth,threshold_lf\n9-1/2,1200\n11 7/8,960\n');
+  const err = await refused(importCatalog(urlFor(db), { ...FILES, lvlDepthThresholds: typo }, 'ann@example.com'),
+    'IV400', 'a depth written 11 7/8');
+  assert.match(err.message, /No LVL item has the depth "11 7\/8"/);
   assert.deepEqual(await counts(db), [], 'nothing was saved');
 });
 

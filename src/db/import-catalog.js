@@ -28,9 +28,9 @@ const { parseCsv } = require('../plates/parseCsv.js');
 const PLATE_PACKS = path.join(__dirname, '..', 'plates', 'packFactors.json');
 const HANGER_CARTONS = path.join(__dirname, '..', '..', 'data', 'hanger-cartons.csv');
 
-// The shortest LVL length carried at each depth, in feet; every 2′ length from
+// The shortest LVL length the catalog keeps at each depth, in feet; every 2′ length from
 // there to the export's longest (48′) is an item, so an offcut always has an
-// item to go back into. No 22″: no longer carried. Owner, 2026-09-30 (#81).
+// item to go back into. No 22″: the company no longer keeps that depth. Owner, 2026-09-30 (#81).
 const LVL_SHORTEST_FT = { '9-1/2': 6, '11-7/8': 6, 14: 8, 16: 8, 18: 8, 20: 12, 24: 12 };
 
 // MiTek writes NAILED for a site-nailed connection, which the company does not supply.
@@ -103,7 +103,7 @@ function catalogFromFiles(files) {
     const [product, depth, length] = [r.item.slice(0, cut), r.item.slice(cut + 3), Number(r.span)];
     const label = `LVL ${r.item} ${length}′`;
     if (!(depth in LVL_SHORTEST_FT) || length < LVL_SHORTEST_FT[depth]) {
-      if (Number(r.on_hand) > 0) notes.push(`${label} holds ${r.on_hand} but is not carried, so it was not added.`);
+      if (Number(r.on_hand) > 0) notes.push(`${label} holds ${r.on_hand} but is not a length or depth the catalog keeps, so it was not added.`);
       continue;
     }
     if (r.threshold !== '') {
@@ -115,6 +115,16 @@ function catalogFromFiles(files) {
       stocking: stockedDepths.has(depth) ? 'Stocked' : 'Special Order',
       threshold: null,
     });
+  }
+
+  // A depth that no LVL item has is a typing error in the thresholds file
+  // ("11 7/8" for "11-7/8"). Saved, it would make that depth Special Order,
+  // and a second import only adds, so it could not correct it.
+  const lvlDepths = new Set(items.filter((i) => i.family === 'lvl').map((i) => i.identity.size));
+  for (const d of depths) {
+    if (!lvlDepths.has(d.depth)) {
+      throw Object.assign(new Error(`No LVL item has the depth "${d.depth}". Check the LVL thresholds file.`), { code: 'IV400' });
+    }
   }
 
   for (const p of JSON.parse(fs.readFileSync(PLATE_PACKS, 'utf8'))) {
