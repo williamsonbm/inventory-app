@@ -41,10 +41,14 @@ CREATE TABLE inv.items (
   note      text CHECK (note = inv.tidy(note) AND note <> ''),  -- S61: e.g. weathered, kept for now
   active    boolean NOT NULL DEFAULT true,
   version   integer NOT NULL DEFAULT 1,
-  -- S19: one family never holds the same item twice; blanks count as equal.
-  UNIQUE NULLS NOT DISTINCT (family, sku, product, size, grade, length_ft),
   CHECK (family <> 'lvl' OR threshold IS NULL)
 );
+
+-- S19: one family never holds the same item twice; blanks count as equal,
+-- and so do capitals, as for suppliers and reasons: "lus28" is LUS28.
+-- inv.same_item is the same rule for a lookup.
+CREATE UNIQUE INDEX items_name_key ON inv.items (family, pg_catalog.lower(sku), pg_catalog.lower(product),
+  pg_catalog.lower(size), pg_catalog.lower(grade), length_ft) NULLS NOT DISTINCT;
 
 CREATE TRIGGER bump_version BEFORE UPDATE OF sku, product, size, grade, length_ft, stocking, threshold, note, active
   ON inv.items
@@ -144,16 +148,21 @@ INSERT INTO inv.reasons (text, built_in) VALUES
 -- The Planner's lumber buying options, shared by every computer and logged
 -- (S37), replacing each browser's own copy (lumberMenu.v1). One row per size
 -- and grade: the stock lengths the yard buys, in whole feet, ascending. An
--- empty list is a group not carried.
+-- empty list is a group not bought.
+-- The page names a group "size|grade" and splits it there, so neither part
+-- holds a "|".
 CREATE TABLE inv.lumber_purchasable_lengths (
-  size    text NOT NULL CHECK (size = inv.tidy(size) AND size <> ''),
-  grade   text NOT NULL CHECK (grade = inv.tidy(grade) AND grade <> ''),
+  size    text NOT NULL CHECK (size = inv.tidy(size) AND size <> '' AND pg_catalog.strpos(size, '|') = 0),
+  grade   text NOT NULL CHECK (grade = inv.tidy(grade) AND grade <> '' AND pg_catalog.strpos(grade, '|') = 0),
   -- Whole feet above 0; none means the group is not bought.
   lengths integer[] NOT NULL
           CHECK (0 < ALL (lengths) AND pg_catalog.array_position(lengths, NULL) IS NULL),
   version integer NOT NULL DEFAULT 1,
   PRIMARY KEY (size, grade)
 );
+-- Capitals do not make a second group, as for items: "2x4 dss" is 2x4 DSS.
+CREATE UNIQUE INDEX lumber_purchasable_lengths_name_key
+  ON inv.lumber_purchasable_lengths (pg_catalog.lower(size), pg_catalog.lower(grade));
 
 CREATE TRIGGER bump_version BEFORE UPDATE OF lengths ON inv.lumber_purchasable_lengths
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
@@ -287,6 +296,20 @@ BEGIN
 END
 $$;
 
+-- Whether two rows name the same item: the rule of items_name_key, for a
+-- lookup.
+CREATE FUNCTION inv.same_item(a inv.items, b inv.items) RETURNS boolean
+LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT a.family = b.family
+     AND pg_catalog.lower(a.sku) IS NOT DISTINCT FROM pg_catalog.lower(b.sku)
+     AND pg_catalog.lower(a.product) IS NOT DISTINCT FROM pg_catalog.lower(b.product)
+     AND pg_catalog.lower(a.size) IS NOT DISTINCT FROM pg_catalog.lower(b.size)
+     AND pg_catalog.lower(a.grade) IS NOT DISTINCT FROM pg_catalog.lower(b.grade)
+     AND a.length_ft IS NOT DISTINCT FROM b.length_ft
+$$;
+
 -- Refuses a new name that another item already has, saying whether that
 -- item is retired, so the person un-retires it rather than adding it again.
 -- Called when an insert or update of an item breaks its unique name.
@@ -295,11 +318,7 @@ LANGUAGE plpgsql STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
 BEGIN
-  IF EXISTS (SELECT FROM inv.items i
-              WHERE i.family = v.family AND NOT i.active
-                AND i.sku IS NOT DISTINCT FROM v.sku AND i.product IS NOT DISTINCT FROM v.product
-                AND i.size IS NOT DISTINCT FROM v.size AND i.grade IS NOT DISTINCT FROM v.grade
-                AND i.length_ft IS NOT DISTINCT FROM v.length_ft) THEN
+  IF EXISTS (SELECT FROM inv.items i WHERE NOT i.active AND inv.same_item(i, v)) THEN
     RAISE EXCEPTION '% is in the catalog but retired; un-retire it instead.', inv.item_label(v)
       USING ERRCODE = 'IV400';
   END IF;
@@ -335,8 +354,9 @@ $$;
 
 -- Reads and locks the item a change is about, refusing it when the item has
 -- changed since the screen read it (S41). The refusal's DETAIL is the current
--- item, so the screen can show what the other save did. A row lock, not
--- migration 001's table lock: the catalog is busy, and one item's lock is enough.
+-- item, so the screen can show what the other save did. Deliberately a row
+-- lock, not migration 001's table lock on inv.users: a table lock would make
+-- every catalog save wait for every other one, and one item's lock is enough.
 CREATE FUNCTION inv.item_at_version(p_id bigint, p_version integer) RETURNS inv.items
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp
@@ -813,6 +833,13 @@ BEGIN
       USING ERRCODE = 'IV409', DETAIL = coalesce(inv.lumber_lengths_json(was)::text, 'null');
   END IF;
   IF was.size IS NULL THEN
+    SELECT * INTO l FROM inv.lumber_purchasable_lengths
+     WHERE pg_catalog.lower(size) = pg_catalog.lower(inv.tidy(p_size))
+       AND pg_catalog.lower(grade) = pg_catalog.lower(inv.tidy(p_grade));
+    IF FOUND THEN
+      RAISE EXCEPTION '% % is already on the list as % %.', inv.tidy(p_size), inv.tidy(p_grade), l.size, l.grade
+        USING ERRCODE = 'IV400';
+    END IF;
     BEGIN
       INSERT INTO inv.lumber_purchasable_lengths (size, grade, lengths)
       VALUES (inv.tidy(p_size), inv.tidy(p_grade), v_lengths) RETURNING * INTO l;
@@ -927,10 +954,7 @@ BEGIN
 
   FOR r IN SELECT * FROM pg_catalog.jsonb_array_elements(coalesce(p_pack_sizes, '[]')) LOOP
     v := inv.new_item(r ->> 'family', r -> 'identity');
-    SELECT id INTO v_id FROM inv.items i
-     WHERE i.family = v.family AND i.sku IS NOT DISTINCT FROM v.sku AND i.product IS NOT DISTINCT FROM v.product
-       AND i.size IS NOT DISTINCT FROM v.size AND i.grade IS NOT DISTINCT FROM v.grade
-       AND i.length_ft IS NOT DISTINCT FROM v.length_ft;
+    SELECT id INTO v_id FROM inv.items i WHERE inv.same_item(i, v);
     IF NOT FOUND THEN
       RAISE EXCEPTION 'A pack size names %, which is not in the catalog.', inv.item_label(v) USING ERRCODE = 'IV400';
     END IF;

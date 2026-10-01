@@ -346,3 +346,34 @@ test('the database refuses a lumber length that is not above 0, whatever writes 
     await set([]);
   });
 });
+
+test('a name that differs from an item\'s name only in capitals names the same item', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const add = (family, identity) => call(db, 'add_item', ann.id, crypto.randomUUID(), family, identity);
+  const lus = await add('hangers', { sku: 'LUS28' });
+  let err = await refused(add('hangers', { sku: 'lus28' }), 'IV400', 'a SKU in other capitals');
+  assert.match(err.message, /LUS28|lus28/);
+  await refused(add('lumber', { size: '2X4', grade: '#2', length_ft: 8 }).then(() => add('lumber', { size: '2x4', grade: '#2', length_ft: 8 })),
+    'IV400', 'a lumber size in other capitals');
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), lus.id, 1);
+  err = await refused(add('hangers', { sku: 'Lus28' }), 'IV400', 'a retired SKU in other capitals');
+  assert.match(err.message, /retired; un-retire it instead/);
+  // A rename that changes only the capitals of the item's own name is allowed.
+  await call(db, 'unretire_item', ann.id, crypto.randomUUID(), lus.id, 2);
+  const renamed = await call(db, 'rename_item', ann.id, crypto.randomUUID(), lus.id, 3, { sku: 'Lus28' });
+  assert.equal(renamed.sku, 'Lus28');
+});
+
+test('a lumber group that differs from another only in capitals, or holds a "|", is refused', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const set = (size, grade) => call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), size, grade, null, [8]);
+  const err = await refused(set('2x4', 'dss'), 'IV400', 'the seeded 2x4 DSS in other capitals');
+  assert.equal(err.message, '2x4 dss is already on the list as 2x4 DSS.');
+  await refused(set('2X4', 'DSS'), 'IV400', 'the size in other capitals');
+  // The page names a group "size|grade" and splits it there again.
+  await refused(set('2x4', 'A|B'), '23514', 'a grade with "|"');
+  await refused(set('2x4|2x6', 'SS'), '23514', 'a size with "|"');
+  await set('2x4', 'SS');
+});
