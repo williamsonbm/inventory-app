@@ -12,6 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { get, post, signInAndChoose, withAdmin } = require('./support/app.js');
+const { connect, urlFor } = require('./support/database.js');
 
 // Posts one change as the signed-in admin and returns the status and parsed answer.
 async function change(ctx, route, body) {
@@ -129,6 +130,49 @@ test('the Planner plans lumber with the shared buying options, never a copy the 
   assert.deepEqual(row('2x6|#2').redirect, { toLabel: '2x6 DSS', lf: 36 }, 'the shared redirect applies');
 });
 
+test('a lumber plan with every length switched off is refused, never planned with the default lengths', async () => {
+  const ctx = await withAdmin();
+  const { menu, versions } = await read(ctx, '/api/lumber/menu');
+  for (const key of Object.keys(menu)) {
+    const [size, grade] = key.split('|');
+    const off = await change(ctx, '/api/lumber/lengths', { size, grade, version: versions.lengths[key], lengths: [] });
+    assert.equal(off.status, 200, off.body.error);
+  }
+  const res = await post(ctx.base, '/api/lumber/plan', { files: [{ name: 'a.csv', text: LUMBER_SHEET }] }, ctx.cookie);
+  const plan = await res.json();
+  assert.equal(res.status, 400, JSON.stringify(plan).slice(0, 200));
+  assert.match(plan.error, /No lumber lengths are switched on/);
+});
+
+test('a first save that loses a race to another first save is answered 409, not a crash', async () => {
+  const ctx = await withAdmin();
+  const other = await connect(urlFor(ctx.db, 'inv_app'));
+  const watcher = await connect(urlFor(ctx.db));
+  try {
+    await other.query('BEGIN');
+    await other.query('SELECT inv.set_lumber_lengths($1, $2, $3, $4, $5, $6)',
+      [ctx.ann.id, crypto.randomUUID(), '2x4', 'SS', null, [8]]);
+    const pending = post(ctx.base, '/api/lumber/lengths',
+      { key: crypto.randomUUID(), size: '2x4', grade: 'SS', version: null, lengths: [10] }, ctx.cookie);
+    // Let the other save commit only once the app's save waits on its lock.
+    for (let tries = 0; ; tries += 1) {
+      const { rowCount } = await watcher.query(`SELECT 1 FROM pg_catalog.pg_stat_activity
+        WHERE datname = pg_catalog.current_database() AND wait_event_type = 'Lock'`);
+      if (rowCount) break;
+      assert.ok(tries < 250, "the app's save never waited for the other save");
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    await other.query('COMMIT');
+    const res = await pending;
+    const text = await res.text();
+    assert.equal(res.status, 409, text);
+    assert.match(JSON.parse(text).error, /Someone else changed 2x4 SS/);
+  } finally {
+    await other.end();
+    await watcher.end();
+  }
+});
+
 test('the Activity Log names the item, pack size, supplier or reason each change touched', async () => {
   const ctx = await withAdmin();
   const item = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'BOGUS26' } })).body.item;
@@ -138,9 +182,13 @@ test('the Activity Log names the item, pack size, supplier or reason each change
   await change(ctx, '/api/items/add', { family: 'lvl', identity: { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 } });
   await change(ctx, '/api/lvl-depth-thresholds/set', { depth: '14', version: null, threshold_lf: 720 });
   await change(ctx, '/api/lumber/lengths', { size: '2x4', grade: '#2', version: 1, lengths: [8] });
+  await change(ctx, '/api/lumber/redirect', { size: '2x6', from_grade: '#2', version: null, to_grade: 'DSS' });
+  await change(ctx, '/api/items/add', { family: 'lumber', identity: { size: '2x6', grade: 'DSS', length_ft: 16 } });
 
   const { entries } = await read(ctx, '/api/activity');
-  assert.deepEqual(entries.slice(0, 7).map((e) => [e.action, e.target]), [
+  assert.deepEqual(entries.slice(0, 9).map((e) => [e.action, e.target]), [
+    ['add item', '2x6 DSS 16′'],
+    ['set grade redirect', '2x6 #2'],
     ['set lumber lengths', '2x4 #2'],
     ['set LVL depth threshold', 'LVL 14″'],
     ['add item', '2.1 RigidLam LVL 1-3/4 x 14 48′'],

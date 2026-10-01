@@ -248,6 +248,8 @@
   el('rows').addEventListener('change', (e) => {
     const field = e.target.dataset.field;
     if (!field) return;
+    // A number box reports text it cannot read as blank, which would clear the saved value.
+    if (e.target.validity && e.target.validity.badInput) return say('Type a whole number, or leave it blank.', 'bad');
     const item = itemOf(e.target);
     const raw = e.target.value.trim();
     const value = field === 'threshold' ? (raw === '' ? null : Number(raw)) : field === 'note' ? (raw || null) : raw;
@@ -338,8 +340,10 @@
   el('rename-cancel').addEventListener('click', () => { el('rename').hidden = true; });
   el('rename').addEventListener('submit', (e) => {
     e.preventDefault();
-    const was = itemLabel(renaming);
-    save('/api/items/rename', { key: crypto.randomUUID(), id: renaming.id, version: renaming.version, identity: identityFrom(el('rename-fields')) }, (i) => {
+    // The item as it is now: a cell saved while the form was open changed its version.
+    const item = items.find((i) => i.id === renaming.id);
+    const was = itemLabel(item);
+    save('/api/items/rename', { key: crypto.randomUUID(), id: item.id, version: item.version, identity: identityFrom(el('rename-fields')) }, (i) => {
       el('rename').hidden = true;
       return was + ' is now ' + itemLabel(i) + '.';
     });

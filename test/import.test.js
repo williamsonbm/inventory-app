@@ -30,7 +30,7 @@ const FILES = {
 
 async function counts(db) {
   return as(db, APP, async (app) => (await app.query(`
-    SELECT family, stocking, count(*)::int AS n FROM inv.items GROUP BY 1, 2 ORDER BY 1, 2`)).rows);
+    SELECT family, stocking, pg_catalog.count(*)::int AS n FROM inv.items GROUP BY 1, 2 ORDER BY 1, 2`)).rows);
 }
 
 test('the import adds the catalog, pack sizes and LVL depth thresholds, and reports what it left out', async () => {

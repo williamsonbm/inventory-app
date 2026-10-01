@@ -71,15 +71,19 @@
         const [catalog, packs] = await Promise.all([get('/api/items'), get('/api/pack-sizes')]);
         this.items = catalog.items;
         this.packs = packs.pack_sizes;
+        // A plate and a hanger may share a SKU, so a shared name carries its family.
+        const uses = new Map();
+        for (const i of this.items) uses.set(itemLabel(i), (uses.get(itemLabel(i)) || 0) + 1);
+        this.name = (i) => (uses.get(itemLabel(i)) > 1 ? itemLabel(i) + ' (' + i.family + ')' : itemLabel(i));
       },
       addForm() {
         return '<label class="field">Item <input id="f-item" list="item-list" required autocomplete="off"></label>' +
-          '<datalist id="item-list">' + this.items.filter((i) => i.active).map((i) => '<option value="' + esc(itemLabel(i)) + '">').join('') + '</datalist>' +
+          '<datalist id="item-list">' + this.items.filter((i) => i.active).map((i) => '<option value="' + esc(this.name(i)) + '">').join('') + '</datalist>' +
           '<label class="field">Kind <select id="f-kind"><option>pack</option><option>box</option><option>carton</option><option>pallet</option></select></label>' +
           '<label class="field">Pieces <input id="f-pieces" type="number" min="1" step="1" required style="width:7em"></label><button>Add pack size</button>';
       },
       addBody() {
-        const item = this.items.find((i) => itemLabel(i) === el('f-item').value.trim());
+        const item = this.items.find((i) => this.name(i) === el('f-item').value.trim());
         if (!item) throw new Error('Pick an item from the list.');
         return ['/api/pack-sizes/add', { item_id: item.id, kind: el('f-kind').value, pieces: Number(el('f-pieces').value) }];
       },
@@ -89,14 +93,14 @@
         for (const p of this.packs) byItem.set(p.item_id, (byItem.get(p.item_id) || []).concat(p));
         return this.items
           .filter((i) => byItem.has(i.id) || i.family === 'plates')
-          .filter((i) => words.every((w) => itemLabel(i).toLowerCase().includes(w)))
+          .filter((i) => words.every((w) => this.name(i).toLowerCase().includes(w)))
           .map((i) => {
             const packs = byItem.get(i.id) || [];
             const cells = packs.map((p) => '<label class="field">' + esc(p.kind) + ' ' +
               input('type="number" min="1" step="1" style="width:6em" data-pack="' + p.id + '" aria-label="' + esc(p.kind) + ' pieces"', p.pieces) + '</label>');
             // S18: a plate with no pallet size has an unknown one, never a guess.
             if (i.family === 'plates' && !packs.some((p) => p.kind === 'pallet')) cells.push('<span class="sub">pallet size unknown</span>');
-            return '<tr><td class="name">' + esc(itemLabel(i)) + '</td><td>' + cells.join(' ') + '</td></tr>';
+            return '<tr><td class="name">' + esc(this.name(i)) + '</td><td>' + cells.join(' ') + '</td></tr>';
           });
       },
       onChange(target) {
@@ -166,7 +170,7 @@
     },
   };
 
-  const name = location.pathname.split('/').pop();
+  const name = location.pathname.replace(/\/+$/, '').split('/').pop();  // Express also serves /settings/reasons/
   const section = SECTIONS[name];
   document.title = section.title + ' · Settings';
   for (const a of el('tasks').children) {
@@ -208,7 +212,12 @@
     await attempt();
   }
 
-  el('rows').addEventListener('change', (e) => { if (section.onChange) save(section.onChange(e.target)); });
+  el('rows').addEventListener('change', (e) => {
+    if (!section.onChange) return;
+    // A number box reports text it cannot read as blank, which would clear the saved value.
+    if (e.target.validity && e.target.validity.badInput) return say('Type a whole number, or leave it blank.', 'bad');
+    save(section.onChange(e.target));
+  });
   el('rows').addEventListener('click', (e) => {
     const what = e.target.dataset && e.target.dataset.do;
     if (what) save(section.onClick(what, e.target.closest('tr').dataset.id));

@@ -181,8 +181,13 @@ function createApp({ database, sessionSecret }) {
   app.get('/api/lumber/menu', catchAsync(async (_req, res) => {
     res.json({ ok: true, ...await readLumberOptions(database), gradeOrder: GRADE_STRENGTH_ORDER });
   }));
-  app.post('/api/lumber/plan', catchAsync(async (req, _res, next) => {
+  // With every length switched off the engine would plan with its own
+  // default, so that plan is refused instead.
+  app.post('/api/lumber/plan', catchAsync(async (req, res, next) => {
     const { menu, redirects } = await readLumberOptions(database);
+    if (!Object.keys(menu).length) {
+      return res.status(400).json({ ok: false, error: 'No lumber lengths are switched on. Switch on the lengths you buy in "Stock lengths we buy".' });
+    }
     Object.assign(req.body, { menu, redirects });
     next();
   }));
@@ -238,7 +243,8 @@ function appError(err, req, res, next) {
   }
   if (isRefusal(err)) {
     const body = { ok: false, error: err.message };
-    if (err.code === 'IV409') body.current = JSON.parse(err.detail);
+    // A first save that lost a race has no row to send back yet (migration 003).
+    if (err.code === 'IV409' && err.detail) body.current = JSON.parse(err.detail);
     return res.status(REFUSAL_STATUS[err.code] || 400).json(body);
   }
   // A value the database could not take (class 22) or a constraint it

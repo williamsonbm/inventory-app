@@ -108,15 +108,19 @@
 
   // Saves one change. On any refusal (someone else changed it first, or the
   // save was not confirmed) the panel says so and reloads what is saved, so
-  // it never shows a choice the database does not hold.
+  // it never shows a choice the database does not hold. The panel takes no
+  // clicks until the reload: a second click sent before it would carry the
+  // old version and be refused as someone else's change.
   async function saveOption(route, body) {
     sayMenu('');
+    el('menu-mount').inert = true;
     try {
       await AppHeader.send(route, { key: crypto.randomUUID(), ...body });
     } catch (err) {
       sayMenu(err.message);
     }
     await loadOptions();
+    el('menu-mount').inert = false;
   }
 
   // One handler, wired to BOTH the Stock-lengths panel's rows and the results
