@@ -11,7 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { get, post, withAdmin } = require('./support/app.js');
+const { get, post, signInAndChoose, withAdmin } = require('./support/app.js');
 
 // Posts one change as the signed-in admin and returns the status and parsed answer.
 async function change(ctx, route, body) {
@@ -149,4 +149,18 @@ test('the Activity Log names the item, pack size, supplier or reason each change
     ['add pack size', 'BOGUS26 carton'],
     ['add item', 'BOGUS26'],
   ]);
+});
+
+test('only an admin can rename an item', async () => {
+  const ctx = await withAdmin();
+  const item = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS288' } })).body.item;
+  await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
+  const bob = await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password');
+
+  const res = await post(ctx.base, '/api/items/rename',
+    { key: crypto.randomUUID(), id: item.id, version: 1, identity: { sku: 'LUS28' } }, bob);
+  assert.equal(res.status, 403);
+  const renamed = await change(ctx, '/api/items/rename', { id: item.id, version: 1, identity: { sku: 'LUS28' } });
+  assert.equal(renamed.status, 200, renamed.body.error);
+  assert.equal(renamed.body.item.sku, 'LUS28');
 });

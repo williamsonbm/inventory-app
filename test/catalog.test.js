@@ -11,7 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, as, APP, firstUser, call, logRows, refused } = require('./support/database.js');
+const { freshDatabase, as, APP, HASH, firstUser, call, logRows, refused } = require('./support/database.js');
 const { DEFAULT_LUMBER_MENU } = require('../src/lumber/lumberMenu.js');
 
 test('a new item starts Special Order with no threshold, and one log row records it', async () => {
@@ -283,4 +283,40 @@ test("lumber buying options start as the engine's default menu, and each change 
   ];
   for (const [label, attempt, code] of cases) await refused(attempt(), code, label);
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+});
+
+test('an admin renames an item, logged was → now; nobody else can, and a name in use is refused', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
+  const typo = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LUS288' });
+  const rename = (actor, version, identity, target = typo) =>
+    call(db, 'rename_item', actor.id, crypto.randomUUID(), target.id, version, identity);
+
+  const fixed = await rename(ann, 1, { sku: ' LUS28 ' });
+  assert.deepEqual(fixed, { ...typo, sku: 'LUS28', version: 2 });
+  const last = (await logRows(db)).at(-1);
+  assert.deepEqual([last.action, last.old_value, last.new_value], ['rename item', typo, fixed]);
+
+  const lvl = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl',
+    { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 46 });
+  assert.equal((await rename(ann, 1, { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 }, lvl)).length_ft, 48);
+
+  await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LUS26' });
+  const before = (await logRows(db)).length;
+  await refused(rename(bob, 2, { sku: 'LUS210' }), 'IV403', 'a person who is not an admin');
+  const taken = await refused(rename(ann, 2, { sku: 'LUS26' }), 'IV400', 'a name another item has');
+  assert.equal(taken.message, 'LUS26 is already in the catalog.');
+  await refused(rename(ann, 2, { size: '2x4', grade: '#2', length_ft: 8 }), 'IV400', "another family's fields");
+  await refused(rename(ann, 1, { sku: 'LUS210' }), 'IV409', 'a stale version');
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+});
+
+test('adding an item that is retired says to un-retire it instead', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const lu = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LU24' });
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), lu.id, 1);
+  const err = await refused(call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LU24' }), 'IV400', 'a retired item');
+  assert.equal(err.message, 'LU24 is in the catalog but retired; un-retire it instead.');
 });

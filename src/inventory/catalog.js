@@ -8,6 +8,8 @@
 // Readers). The database function checks the version, the retry key and every
 // rule again, and writes the activity-log row in the same save.
 
+const { GRADE_STRENGTH_ORDER } = require('../lumber/lumberMenu.js');
+
 // An item as people name it: "LUS28", "2x4 #2 16′",
 // "2.1 RigidLam LVL 1-3/4 x 11-7/8 26′". The same words as inv.item_label.
 function itemLabel(i) {
@@ -30,13 +32,17 @@ async function listCatalog(database) {
       SELECT id::int, family, sku, product, size, grade, length_ft, stocking, threshold, note, active, version
         FROM inv.items ORDER BY family, sku, product, size, grade, length_ft`),
   ]);
-  return { families, items };
+  // gradeOrder: lumber grades weakest first, the engine's own ranking, so the
+  // Overview sorts 2x4 #2 ahead of 2x4 #1 (owner, 2026-10-01).
+  return { families, items, gradeOrder: GRADE_STRENGTH_ORDER };
 }
 
 // Route → the database function it calls, its arguments after the actor and
-// the retry key, and the name its answer goes back under.
+// the retry key, the name its answer goes back under, and whether only an
+// admin may make it (the database function checks that again).
 const CATALOG_CHANGES = {
   '/api/items/add': { fn: 'add_item', args: (b) => [b.family, b.identity], as: 'item' },
+  '/api/items/rename': { fn: 'rename_item', args: (b) => [b.id, b.version, b.identity], as: 'item', adminOnly: true },
   '/api/items/edit': { fn: 'edit_item', args: (b) => [b.id, b.version, b.changes], as: 'item' },
   '/api/items/retire': { fn: 'retire_item', args: (b) => [b.id, b.version], as: 'item' },
   '/api/items/unretire': { fn: 'unretire_item', args: (b) => [b.id, b.version], as: 'item' },

@@ -141,8 +141,9 @@ function createApp({ database, sessionSecret }) {
     }));
   }
 
-  // Inventory → Overview and the catalog's Settings. Everyone reads and
-  // changes them (#81, "Admin-only actions").
+  // Inventory → Overview and the catalog's Settings. Everyone reads them and
+  // makes most changes (#81, "Admin-only actions"); renaming an item is for
+  // admins (owner, 2026-10-01).
   app.get('/api/items', catchAsync(async (_req, res) => {
     res.json({ ok: true, ...await listCatalog(database) });
   }));
@@ -151,8 +152,8 @@ function createApp({ database, sessionSecret }) {
       res.json({ ok: true, ...await listSettings(database, route) });
     }));
   }
-  for (const route of Object.keys(CATALOG_CHANGES)) {
-    app.post(route, catchAsync(async (req, res) => {
+  for (const [route, { adminOnly: forAdmins }] of Object.entries(CATALOG_CHANGES)) {
+    app.post(route, forAdmins ? adminOnly : (_req, _res, next) => next(), catchAsync(async (req, res) => {
       res.json({ ok: true, ...await saveCatalogChange(database, req.user, route, req.body || {}) });
     }));
   }

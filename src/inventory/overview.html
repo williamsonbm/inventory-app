@@ -57,16 +57,22 @@
     <button type="button" class="ghost" id="add-cancel">Cancel</button>
   </form>
 
+  <form id="rename" class="row" hidden>
+    <span class="field">Rename <b id="rename-from"></b></span>
+    <span id="rename-fields" style="display:contents"></span>
+    <button>Save name</button>
+    <button type="button" class="ghost" id="rename-cancel">Cancel</button>
+  </form>
+
+  <div id="tabs" class="row" style="gap:8px;margin:10px 0" hidden></div>
+
   <div class="tw"><table class="one-line catalog">
-    <colgroup><col style="width:9%"><col style="width:31%"><col style="width:15%"><col style="width:11%"><col style="width:24%"><col style="width:10%"></colgroup>
-    <thead><tr>
-      <th data-sort="family">Family</th><th data-sort="label">Item</th><th data-sort="stocking">Stocking</th>
-      <th data-sort="threshold">Threshold</th><th>Note</th><th></th>
-    </tr></thead>
+    <colgroup id="cols"></colgroup>
+    <thead><tr id="head"></tr></thead>
     <tbody id="rows"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
-  <p class="sub">A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds.</p>
+  <p class="sub">A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item.</p>
 </div>
 
 <script src="/app-header.js"></script>
@@ -76,18 +82,24 @@
   const { esc } = PlannerUI;
   const { send } = AppHeader;
   const el = (id) => document.getElementById(id);
-  if (!await AppHeader.me) return;
+  const me = await AppHeader.me;
+  if (!me) return;
 
   const STATUSES = ['Stocked', 'Non-Stock', 'Special Order'];
   // What each identity field is called on screen, per family where it differs.
   const FIELD_LABELS = { sku: 'SKU', product: 'Product', size: 'Size', grade: 'Grade', length_ft: 'Length (ft)' };
   const LVL_LABELS = { size: 'Depth' };
+  const fieldLabel = (family, field) => (family === 'lvl' && LVL_LABELS[field]) || FIELD_LABELS[field];
   const FAMILY_KEY = 'inventory.family';
+  const TAB_KEY = 'inventory.tab.';   // + family: the size or depth tab last open
 
   let families = [];
   let items = [];
+  let gradeOrder = [];
   const shown = new Set(STATUSES);
-  let sort = { col: 'family', dir: 1 };
+  let sort = null;      // { col, dir } a person chose; null is the family's own order
+  let tab = null;       // the open size (lumber) or depth (LVL) tab
+  let renaming = null;  // the item the rename form is for
 
   function say(text, kind, retry) {
     el('message').innerHTML = text
@@ -103,11 +115,57 @@
     return i.size + ' ' + i.grade + ' ' + i.length_ft + '′';
   }
   const familyName = (code) => (families.find((f) => f.code === code) || { name: code }).name;
+  const family = () => el('family').value;
+
+  // Text with numbers in it compared as numbers, so 2x6 comes before 2x10
+  // and 9-1/2 before 11-7/8.
+  const byText = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+  // A lumber grade's place in the engine's strength order, weakest first;
+  // a grade the engine does not know goes last.
+  const gradeRank = (g) => { const r = gradeOrder.indexOf(g); return r === -1 ? gradeOrder.length : r; };
+
+  // The columns for the family chosen, each with its width, its header, how
+  // its cell reads and how it sorts. Lumber and LVL tabs pick the size or
+  // depth, so neither repeats it in a column.
+  const COL = {
+    family: { head: 'Family', width: 10, sort: (i) => familyName(i.family), cell: (i) => esc(familyName(i.family)) },
+    item: { head: 'Item', width: 30, sort: (i) => label(i), cell: (i) => esc(label(i)), name: true },
+    sku: { head: 'SKU', width: 30, sort: (i) => i.sku, cell: (i) => esc(i.sku), name: true },
+    product: { head: 'Product', width: 26, sort: (i) => i.product, cell: (i) => esc(i.product), name: true },
+    grade: { head: 'Grade', width: 14, sort: (i) => gradeRank(i.grade), cell: (i) => esc(i.grade), name: true },
+    length: { head: 'Length', width: 10, sort: (i) => i.length_ft, cell: (i) => i.length_ft + '′', name: true },
+    stocking: {
+      head: 'Stocking', width: 16, sort: (i) => i.stocking,
+      cell: (i) => '<select data-field="stocking" aria-label="Stocking status">' +
+        STATUSES.map((s) => '<option' + (s === i.stocking ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select>',
+    },
+    threshold: {
+      head: 'Threshold', width: 11, sort: (i) => i.threshold,
+      cell: (i) => (i.family === 'lvl' ? '<span class="sub">per depth</span>'
+        : '<input data-field="threshold" type="number" min="0" step="1" style="width:6em" aria-label="Threshold" value="' + (i.threshold ?? '') + '">'),
+    },
+    note: { head: 'Note', width: 22, cell: (i) => '<input data-field="note" aria-label="Note" value="' + esc(i.note || '') + '">' },
+    actions: {
+      head: '', width: 14,
+      cell: (i) => (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
+        '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>',
+    },
+  };
+  // Per family: its columns, its tab field (if any), and its own order when
+  // nobody has clicked a header. Lumber: weakest grade first, then shortest.
+  const VIEWS = {
+    '': { cols: ['family', 'item', 'stocking', 'threshold', 'note', 'actions'], order: ['family', 'item'] },
+    plates: { cols: ['sku', 'stocking', 'threshold', 'note', 'actions'], order: ['sku'] },
+    hangers: { cols: ['sku', 'stocking', 'threshold', 'note', 'actions'], order: ['sku'] },
+    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'note', 'actions'], order: ['grade', 'length'] },
+    lvl: { tab: 'size', cols: ['product', 'length', 'stocking', 'note', 'actions'], order: ['product', 'length'] },
+  };
+  const view = () => VIEWS[family()] || VIEWS[''];
 
   async function load() {
     const body = await fetch('/api/items').then((r) => r.json()).catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
     if (!body.ok) return say(body.error, 'bad');
-    ({ families, items } = body);
+    ({ families, items, gradeOrder } = body);
     paintFilters();
     paint();
   }
@@ -119,46 +177,67 @@
     el('family').innerHTML = '<option value="">All families</option>' + opts;
     el('family').value = families.some((f) => f.code === saved) ? saved : '';
     el('add-family').innerHTML = opts;
+    paintStatus();
+  }
+  function paintStatus() {
     el('show-status').innerHTML = STATUSES.map((s) =>
       '<button type="button" class="' + (shown.has(s) ? '' : 'ghost') + '" data-status="' + esc(s) + '" aria-pressed="' + shown.has(s) + '">' + esc(s) + '</button>').join('');
   }
 
+  // The size or depth tabs, for lumber and LVL: one per value the family's
+  // items have, in numeric order. The tab last open on this computer opens again.
+  function paintTabs() {
+    const v = view();
+    el('tabs').hidden = !v.tab;
+    if (!v.tab) { tab = null; return; }
+    const values = [...new Set(items.filter((i) => i.family === family()).map((i) => i[v.tab]))].sort(byText);
+    if (!values.includes(tab)) {
+      let saved = null;
+      try { saved = localStorage.getItem(TAB_KEY + family()); } catch { /* storage blocked */ }
+      tab = values.includes(saved) ? saved : values[0] ?? null;
+    }
+    const tabLabel = (t) => (family() === 'lvl' ? t + '″' : t);
+    el('tabs').innerHTML = values.map((t) =>
+      '<button type="button" class="' + (t === tab ? '' : 'ghost') + '" data-tab="' + esc(t) + '" aria-pressed="' + (t === tab) + '">' + esc(tabLabel(t)) + '</button>').join('');
+  }
+
   function visible() {
-    const family = el('family').value;
+    const v = view();
     const words = el('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
     const retired = el('show-retired').checked;
+    // The person's choice first, then the family's own order, then the name.
+    const keys = (sort ? [sort] : []).concat(v.order.map((col) => ({ col, dir: 1 })), [{ col: 'item', dir: 1 }]);
     return items
-      .filter((i) => (!family || i.family === family) && shown.has(i.stocking) && (retired || i.active))
+      .filter((i) => (!family() || i.family === family()) && shown.has(i.stocking) && (retired || i.active))
+      .filter((i) => !v.tab || i[v.tab] === tab)
       .filter((i) => {
         const text = (label(i) + ' ' + (i.note || '')).toLowerCase();
         return words.every((w) => text.includes(w));
       })
       .sort((a, b) => {
-        const key = (i) => (sort.col === 'label' ? label(i) : sort.col === 'family' ? familyName(i.family) : i[sort.col]);
-        const [x, y] = [key(a), key(b)];
-        if (x === y) return label(a).localeCompare(label(b), undefined, { numeric: true });
-        if (x == null) return 1;
-        if (y == null) return -1;
-        return (typeof x === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true })) * sort.dir;
+        for (const { col, dir } of keys) {
+          const [x, y] = [COL[col].sort(a), COL[col].sort(b)];
+          if (x === y) continue;
+          if (x == null) return 1;   // blanks last, whichever way
+          if (y == null) return -1;
+          return (typeof x === 'number' ? x - y : byText(x, y)) * dir;
+        }
+        return 0;
       });
   }
 
   function paint() {
-    for (const th of document.querySelectorAll('th[data-sort]')) {
-      th.dataset.label = th.dataset.label || th.textContent;
-      th.textContent = th.dataset.label + (th.dataset.sort === sort.col ? (sort.dir > 0 ? ' ▲' : ' ▼') : '');
-    }
+    paintTabs();
+    const cols = view().cols.map((c) => [c, COL[c]]);
+    el('cols').innerHTML = cols.map(([, c]) => '<col style="width:' + c.width + '%">').join('');
+    el('head').innerHTML = cols.map(([key, c]) =>
+      '<th' + (c.sort ? ' data-sort="' + key + '"' : '') + '>' + esc(c.head) +
+      (sort && sort.col === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>').join('');
     const rows = visible();
     el('rows').innerHTML = rows.map((i) =>
       '<tr data-id="' + i.id + '"' + (i.active ? '' : ' class="sub"') + '>' +
-      '<td>' + esc(familyName(i.family)) + '</td>' +
-      '<td class="name">' + esc(label(i)) + (i.active ? '' : ' (retired)') + '</td>' +
-      '<td><select data-field="stocking" aria-label="Stocking status">' +
-        STATUSES.map((s) => '<option' + (s === i.stocking ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select></td>' +
-      '<td>' + (i.family === 'lvl' ? '<span class="sub">per depth</span>'
-        : '<input data-field="threshold" type="number" min="0" step="1" style="width:6em" aria-label="Threshold" value="' + (i.threshold ?? '') + '">') + '</td>' +
-      '<td><input data-field="note" aria-label="Note" value="' + esc(i.note || '') + '"></td>' +
-      '<td><button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button></td>' +
+      cols.map(([, c]) => '<td' + (c.name ? ' class="name"' : '') + '>' + c.cell(i) +
+        (c.name && !i.active && c === cols.find(([, x]) => x.name)[1] ? ' (retired)' : '') + '</td>').join('') +
       '</tr>').join('');
     el('count').textContent = rows.length + ' of ' + items.length + ' items shown.';
   }
@@ -177,11 +256,12 @@
     }
     paint();
   }
+  const itemOf = (target) => items.find((i) => String(i.id) === target.closest('tr').dataset.id);
 
   el('rows').addEventListener('change', (e) => {
     const field = e.target.dataset.field;
     if (!field) return;
-    const item = items.find((i) => String(i.id) === e.target.closest('tr').dataset.id);
+    const item = itemOf(e.target);
     const raw = e.target.value.trim();
     const value = field === 'threshold' ? (raw === '' ? null : Number(raw)) : field === 'note' ? (raw || null) : raw;
     save('/api/items/edit', { key: crypto.randomUUID(), id: item.id, version: item.version, changes: { [field]: value } },
@@ -191,54 +271,90 @@
   el('rows').addEventListener('click', (e) => {
     const what = e.target.dataset && e.target.dataset.do;
     if (!what) return;
-    const item = items.find((i) => String(i.id) === e.target.closest('tr').dataset.id);
+    const item = itemOf(e.target);
+    if (what === 'rename') return openRename(item);
     save('/api/items/' + what, { key: crypto.randomUUID(), id: item.id, version: item.version },
       (i) => label(i) + (i.active ? ' is in use again.' : ' was retired. Its history stays.'));
   });
 
-  document.querySelector('thead').addEventListener('click', (e) => {
+  el('head').addEventListener('click', (e) => {
     const col = e.target.dataset && e.target.dataset.sort;
     if (!col) return;
-    sort = { col, dir: sort.col === col ? -sort.dir : 1 };
+    sort = { col, dir: sort && sort.col === col ? -sort.dir : 1 };
+    paint();
+  });
+  el('tabs').addEventListener('click', (e) => {
+    const t = e.target.dataset && e.target.dataset.tab;
+    if (t === undefined) return;
+    tab = t;
+    try { localStorage.setItem(TAB_KEY + family(), t); } catch { /* storage blocked: this visit only */ }
     paint();
   });
   el('show-status').addEventListener('click', (e) => {
     const s = e.target.dataset && e.target.dataset.status;
     if (!s) return;
     if (shown.has(s)) shown.delete(s); else shown.add(s);
-    paintFilters();
+    paintStatus();
     paint();
   });
   el('family').addEventListener('change', () => {
-    try { localStorage.setItem(FAMILY_KEY, el('family').value); } catch { /* storage blocked: this visit only */ }
+    try { localStorage.setItem(FAMILY_KEY, family()); } catch { /* storage blocked: this visit only */ }
+    sort = null;
+    tab = null;
     paint();
   });
   el('search').addEventListener('input', paint);
   el('show-retired').addEventListener('change', paint);
 
-  // "+ Add item": the fields follow the chosen family's identity fields.
-  function paintAddFields() {
-    const f = families.find((x) => x.code === el('add-family').value);
-    el('add-fields').innerHTML = f.identity.map((field) =>
-      '<label class="field">' + esc((f.code === 'lvl' && LVL_LABELS[field]) || FIELD_LABELS[field]) +
-      ' <input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : '') + ' required autocomplete="off"></label>').join(' ');
+  // The name fields of a family, as inputs, filled from `item` when given.
+  function identityInputs(fam, item) {
+    const f = families.find((x) => x.code === fam);
+    return f.identity.map((field) =>
+      '<label class="field">' + esc(fieldLabel(fam, field)) +
+      ' <input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : '') +
+      ' required autocomplete="off" value="' + esc(item ? item[field] : '') + '"></label>').join(' ');
   }
+  function identityFrom(container) {
+    const identity = {};
+    for (const input of container.querySelectorAll('input')) {
+      identity[input.dataset.identity] = input.dataset.identity === 'length_ft' ? Number(input.value) : input.value;
+    }
+    return identity;
+  }
+
+  // "+ Add item": the fields follow the chosen family's identity fields.
+  const paintAddFields = () => { el('add-fields').innerHTML = identityInputs(el('add-family').value); };
   el('add-open').addEventListener('click', () => {
+    el('rename').hidden = true;
     el('add').hidden = false;
-    el('add-family').value = el('family').value || families[0].code;
+    el('add-family').value = family() || families[0].code;
     paintAddFields();
   });
   el('add-family').addEventListener('change', paintAddFields);
   el('add-cancel').addEventListener('click', () => { el('add').hidden = true; });
   el('add').addEventListener('submit', (e) => {
     e.preventDefault();
-    const identity = {};
-    for (const input of el('add-fields').querySelectorAll('input')) {
-      identity[input.dataset.identity] = input.dataset.identity === 'length_ft' ? Number(input.value) : input.value;
-    }
-    save('/api/items/add', { key: crypto.randomUUID(), family: el('add-family').value, identity }, (i) => {
+    save('/api/items/add', { key: crypto.randomUUID(), family: el('add-family').value, identity: identityFrom(el('add-fields')) }, (i) => {
       el('add').hidden = true;
       return label(i) + ' was added as Special Order with no threshold. Set its stocking status in its row.';
+    });
+  });
+
+  // Rename (admins): the same name fields, filled with the item's current name.
+  function openRename(item) {
+    renaming = item;
+    el('add').hidden = true;
+    el('rename-from').textContent = label(item);
+    el('rename-fields').innerHTML = identityInputs(item.family, item);
+    el('rename').hidden = false;
+  }
+  el('rename-cancel').addEventListener('click', () => { el('rename').hidden = true; });
+  el('rename').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const was = label(renaming);
+    save('/api/items/rename', { key: crypto.randomUUID(), id: renaming.id, version: renaming.version, identity: identityFrom(el('rename-fields')) }, (i) => {
+      el('rename').hidden = true;
+      return was + ' is now ' + label(i) + '.';
     });
   });
 

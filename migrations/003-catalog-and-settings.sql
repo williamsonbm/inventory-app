@@ -46,7 +46,8 @@ CREATE TABLE inv.items (
   CHECK (family <> 'lvl' OR threshold IS NULL)
 );
 
-CREATE TRIGGER bump_version BEFORE UPDATE OF stocking, threshold, note, active ON inv.items
+CREATE TRIGGER bump_version BEFORE UPDATE OF sku, product, size, grade, length_ft, stocking, threshold, note, active
+  ON inv.items
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
 
 -- Known pack, box, carton and pallet sizes per item (Q13), shown as a choice
@@ -162,7 +163,7 @@ CREATE TABLE inv.lumber_grade_redirects (
 CREATE TRIGGER bump_version BEFORE UPDATE OF to_grade ON inv.lumber_grade_redirects
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
 
-INSERT INTO inv.actions (name, admin_only) VALUES ('add item', false), ('edit item', false), ('retire item', false), ('un-retire item', false),
+INSERT INTO inv.actions (name, admin_only) VALUES ('add item', false), ('rename item', true), ('edit item', false), ('retire item', false), ('un-retire item', false),
   ('add pack size', false), ('change pack size', false), ('set LVL depth threshold', false),
   ('add supplier', false), ('rename supplier', false),
   ('add reason', false), ('retire reason', false), ('un-retire reason', false),
@@ -258,6 +259,26 @@ BEGIN
 END
 $$;
 
+-- Refuses a new name that another item already has, saying whether that
+-- item is retired, so the person un-retires it rather than adding it again.
+-- Called when an insert or update of an item breaks its unique name.
+CREATE FUNCTION inv.refuse_name_in_use(v inv.items) RETURNS void
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF EXISTS (SELECT FROM inv.items i
+              WHERE i.family = v.family AND NOT i.active
+                AND i.sku IS NOT DISTINCT FROM v.sku AND i.product IS NOT DISTINCT FROM v.product
+                AND i.size IS NOT DISTINCT FROM v.size AND i.grade IS NOT DISTINCT FROM v.grade
+                AND i.length_ft IS NOT DISTINCT FROM v.length_ft) THEN
+    RAISE EXCEPTION '% is in the catalog but retired; un-retire it instead.', inv.item_label(v)
+      USING ERRCODE = 'IV400';
+  END IF;
+  RAISE EXCEPTION '% is already in the catalog.', inv.item_label(v) USING ERRCODE = 'IV400';
+END
+$$;
+
 -- Inventory → Overview → + Add item, and "Add …" while receiving or counting.
 CREATE FUNCTION inv.add_item(p_actor bigint, p_key uuid, p_family text, p_identity jsonb)
 RETURNS jsonb
@@ -278,7 +299,7 @@ BEGIN
     VALUES (v_new.family, v_new.sku, v_new.product, v_new.size, v_new.grade, v_new.length_ft)
     RETURNING * INTO i;
   EXCEPTION WHEN unique_violation THEN
-    RAISE EXCEPTION '% is already in the catalog.', inv.item_label(v_new) USING ERRCODE = 'IV400';
+    PERFORM inv.refuse_name_in_use(v_new);
   END;
   RETURN inv.finish_action(a.log_id, i.id, NULL, inv.item_json(i));
 END
@@ -342,6 +363,39 @@ BEGIN
          note      = CASE WHEN p_changes ? 'note' THEN NULLIF(inv.tidy(p_changes ->> 'note'), '') ELSE note END
    WHERE id = p_id
   RETURNING * INTO i;
+  RETURN inv.finish_action(a.log_id, i.id, inv.item_json(was), inv.item_json(i));
+END
+$$;
+
+-- Inventory → Overview → Rename: corrects an item's name (its identity
+-- fields, as inv.add_item takes them). Admin-only (owner, 2026-10-01): a name
+-- is how a material sheet finds its item, so a wrong one stops sheets matching.
+-- Allowed only while nothing is recorded against the item; until receipts
+-- and counts exist (#81 part 2), nothing can be. Part 2 adds that refusal.
+CREATE FUNCTION inv.rename_item(p_actor bigint, p_key uuid, p_id bigint, p_version integer, p_identity jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  was inv.items;
+  v inv.items;
+  i inv.items;
+BEGIN
+  a := inv.claim_action(p_actor, p_key, 'rename item', 'items', p_id,
+                        pg_catalog.jsonb_build_object('id', p_id, 'version', p_version, 'identity', p_identity));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  was := inv.item_at_version(p_id, p_version);
+  v := inv.new_item(was.family, p_identity);
+  BEGIN
+    UPDATE inv.items
+       SET sku = v.sku, product = v.product, size = v.size, grade = v.grade, length_ft = v.length_ft
+     WHERE id = p_id
+    RETURNING * INTO i;
+  EXCEPTION WHEN unique_violation THEN
+    PERFORM inv.refuse_name_in_use(v);
+  END;
   RETURN inv.finish_action(a.log_id, i.id, inv.item_json(was), inv.item_json(i));
 END
 $$;
@@ -900,3 +954,4 @@ GRANT EXECUTE ON FUNCTION inv.retire_reason(bigint, uuid, bigint, integer) TO in
 GRANT EXECUTE ON FUNCTION inv.unretire_reason(bigint, uuid, bigint, integer) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.set_lumber_lengths(bigint, uuid, text, text, integer, numeric[]) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.set_grade_redirect(bigint, uuid, text, text, integer, text) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.rename_item(bigint, uuid, bigint, integer, jsonb) TO inv_app;
