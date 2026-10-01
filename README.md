@@ -57,6 +57,7 @@ Under the `claude-pod` alias both sit at `/workspace/`; elsewhere the path diffe
 ```sh
 npm install
 npm start      # the whole app at http://127.0.0.1:3000, on a local practice database (inv_local)
+npm run reset-local  # build inv_local again from the migrations; keeps the people, re-imports the test catalog
 npm test       # node --test; needs a Postgres too (TEST_DATABASE_URL)
 ```
 
@@ -69,8 +70,10 @@ podman run -d --name inv-postgres -p 127.0.0.1:5432:5432 \
 podman start inv-postgres   # after a restart of the computer
 ```
 
-The first `npm start` prints the command that adds you as the first admin. The local database
-is for trying the app by hand; the deployed app uses Supabase (`docs/runbook.md`).
+The first `npm start` prints the command that adds you as the first admin. A restart keeps you
+signed in. A migration file that changed after it was applied needs `npm run reset-local`; it
+keeps the people and their passwords, but every other change in the local database is lost. The
+local database is for trying the app by hand; the deployed app uses Supabase (`docs/runbook.md`).
 
 Node 22.x. Runtime dependencies: Express, `pg` and `@vercel/functions` (#77).
 
