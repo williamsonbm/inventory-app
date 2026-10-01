@@ -64,7 +64,7 @@ const CATALOG_CHANGES = {
 
 // The lumber buying options everyone shares (S37), in the shape the lumber
 // engine takes: menu is "size|grade" → stock lengths, redirects is
-// "size|from grade" → to grade. A group with no lengths is not carried, and
+// "size|from grade" → to grade. A group with no lengths is not bought, and
 // a cleared redirect is none, so both are left out. versions carries each
 // row's version, keyed the same way, so the page can say which it read (S41).
 async function readLumberOptions(database) {

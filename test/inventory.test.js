@@ -130,6 +130,20 @@ test('the Planner plans lumber with the shared buying options, never a copy the 
   assert.deepEqual(row('2x6|#2').redirect, { toLabel: '2x6 DSS', lf: 36 }, 'the shared redirect applies');
 });
 
+test('Settings adds a lumber size and grade with no lengths, and its lengths are then switched on', async () => {
+  const ctx = await withAdmin();
+  const added = await change(ctx, '/api/lumber/lengths', { size: '2x4', grade: 'SS', version: null, lengths: [] });
+  assert.equal(added.status, 200, added.body.error);
+  let options = await read(ctx, '/api/lumber/menu');
+  assert.equal(options.versions.lengths['2x4|SS'], 1, 'listed, so the page shows its row');
+  assert.equal(options.menu['2x4|SS'], undefined, 'not bought until a length is switched on');
+
+  const on = await change(ctx, '/api/lumber/lengths', { size: '2x4', grade: 'SS', version: 1, lengths: [16] });
+  assert.equal(on.status, 200, on.body.error);
+  options = await read(ctx, '/api/lumber/menu');
+  assert.deepEqual(options.menu['2x4|SS'], [16]);
+});
+
 test('a lumber plan with every length switched off is refused, never planned with the default lengths', async () => {
   const ctx = await withAdmin();
   const { menu, versions } = await read(ctx, '/api/lumber/menu');

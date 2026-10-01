@@ -144,7 +144,7 @@
       },
       onClick(what, id) {
         const r = this.list.find((x) => String(x.id) === id);
-        return ['/api/reasons/' + what, { id: r.id, version: r.version }];
+        return [what === 'retire' ? '/api/reasons/retire' : '/api/reasons/unretire', { id: r.id, version: r.version }];
       },
       saved(reply) { this.list = upsert(this.list, reply.reason, 'id'); return '"' + reply.reason.text + '" saved.'; },
       current(row) { this.list = upsert(this.list, row, 'id'); },

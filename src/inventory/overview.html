@@ -147,7 +147,13 @@
     lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'note', 'actions'], order: ['grade', 'length'] },
     lvl: { tab: 'size', cols: ['product', 'length', 'stocking', 'note', 'actions'], order: ['product', 'length'] },
   };
-  const view = () => VIEWS[family()] || VIEWS[''];
+  // A search looks across every size or depth, so the rows then name their
+  // item in full instead of leaving the size to the tab.
+  const view = () => {
+    const v = VIEWS[family()] || VIEWS[''];
+    if (!v.tab || !el('search').value.trim()) return v;
+    return { cols: ['item'].concat(v.cols.filter((c) => !COL[c].name)), order: ['item'] };
+  };
 
   async function load() {
     const body = await fetch('/api/items').then((r) => r.json()).catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
@@ -262,7 +268,7 @@
     if (!what) return;
     const item = itemOf(e.target);
     if (what === 'rename') return openRename(item);
-    save('/api/items/' + what, { key: crypto.randomUUID(), id: item.id, version: item.version },
+    save(what === 'retire' ? '/api/items/retire' : '/api/items/unretire', { key: crypto.randomUUID(), id: item.id, version: item.version },
       (i) => itemLabel(i) + (i.active ? ' is in use again.' : ' was retired. Its history stays.'));
   });
 
@@ -325,6 +331,13 @@
     e.preventDefault();
     save('/api/items/add', { key: crypto.randomUUID(), family: el('add-family').value, identity: identityFrom(el('add-fields')) }, (i) => {
       el('add').hidden = true;
+      // Show the new item: no search text, its family, and its size or depth tab.
+      el('search').value = '';
+      if (family() && family() !== i.family) { el('family').value = i.family; sort = null; }
+      if (VIEWS[i.family].tab) {
+        tab = i[VIEWS[i.family].tab];
+        try { localStorage.setItem(TAB_KEY + i.family, tab); } catch { /* storage blocked: this visit only */ }
+      }
       return itemLabel(i) + ' was added as Special Order with no threshold. Set its stocking status in its row.';
     });
   });

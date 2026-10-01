@@ -149,8 +149,29 @@
   function mountOptions(slot) {
     slot.innerHTML = `
       <p class="sub">Click a length to toggle whether it's a buyable stock length for that size &amp; grade. Where we buy a stronger grade, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of <code>#2</code>). Each change is saved at once for every computer, and the Activity Log shows who made it.</p>
+      <form class="row" id="menu-add">
+        <label class="field">Size <input id="menu-add-size" required autocomplete="off" placeholder="2x4" style="width:6em"></label>
+        <label class="field">Grade <input id="menu-add-grade" required autocomplete="off" placeholder="SS" style="width:6em"></label>
+        <button>Add size and grade</button>
+      </form>
       <div id="menu-message" role="status"></div>
       <div class="menu-wrap" id="menu-mount"></div>`;
+
+    // A new size and grade starts with no lengths; its row then takes clicks
+    // like any other. A size or grade already known, typed in other capitals,
+    // takes its known spelling ("dss" is DSS), as the database would refuse a
+    // second group that differs only in capitals.
+    el('menu-add').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const keys = Object.keys(versions.lengths).map((k) => k.split('|'));
+      const known = (typed, list) => list.find((x) => x.toLowerCase() === typed.toLowerCase()) || typed;
+      const size = known(el('menu-add-size').value.trim(), keys.map(([s]) => s));
+      const grade = known(el('menu-add-grade').value.trim(), gradeOrder.concat(keys.map(([, g]) => g)));
+      if ((size + grade).includes('|')) return sayMenu('A size or a grade cannot hold "|".');
+      if (`${size}|${grade}` in versions.lengths) return sayMenu(`${size} ${grade} is already on the list.`);
+      await saveOption('/api/lumber/lengths', { size, grade, version: null, lengths: [] });
+      if (`${size}|${grade}` in versions.lengths) el('menu-add').reset();  // kept for a retry when refused
+    });
 
     el('menu-mount').addEventListener('click', (e) => {
       const chip = e.target.closest('.len-chip');
