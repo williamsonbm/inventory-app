@@ -57,6 +57,7 @@ const CATALOG_CHANGES = {
     fn: 'set_lvl_depth_threshold', args: (b) => [b.depth, b.version, b.threshold_lf], as: 'threshold',
   },
   '/api/lumber/lengths': { fn: 'set_lumber_lengths', args: (b) => [b.size, b.grade, b.version, b.lengths], as: 'lengths' },
+  '/api/lumber/remove': { fn: 'remove_lumber_group', args: (b) => [b.size, b.grade, b.version], as: 'removed' },
   '/api/lumber/redirect': {
     fn: 'set_grade_redirect', args: (b) => [b.size, b.from_grade, b.version, b.to_grade], as: 'redirect',
   },

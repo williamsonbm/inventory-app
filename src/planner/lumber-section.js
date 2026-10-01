@@ -7,9 +7,9 @@
    buying options (purchasable lengths and grade redirects) are shared by
    every computer and logged (#81 part 1, S37): they are read from
    /api/lumber/menu, each change is saved at once, and every lumber plan runs
-   with the shared options (src/app.js). Their editor is Settings → Lumber
-   buying options (#81 story 25), which calls mountOptions; the Planner keeps
-   only the redirect picker on a "Not carried" row.
+   with the shared options (src/app.js). Their editor is the "Stock lengths
+   we buy" panel here, next to the buy list it changes (owner, 2026-10-01; a
+   departure from #81 story 25, which put it in Settings).
 
    Registers window.PlannerSections.lumber.
 
@@ -83,12 +83,17 @@
     return `<span class="redirect-lbl">Redirect to</span><select class="redirect-sel" data-key="${esc(key)}" title="Send ${esc(key.replace('|', ' '))}'s demand to a stronger carried grade instead">${opts}</select>`;
   }
 
+  // A group can be removed when nothing uses it: no length switched on and
+  // no redirect from it or to it (the database checks this again).
+  function removable(key) {
+    const [size, grade] = key.split('|');
+    return !(menu[key] || []).length && !activeRedirects[key] &&
+      !Object.entries(activeRedirects).some(([k, to]) => k.split('|')[0] === size && to === grade);
+  }
+
   // Every size and grade the database lists, a group with no lengths
-  // included, so a group switched off can be switched on again. Only the
-  // Settings page has the editor; the Planner reads the options for its
-  // redirect pickers.
+  // included, so a group switched off can be switched on again.
   function paintMenu() {
-    if (!el('menu-mount')) return;
     const keys = Object.keys(versions.lengths).sort();
     el('menu-mount').innerHTML = keys.map((key) => {
       const label = key.replace('|', ' ');
@@ -96,12 +101,22 @@
       const chips = CANDIDATE_LENGTHS.map((L) =>
         `<span class="len-chip ${set.has(L) ? 'on' : ''}" data-key="${esc(key)}" data-len="${L}">${L}′</span>`,
       ).join('');
-      return `<div class="menu-row"><span class="lbl">${esc(label)}</span>${chips}${redirectSelectHtml(key)}</div>`;
+      const remove = removable(key)
+        ? `<button type="button" class="ghost menu-remove" data-key="${esc(key)}" style="padding:2px 10px;font-size:12.5px">Remove</button>` : '';
+      return `<div class="menu-row"><span class="lbl">${esc(label)}</span>${chips}${redirectSelectHtml(key)}${remove}</div>`;
     }).join('');
+    // The grades the engine ranks, so it can redirect them; Other takes any grade.
+    const pick = el('menu-add-grade');
+    if (!pick.options.length) {
+      pick.innerHTML = gradeOrder.map((g) => `<option>${esc(g)}</option>`).join('') + '<option value="">Other…</option>';
+    }
   }
 
+  // The panel opens to show a message: a redirect picked in the results
+  // saves through it, and a refusal hidden in a folded panel goes unseen.
   function sayMenu(text) {
     el('menu-message').innerHTML = text ? `<div class="note bad">${esc(text)}</div>` : '';
+    if (text) el('menu-sec').open = true;
   }
 
   async function loadOptions() {
@@ -117,20 +132,19 @@
   // clicks until the reload: a second click sent before it would carry the
   // old version and be refused as someone else's change.
   async function saveOption(route, body) {
-    const editor = el('menu-mount');
     sayMenu('');
-    if (editor) editor.inert = true;
+    el('menu-mount').inert = true;
     try {
       await AppHeader.send(route, { key: crypto.randomUUID(), ...body });
     } catch (err) {
       sayMenu(err.message);
     }
     await loadOptions();
-    if (editor) editor.inert = false;
+    el('menu-mount').inert = false;
   }
 
-  // One handler, wired to BOTH the Settings editor's rows and the Planner
-  // results' "Not carried" rows (render, below) — the same redirectSelectHtml
+  // One handler, wired to BOTH the Stock-lengths panel's rows and the
+  // results area's "Not carried" rows (render, below) — the same redirectSelectHtml
   // markup shows up in both places, so one listener body covers it rather than
   // two copies that could drift.
   function onRedirectChange(e) {
@@ -143,19 +157,28 @@
     });
   }
 
-  // Settings → Lumber buying options: builds the editor into `slot`, wires
-  // it, and starts the options load. Called once by
-  // src/settings/lumber-options.html.
-  function mountOptions(slot) {
-    slot.innerHTML = `
-      <p class="sub">Click a length to toggle whether it's a buyable stock length for that size &amp; grade. Where we buy a stronger grade, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of <code>#2</code>). Each change is saved at once for every computer, and the Activity Log shows who made it.</p>
-      <form class="row" id="menu-add">
-        <label class="field">Size <input id="menu-add-size" required autocomplete="off" placeholder="2x4" style="width:6em"></label>
-        <label class="field">Grade <input id="menu-add-grade" required autocomplete="off" placeholder="SS" style="width:6em"></label>
-        <button>Add size and grade</button>
-      </form>
-      <div id="menu-message" role="status"></div>
-      <div class="menu-wrap" id="menu-mount"></div>`;
+  // Builds the editor into the section's tools slot, wires it, and starts the
+  // options load. Called once by planner.html.
+  function mount({ out, tools }) {
+    tools.innerHTML = `
+      <details class="sec" id="menu-sec">
+        <summary>Stock lengths we buy (shared)</summary>
+        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade. Where we buy a stronger grade, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of <code>#2</code>). Each change is saved at once for every computer, and the Activity Log shows who made it.</p>
+        <form class="row" id="menu-add" style="margin-top:8px">
+          <label class="field">Size <input id="menu-add-size" required autocomplete="off" placeholder="2x4" style="width:6em"></label>
+          <label class="field">Grade <select id="menu-add-grade"></select></label>
+          <label class="field" id="menu-add-other-field" hidden>Other grade <input id="menu-add-other" autocomplete="off" style="width:7em"></label>
+          <button>Add size and grade</button>
+        </form>
+        <div id="menu-message" role="status"></div>
+        <div class="menu-wrap" id="menu-mount"></div>
+      </details>`;
+
+    el('menu-add-grade').addEventListener('change', () => {
+      const other = el('menu-add-grade').value === '';
+      el('menu-add-other-field').hidden = !other;
+      el('menu-add-other').required = other;
+    });
 
     // A new size and grade starts with no lengths; its row then takes clicks
     // like any other. A size or grade already known, typed in other capitals,
@@ -166,14 +189,21 @@
       const keys = Object.keys(versions.lengths).map((k) => k.split('|'));
       const known = (typed, list) => list.find((x) => x.toLowerCase() === typed.toLowerCase()) || typed;
       const size = known(el('menu-add-size').value.trim(), keys.map(([s]) => s));
-      const grade = known(el('menu-add-grade').value.trim(), gradeOrder.concat(keys.map(([, g]) => g)));
+      const grade = known(el('menu-add-grade').value || el('menu-add-other').value.trim(),
+        gradeOrder.concat(keys.map(([, g]) => g)));
       if ((size + grade).includes('|')) return sayMenu('A size or a grade cannot hold "|".');
       if (`${size}|${grade}` in versions.lengths) return sayMenu(`${size} ${grade} is already on the list.`);
       await saveOption('/api/lumber/lengths', { size, grade, version: null, lengths: [] });
-      if (`${size}|${grade}` in versions.lengths) el('menu-add').reset();  // kept for a retry when refused
+      if (`${size}|${grade}` in versions.lengths) el('menu-add-size').value = el('menu-add-other').value = '';  // kept for a retry when refused
     });
 
     el('menu-mount').addEventListener('click', (e) => {
+      const remove = e.target.closest('.menu-remove');
+      if (remove) {
+        const [size, grade] = remove.dataset.key.split('|');
+        saveOption('/api/lumber/remove', { size, grade, version: versions.lengths[remove.dataset.key] });
+        return;
+      }
       const chip = e.target.closest('.len-chip');
       if (!chip) return;
       const key = chip.dataset.key;
@@ -184,20 +214,7 @@
       saveOption('/api/lumber/lengths', { size, grade, version: versions.lengths[key], lengths: [...set] });
     });
     el('menu-mount').addEventListener('change', onRedirectChange);
-    loadOptions();
-  }
-
-  // The Planner: points to the editor, wires the results' redirect pickers,
-  // and starts the options load they need. Called once by planner.html.
-  function mount({ out, tools }) {
-    tools.innerHTML = `
-      <p class="sub">The stock lengths we buy and the grade redirects are shared by every computer. Change them in <a href="/settings/lumber-options">Settings → Lumber buying options</a>.</p>
-      <div id="menu-message" role="status"></div>`;
     out.addEventListener('change', onRedirectChange);
-    // The options change in Settings, often in another tab, so they are read
-    // again whenever this tab comes back into view; otherwise a "Not carried"
-    // row would offer the redirects of when the Planner was opened.
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadOptions(); });
 
     // The options used to live in this browser under these two keys; the
     // database holds them now, so the old copies are removed.
@@ -237,11 +254,11 @@
     // own banner below already explains why nothing was ordered for it.
     //
     // Each row gets its OWN "Redirect to" picker — the exact same
-    // redirectSelectHtml() the Settings editor uses, keyed off g.key. It
+    // redirectSelectHtml() the Stock-lengths panel uses, keyed off g.key. It
     // was written to need only a "size|grade" key, never assuming that grade
     // is carried, so a not-carried grade can use it unchanged: pick a
     // stronger carried grade here and it applies on the next "Work out what to
-    // buy", same as a redirect set in Settings. A grade with no
+    // buy", same as a redirect set in the panel above. A grade with no
     // stronger carried grade to offer (redirectSelectHtml returns '') falls
     // back to the original redesign-or-special-order wording, for that row
     // only.
@@ -438,7 +455,7 @@
         const why = row.fullyRedirected
           ? `Redirected to ${esc(row.redirect.toLabel)} — see that row for the order and cut plan.`
           : !row.inMenu
-            ? `We buy no stock lengths of ${esc(row.label)} — add them in Settings → Lumber buying options, then click Work out what to buy again to get a board count.`
+            ? `We buy no lengths of ${esc(row.label)} — switch some on in the Stock lengths we buy panel (add it there if it is not listed), then click Work out what to buy again to get a board count.`
             : `Nothing to buy for ${esc(row.label)} — on-hand covers it.`;
         orderSide = `<h4 style="color:var(--muted)">${why}</h4>`;
       } else {
@@ -548,7 +565,6 @@
              (head.includes('available') || head.includes('qty') || head.includes('on_hand'));
     },
     mount,
-    mountOptions,
     render,
   };
 })();
