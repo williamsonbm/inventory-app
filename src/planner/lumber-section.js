@@ -3,11 +3,13 @@
    =============================================================
    Served at /lumber-section.js by src/planner/server.js and loaded by
    planner.html, which runs the plan and hands the response to render(). Moved
-   from the old lumber.html (spec #72, step 1); the buy list and the editable
-   purchasable lengths and grade redirects are unchanged. Those buying options
-   are shared by every computer and logged (#81 part 1, S37): the panel reads
-   them from /api/lumber/menu and saves each change at once, and every lumber
-   plan runs with the shared options (src/app.js).
+   from the old lumber.html (spec #72, step 1); the buy list is unchanged. The
+   buying options (purchasable lengths and grade redirects) are shared by
+   every computer and logged (#81 part 1, S37): they are read from
+   /api/lumber/menu, each change is saved at once, and every lumber plan runs
+   with the shared options (src/app.js). Their editor is Settings → Lumber
+   buying options (#81 story 25), which calls mountOptions; the Planner keeps
+   only the redirect picker on a "Not carried" row.
 
    Registers window.PlannerSections.lumber.
 
@@ -82,8 +84,11 @@
   }
 
   // Every size and grade the database lists, a group with no lengths
-  // included, so a group switched off can be switched on again.
+  // included, so a group switched off can be switched on again. Only the
+  // Settings page has the editor; the Planner reads the options for its
+  // redirect pickers.
   function paintMenu() {
+    if (!el('menu-mount')) return;
     const keys = Object.keys(versions.lengths).sort();
     el('menu-mount').innerHTML = keys.map((key) => {
       const label = key.replace('|', ' ');
@@ -108,23 +113,24 @@
 
   // Saves one change. On any refusal (someone else changed it first, or the
   // save was not confirmed) the panel says so and reloads what is saved, so
-  // it never shows a choice the database does not hold. The panel takes no
+  // it never shows a choice the database does not hold. The editor takes no
   // clicks until the reload: a second click sent before it would carry the
   // old version and be refused as someone else's change.
   async function saveOption(route, body) {
+    const editor = el('menu-mount');
     sayMenu('');
-    el('menu-mount').inert = true;
+    if (editor) editor.inert = true;
     try {
       await AppHeader.send(route, { key: crypto.randomUUID(), ...body });
     } catch (err) {
       sayMenu(err.message);
     }
     await loadOptions();
-    el('menu-mount').inert = false;
+    if (editor) editor.inert = false;
   }
 
-  // One handler, wired to BOTH the Stock-lengths panel's rows and the results
-  // area's "Not carried" rows (render, below) — the same redirectSelectHtml
+  // One handler, wired to BOTH the Settings editor's rows and the Planner
+  // results' "Not carried" rows (render, below) — the same redirectSelectHtml
   // markup shows up in both places, so one listener body covers it rather than
   // two copies that could drift.
   function onRedirectChange(e) {
@@ -137,16 +143,14 @@
     });
   }
 
-  // Builds the editor into the section's tools slot, wires it, and starts the
-  // options load. Called once by planner.html.
-  function mount({ out, tools }) {
-    tools.innerHTML = `
-      <details class="sec" id="menu-sec">
-        <summary>Stock lengths we buy (shared)</summary>
-        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade. Where we buy a stronger grade, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of <code>#2</code>). Each change is saved at once for every computer, and the Activity Log shows who made it.</p>
-        <div id="menu-message" role="status"></div>
-        <div class="menu-wrap" id="menu-mount"></div>
-      </details>`;
+  // Settings → Lumber buying options: builds the editor into `slot`, wires
+  // it, and starts the options load. Called once by
+  // src/settings/lumber-options.html.
+  function mountOptions(slot) {
+    slot.innerHTML = `
+      <p class="sub">Click a length to toggle whether it's a buyable stock length for that size &amp; grade. Where we buy a stronger grade, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of <code>#2</code>). Each change is saved at once for every computer, and the Activity Log shows who made it.</p>
+      <div id="menu-message" role="status"></div>
+      <div class="menu-wrap" id="menu-mount"></div>`;
 
     el('menu-mount').addEventListener('click', (e) => {
       const chip = e.target.closest('.len-chip');
@@ -159,7 +163,20 @@
       saveOption('/api/lumber/lengths', { size, grade, version: versions.lengths[key], lengths: [...set] });
     });
     el('menu-mount').addEventListener('change', onRedirectChange);
+    loadOptions();
+  }
+
+  // The Planner: points to the editor, wires the results' redirect pickers,
+  // and starts the options load they need. Called once by planner.html.
+  function mount({ out, tools }) {
+    tools.innerHTML = `
+      <p class="sub">The stock lengths we buy and the grade redirects are shared by every computer. Change them in <a href="/settings/lumber-options">Settings → Lumber buying options</a>.</p>
+      <div id="menu-message" role="status"></div>`;
     out.addEventListener('change', onRedirectChange);
+    // The options change in Settings, often in another tab, so they are read
+    // again whenever this tab comes back into view; otherwise a "Not carried"
+    // row would offer the redirects of when the Planner was opened.
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) loadOptions(); });
 
     // The options used to live in this browser under these two keys; the
     // database holds them now, so the old copies are removed.
@@ -199,11 +216,11 @@
     // own banner below already explains why nothing was ordered for it.
     //
     // Each row gets its OWN "Redirect to" picker — the exact same
-    // redirectSelectHtml() the Stock-lengths panel uses, keyed off g.key. It
+    // redirectSelectHtml() the Settings editor uses, keyed off g.key. It
     // was written to need only a "size|grade" key, never assuming that grade
     // is carried, so a not-carried grade can use it unchanged: pick a
     // stronger carried grade here and it applies on the next "Work out what to
-    // buy", same as a redirect set in the panel above. A grade with no
+    // buy", same as a redirect set in Settings. A grade with no
     // stronger carried grade to offer (redirectSelectHtml returns '') falls
     // back to the original redesign-or-special-order wording, for that row
     // only.
@@ -400,7 +417,7 @@
         const why = row.fullyRedirected
           ? `Redirected to ${esc(row.redirect.toLabel)} — see that row for the order and cut plan.`
           : !row.inMenu
-            ? `${esc(row.label)} isn’t in the Stock lengths we buy panel — add it there, then click Work out what to buy again to get a board count.`
+            ? `We buy no stock lengths of ${esc(row.label)} — add them in Settings → Lumber buying options, then click Work out what to buy again to get a board count.`
             : `Nothing to buy for ${esc(row.label)} — on-hand covers it.`;
         orderSide = `<h4 style="color:var(--muted)">${why}</h4>`;
       } else {
@@ -510,6 +527,7 @@
              (head.includes('available') || head.includes('qty') || head.includes('on_hand'));
     },
     mount,
+    mountOptions,
     render,
   };
 })();

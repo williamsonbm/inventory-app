@@ -44,6 +44,7 @@ const PAGE_FILES = {
   '/settings/suppliers': ['settings/catalog.html', 'text/html'],
   '/settings/reasons': ['settings/catalog.html', 'text/html'],
   '/settings/lvl-thresholds': ['settings/catalog.html', 'text/html'],
+  '/settings/lumber-options': ['settings/lumber-options.html', 'text/html'],
   '/activity': ['settings/activity.html', 'text/html'],
   '/password': ['settings/password.html', 'text/html'],
   '/app-header.js': ['settings/app-header.js', 'application/javascript'],
@@ -186,7 +187,7 @@ function createApp({ database, sessionSecret }) {
   app.post('/api/lumber/plan', catchAsync(async (req, res, next) => {
     const { menu, redirects } = await readLumberOptions(database);
     if (!Object.keys(menu).length) {
-      return res.status(400).json({ ok: false, error: 'No lumber lengths are switched on. Switch on the lengths you buy in "Stock lengths we buy".' });
+      return res.status(400).json({ ok: false, error: 'No lumber lengths are switched on. Switch on the lengths you buy in Settings → Lumber buying options.' });
     }
     Object.assign(req.body, { menu, redirects });
     next();
