@@ -72,7 +72,7 @@
   }
 
   // The "Redirect to" picker for one menu row — only rendered when there's a
-  // stronger, carried grade to send this one to. Saved at once, and applies
+  // stronger grade we buy to send this one to. Saved at once, and applies
   // on the next "Work out what to buy", on every computer.
   function redirectSelectHtml(key) {
     const [size, grade] = key.split('|');
@@ -457,7 +457,7 @@
         const why = row.fullyRedirected
           ? `Redirected to ${esc(row.redirect.toLabel)} — see that row for the order and cut plan.`
           : !row.inMenu
-            ? `We buy no lengths of ${esc(row.label)} — switch some on in the Stock lengths we buy panel (add it there if it is not listed), then click Work out what to buy again to get a board count.`
+            ? `We buy no lengths of ${esc(row.label)} — switch some on in the Stock lengths we buy panel (add it there if it is not listed; the sizes we buy are ${esc(lumberSizes.join(', '))}), then click Work out what to buy again to get a board count.`
             : `Nothing to buy for ${esc(row.label)} — on-hand covers it.`;
         orderSide = `<h4 style="color:var(--muted)">${why}</h4>`;
       } else {

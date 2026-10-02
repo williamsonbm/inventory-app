@@ -139,7 +139,7 @@ test('the Planner plans lumber with the shared buying options, never a copy the 
   assert.deepEqual(row('2x6|#2').redirect, { toLabel: '2x6 DSS', lf: 36 }, 'the shared redirect applies');
 });
 
-test('Settings adds a lumber size and grade with no lengths, and its lengths are then switched on', async () => {
+test('the Planner adds a lumber size and grade with no lengths, and its lengths are then switched on', async () => {
   const ctx = await withAdmin();
   const added = await change(ctx, '/api/lumber/lengths', { size: '2x4', grade: 'SS', version: null, lengths: [] });
   assert.equal(added.status, 200, added.body.error);

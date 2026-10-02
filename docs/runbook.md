@@ -40,6 +40,12 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
 
    Good result: `applied: 002-passwords.sql` (001 is already there). A failure prints
    `migration <file> failed, nothing from it was applied` and changes nothing.
+
+   **The order for every migration from 003 on** (#81): apply it to the Preview database, try
+   the preview, apply it to Production, then merge the PR. Until the Preview database exists,
+   Vercel's Preview variables point at the live database, so **nobody edits the catalog from a
+   Vercel preview**: once 003 is in Production, a preview's catalog edits would change the
+   live catalog.
 4. **Passwords for the three database logins** (`inv_app`, `inv_planner`, `inv_backup`): one
    `ALTER ROLE <login> PASSWORD '...'` each, in Supabase's SQL editor. Done.
 5. **Vercel's environment variables** (Production, and Preview if previews should work):

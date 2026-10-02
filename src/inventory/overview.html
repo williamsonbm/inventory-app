@@ -53,7 +53,7 @@
     <label class="field">Search <input id="search" type="search" autocomplete="off" placeholder="Name or note…"></label>
     <div class="field">Show <span id="show-status" class="pills"></span></div>
     <label style="padding-bottom:6px"><input type="checkbox" id="show-retired"> Show retired</label>
-    <button type="button" id="add-open" style="margin-left:auto">+ Add item</button>
+    <button type="button" id="add-open" style="margin-left:auto" disabled>+ Add item</button>
   </div>
 
   <form id="add" class="row" style="align-items:flex-end;margin-top:10px" hidden>
@@ -87,8 +87,7 @@
   const STATUSES = ['Stocked', 'Non-Stock', 'Special Order'];
   // What each identity field is called on screen, per family where it differs.
   const FIELD_LABELS = { sku: 'SKU', product: 'Product', size: 'Size', grade: 'Grade', length_ft: 'Length (ft)' };
-  const LVL_LABELS = { size: 'Depth' };
-  const fieldLabel = (family, field) => (family === 'lvl' && LVL_LABELS[field]) || FIELD_LABELS[field];
+  const fieldLabel = (family, field) => ((VIEWS[family] || {}).labels || {})[field] || FIELD_LABELS[field];
   const TAB_KEY = 'inventory.tab.';   // + family: the size or depth tab last open
 
   let families = [];
@@ -124,18 +123,22 @@
     stocking: { head: 'Stocking', width: 20, sort: (i) => i.stocking, cell: (i) => esc(i.stocking) },
     // Under All, an LVL row says where its threshold is instead of "not set".
     threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold,
-      cell: (i) => (i.family === 'lvl' ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
+      cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
     // A marker only: the note itself shows when the row is open.
     note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
   };
   // Per family: its columns, its tab field (if any), and its own order when
   // nobody has clicked a header. Lumber: weakest grade first, then shortest.
-  // LVL thresholds are per depth, so LVL rows have no Threshold column.
+  // LVL calls its size the depth, in inches (″), and its thresholds are per
+  // depth (Settings → LVL thresholds), so LVL rows have no Threshold column.
   const VIEWS = {
     plates: { cols: ['sku', 'stocking', 'threshold', 'note'], order: ['sku'] },
     hangers: { cols: ['sku', 'stocking', 'threshold', 'note'], order: ['sku'] },
     lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'note'], order: ['grade', 'length'] },
-    lvl: { tab: 'size', cols: ['product', 'length', 'stocking', 'note'], order: ['product', 'length'] },
+    lvl: {
+      tab: 'size', cols: ['product', 'length', 'stocking', 'note'], order: ['product', 'length'],
+      labels: { size: 'Depth' }, tabUnit: '″', perDepth: true,
+    },
   };
   // A search looks across every size or depth, so the rows then name their
   // item in full instead of leaving the size to the tab.
@@ -190,7 +193,7 @@
       try { saved = localStorage.getItem(TAB_KEY + current); } catch { /* storage blocked */ }
       tab = values.includes(saved) ? saved : values[0] ?? null;
     }
-    const tabLabel = (t) => (current === 'lvl' ? t + '″' : t);
+    const tabLabel = (t) => t + (VIEWS[current].tabUnit || '');
     el('tabs').innerHTML = values.map((t) =>
       '<button type="button" data-tab="' + esc(t) + '" aria-pressed="' + (t === tab) + '">' + esc(tabLabel(t)) + '</button>').join('');
   }
@@ -230,7 +233,7 @@
     }
     const stocking = '<label class="field">Stocking <select data-field="stocking">' +
       STATUSES.map((s) => '<option' + (s === i.stocking ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select></label>';
-    const threshold = i.family === 'lvl'
+    const threshold = (VIEWS[i.family] || {}).perDepth
       ? '<span class="field">Threshold <span class="sub" style="padding:7px 0">per depth, in Settings → LVL thresholds</span></span>'
       : '<label class="field">Threshold <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '"></label>';
     const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" value="' + esc(i.note || '') + '"></label>';

@@ -85,7 +85,7 @@
       addForm() {
         return '<label class="field">Item <input id="f-item" list="item-list" required autocomplete="off"></label>' +
           '<datalist id="item-list">' + this.items.filter((i) => i.active).map((i) => '<option value="' + esc(this.name(i)) + '">').join('') + '</datalist>' +
-          '<label class="field">Kind <select id="f-kind" required></select></label>' +
+          '<label class="field">Kind <select id="f-kind"></select></label>' +
           '<label class="field">Pieces <input id="f-pieces" type="number" min="1" step="1" required style="width:7em"></label><button>Add pack size</button>';
       },
       picked() { return this.items.find((i) => this.name(i) === el('f-item').value.trim()); },
@@ -102,6 +102,7 @@
       addBody() {
         const item = this.picked();
         if (!item) throw new Error('Pick an item from the list.');
+        if (!el('f-kind').value) throw new Error(this.name(item) + ' has a size of every kind already. Change it in its row.');
         return ['/api/pack-sizes/add', { item_id: item.id, kind: el('f-kind').value, pieces: Number(el('f-pieces').value) }];
       },
       head: '<tr><th>Item</th><th>Pack sizes, in pieces</th></tr>',
@@ -109,14 +110,15 @@
         const byItem = new Map();
         for (const p of this.packs) byItem.set(p.item_id, (byItem.get(p.item_id) || []).concat(p));
         return this.items
-          .filter((i) => byItem.has(i.id) || i.family === 'plates')
+          .filter((i) => byItem.has(i.id) || this.kinds[i.family].includes('pallet'))
           .filter((i) => words.every((w) => this.name(i).toLowerCase().includes(w)))
           .map((i) => {
             const packs = byItem.get(i.id) || [];
             const cells = packs.map((p) => '<label class="field inline">' + esc(p.kind) + ' ' +
               input('type="number" min="1" step="1" style="width:6em" data-pack="' + p.id + '" aria-label="' + esc(p.kind) + ' pieces"', p.pieces) + '</label>');
-            // S18: a plate with no pallet size has an unknown one, never a guess.
-            if (i.family === 'plates' && !packs.some((p) => p.kind === 'pallet')) cells.push('<span class="sub">pallet size unknown</span>');
+            // S18: an item that comes in pallets (plates) but has no pallet size
+            // has an unknown one, never a guess.
+            if (this.kinds[i.family].includes('pallet') && !packs.some((p) => p.kind === 'pallet')) cells.push('<span class="sub">pallet size unknown</span>');
             return '<tr><td class="name">' + esc(this.name(i)) + '</td><td>' + cells.join(' ') + '</td></tr>';
           });
       },
