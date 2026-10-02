@@ -266,7 +266,7 @@ test("lumber buying options start as the engine's default menu, and each change 
   const log = (await logRows(db)).at(-1);
   assert.equal(log.action, 'set lumber lengths');
   assert.deepEqual(log.old_value.lengths, DEFAULT_LUMBER_MENU['2x4|#2']);
-  const added = await setLengths('2x12', '#2', null, [12, 16]);  // a group not carried before
+  const added = await setLengths('2x12', '#2', null, [12, 16]);  // a group not bought before
   assert.deepEqual(added, { size: '2x12', grade: '#2', lengths: [12, 16], version: 1 });
 
   const redirect = await call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x6', '#2', null, 'DSS');
@@ -379,6 +379,18 @@ test('a lumber group that differs from another only in capitals, or holds a "|",
   await refused(set('2x4', 'A|B'), '23514', 'a grade with "|"');
   await refused(set('2x4|2x6', 'SS'), 'IV400', 'a size with "|", which is no lumber size');
   await set('2x4', 'SS');
+
+  // The same rules hold for redirects and items (#81 change 9).
+  const redirect = (from, version, to) => call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x4', from, version, to);
+  await refused(redirect('A|B', null, 'DSS'), '23514', 'a redirect from a grade with "|"');
+  await refused(redirect('#2', null, 'A|B'), '23514', 'a redirect to a grade with "|"');
+  await redirect('SS', null, 'DSS');
+  await refused(redirect('ss', null, 'DSS'), 'IV409', 'a second redirect from the same grade in other capitals');
+  const changed = await redirect('ss', 1, 'MSR2400');  // the same redirect, named in other capitals
+  assert.deepEqual([changed.from_grade, changed.to_grade, changed.version], ['SS', 'MSR2400', 2]);
+  await refused(redirect('#2', null, '#2'), 'IV400', 'a redirect to its own grade');
+  await refused(call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: 'A|B', length_ft: 8 }),
+    '23514', 'an item grade with "|"');
 });
 
 test('a lumber group is removed only when no length is switched on and no redirect names it', async () => {
@@ -397,6 +409,10 @@ test('a lumber group is removed only when no length is switched on and no redire
   await refused(remove('2x4', '1650', 1), 'IV422', 'a group another grade is redirected to');
   await call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x4', '#1', 1, null);
   await refused(remove('2x4', '1650', 9), 'IV409', 'a group changed since the screen read it');
+  // A redirect naming the group in other capitals still names it.
+  await lengths('2x6', 'Foo', null, []);
+  await call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x6', 'foo', null, 'DSS');
+  await refused(remove('2x6', 'Foo', 1), 'IV422', 'a group a redirect names in other capitals');
 
   await remove('2x4', '1650', 1);
   const left = await as(db, APP, async (app) =>
@@ -474,6 +490,7 @@ test('each family has its own pack size kinds, and an item one size of each kind
 
   const before = (await logRows(db)).length;
   const cases = [
+    ['no kind', () => add('hangers', null), 'A pack size for Hangers is a carton.'],
     ['a hanger pallet', () => add('hangers', 'pallet'), 'A pack size for Hangers is a carton.'],
     ['a plate carton', () => add('plates', 'carton'), 'A pack size for Plates is a pack, box or pallet.'],
     ['a lumber box', () => add('lumber', 'box'), 'A pack size for Lumber is a pack.'],
@@ -495,4 +512,22 @@ test('each family has its own pack size kinds, and an item one size of each kind
     await refused(owner.query("UPDATE inv.pack_sizes SET kind = 'carton' WHERE item_id = $1 AND kind = 'pack'", [items.lumber.id]),
       'IV400', 'a lumber pack changed to a carton');
   });
+});
+
+test('the import refuses two sizes of one kind for an item, and an LVL depth no item has', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const lvl = { family: 'lvl', identity: { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 }, stocking: 'Stocked', threshold: null };
+  const hanger = { family: 'hangers', identity: { sku: 'LUS28' }, stocking: 'Stocked', threshold: null };
+  const run = (packs, depths) => as(db, null, (owner) => owner.query('SELECT inv.import_catalog($1, $2, $3, $4)',
+    [ann.email, JSON.stringify([lvl, hanger]), JSON.stringify(packs), JSON.stringify(depths)]));
+  const carton = (pieces) => ({ family: 'hangers', identity: { sku: 'LUS28' }, kind: 'carton', pieces });
+
+  let err = await refused(run([carton(50), carton(25)], []), 'IV400', 'two cartons for one hanger');
+  assert.equal(err.message, 'The pack sizes give LUS28 two carton sizes.');
+  err = await refused(run([], [{ depth: '11 7/8', threshold_lf: 100 }]), 'IV400', 'a depth no LVL item has');
+  assert.equal(err.message, 'No LVL item has the depth "11 7/8". Check the LVL thresholds file.');
+  await refused(as(db, null, (owner) => owner.query("INSERT INTO inv.lvl_depth_thresholds (depth) VALUES (' ')")),
+    '23514', 'a blank depth, whatever writes it');
+  await run([carton(50)], [{ depth: '14', threshold_lf: 100 }]);
 });

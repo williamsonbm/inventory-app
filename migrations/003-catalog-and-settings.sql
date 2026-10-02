@@ -65,7 +65,7 @@ CREATE TABLE inv.items (
   sku       text CHECK (sku = inv.tidy(sku) AND sku <> ''),          -- plates, hangers
   product   text CHECK (product = inv.tidy(product) AND product <> ''),  -- LVL: "2.1 RigidLam LVL 1-3/4"
   size      text CHECK (size = inv.tidy(size) AND size <> ''),        -- lumber: "2x4"; LVL: the depth, "11-7/8"
-  grade     text CHECK (grade = inv.tidy(grade) AND grade <> ''),     -- lumber: "#2"
+  grade     text CHECK (grade = inv.tidy(grade) AND grade <> '' AND pg_catalog.strpos(grade, '|') = 0),  -- lumber: "#2"
   length_ft integer CHECK (length_ft > 0),                            -- lumber, LVL: whole feet
   -- S43: set only by a person. S38: a new item starts Special Order.
   stocking  text NOT NULL DEFAULT 'Special Order'
@@ -147,7 +147,7 @@ DECLARE
   f inv.families;
 BEGIN
   SELECT fam.* INTO f FROM inv.items i JOIN inv.families fam ON fam.code = i.family WHERE i.id = NEW.item_id;
-  IF FOUND AND NOT NEW.kind = ANY (f.pack_kinds) THEN
+  IF FOUND AND NOT coalesce(NEW.kind = ANY (f.pack_kinds), false) THEN
     RAISE EXCEPTION 'A pack size for % is a %.', f.name, inv.word_list(f.pack_kinds, 'or') USING ERRCODE = 'IV400';
   END IF;
   RETURN NEW;
@@ -161,7 +161,7 @@ CREATE TRIGGER check_kind BEFORE INSERT OR UPDATE OF item_id, kind ON inv.pack_s
 -- none of their own. A depth gets its row on its first save. Blank is "not
 -- set" (24", which the company buys only to order).
 CREATE TABLE inv.lvl_depth_thresholds (
-  depth        text PRIMARY KEY,             -- as on the LVL items: "11-7/8"
+  depth        text PRIMARY KEY CHECK (depth = inv.tidy(depth) AND depth <> ''),  -- as on the LVL items: "11-7/8"
   threshold_lf integer CHECK (threshold_lf >= 0),
   version      integer NOT NULL DEFAULT 1
 );
@@ -248,13 +248,19 @@ INSERT INTO inv.lumber_purchasable_lengths (size, grade, lengths) VALUES
 -- GRADE_STRENGTH_ORDER is the one copy of that rule, and resolveRedirects
 -- drops a redirect it refuses with a warning at plan time. A second copy in
 -- SQL could disagree with it.
+-- Grades follow the buying options' rules: no "|" (the page splits
+-- "size|grade" there), and capitals do not make a second redirect.
 CREATE TABLE inv.lumber_grade_redirects (
   size       text NOT NULL CHECK (size = ANY (inv.lumber_sizes())),
-  from_grade text NOT NULL CHECK (from_grade = inv.tidy(from_grade) AND from_grade <> ''),
-  to_grade   text CHECK (to_grade = inv.tidy(to_grade) AND to_grade <> '' AND to_grade <> from_grade),
+  from_grade text NOT NULL CHECK (from_grade = inv.tidy(from_grade) AND from_grade <> ''
+                                  AND pg_catalog.strpos(from_grade, '|') = 0),
+  to_grade   text CHECK (to_grade = inv.tidy(to_grade) AND to_grade <> '' AND pg_catalog.strpos(to_grade, '|') = 0
+                         AND pg_catalog.lower(to_grade) <> pg_catalog.lower(from_grade)),
   version    integer NOT NULL DEFAULT 1,
   PRIMARY KEY (size, from_grade)
 );
+CREATE UNIQUE INDEX lumber_grade_redirects_name_key
+  ON inv.lumber_grade_redirects (size, pg_catalog.lower(from_grade));
 
 CREATE TRIGGER bump_version BEFORE UPDATE OF to_grade ON inv.lumber_grade_redirects
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
@@ -622,11 +628,7 @@ BEGIN
       USING ERRCODE = 'IV409', DETAIL = inv.pack_size_json(was)::text;
   END IF;
   PERFORM inv.check_pieces(p_pieces);
-  BEGIN
-    UPDATE inv.pack_sizes SET pieces = p_pieces::integer WHERE id = p_id RETURNING * INTO p;
-  EXCEPTION WHEN unique_violation THEN
-    RAISE EXCEPTION 'That item already has a % of %.', was.kind, p_pieces::integer USING ERRCODE = 'IV400';
-  END;
+  UPDATE inv.pack_sizes SET pieces = p_pieces::integer WHERE id = p_id RETURNING * INTO p;
   RETURN inv.finish_action(a.log_id, p.id, inv.pack_size_json(was), inv.pack_size_json(p));
 END
 $$;
@@ -944,7 +946,7 @@ BEGIN
   END IF;
   IF EXISTS (SELECT FROM inv.lumber_grade_redirects r
               WHERE r.size = was.size AND r.to_grade IS NOT NULL
-                AND (r.from_grade = was.grade OR r.to_grade = was.grade)) THEN
+                AND pg_catalog.lower(was.grade) IN (pg_catalog.lower(r.from_grade), pg_catalog.lower(r.to_grade))) THEN
     RAISE EXCEPTION 'A redirect names % %. Clear it before you remove it.', was.size, was.grade
       USING ERRCODE = 'IV422';
   END IF;
@@ -975,11 +977,11 @@ BEGIN
     RAISE EXCEPTION 'A redirect needs a size and a grade.' USING ERRCODE = 'IV400';
   END IF;
   PERFORM inv.check_lumber_size(inv.tidy(p_size));
-  IF v_to = inv.tidy(p_from_grade) THEN
+  IF pg_catalog.lower(v_to) = pg_catalog.lower(inv.tidy(p_from_grade)) THEN
     RAISE EXCEPTION 'A grade cannot be redirected to itself.' USING ERRCODE = 'IV400';
   END IF;
   SELECT * INTO was FROM inv.lumber_grade_redirects
-   WHERE size = inv.tidy(p_size) AND from_grade = inv.tidy(p_from_grade) FOR UPDATE;
+   WHERE size = inv.tidy(p_size) AND pg_catalog.lower(from_grade) = pg_catalog.lower(inv.tidy(p_from_grade)) FOR UPDATE;
   IF FOUND IS DISTINCT FROM (p_version IS NOT NULL) OR p_version IS DISTINCT FROM was.version THEN
     RAISE EXCEPTION 'Someone else changed the % % redirect since you opened this screen.', p_size, p_from_grade
       USING ERRCODE = 'IV409', DETAIL = coalesce(inv.grade_redirect_json(was)::text, 'null');
@@ -1056,6 +1058,10 @@ BEGIN
       RAISE EXCEPTION 'A pack size names %, which is not in the catalog.', inv.item_label(v) USING ERRCODE = 'IV400';
     END IF;
     PERFORM inv.check_pieces((r ->> 'pieces')::numeric);
+    IF v_id = ANY (v_added) AND EXISTS (SELECT FROM inv.pack_sizes WHERE item_id = v_id AND kind = r ->> 'kind') THEN
+      -- The item is new in this run, so its other size came from this list.
+      RAISE EXCEPTION 'The pack sizes give % two % sizes.', inv.item_label(v), r ->> 'kind' USING ERRCODE = 'IV400';
+    END IF;
     IF v_id = ANY (v_added) THEN
       INSERT INTO inv.pack_sizes (item_id, kind, pieces) VALUES (v_id, r ->> 'kind', (r ->> 'pieces')::integer)
       ON CONFLICT DO NOTHING
@@ -1072,6 +1078,11 @@ BEGIN
          pg_catalog.jsonb_typeof(v_lf) = 'number' AND v_lf::numeric = pg_catalog.trunc(v_lf::numeric)
          AND v_lf::numeric >= 0)) THEN
       RAISE EXCEPTION 'An LVL depth threshold needs a depth and a whole number of linear feet, 0 or more, or blank.'
+        USING ERRCODE = 'IV400';
+    END IF;
+    -- A typing error ("11 7/8" for "11-7/8") would make that depth Special Order.
+    IF NOT EXISTS (SELECT FROM inv.items WHERE family = 'lvl' AND size = inv.tidy(r ->> 'depth')) THEN
+      RAISE EXCEPTION 'No LVL item has the depth "%". Check the LVL thresholds file.', inv.tidy(r ->> 'depth')
         USING ERRCODE = 'IV400';
     END IF;
     INSERT INTO inv.lvl_depth_thresholds (depth, threshold_lf)

@@ -117,16 +117,6 @@ function catalogFromFiles(files) {
     });
   }
 
-  // A depth that no LVL item has is a typing error in the thresholds file
-  // ("11 7/8" for "11-7/8"). Saved, it would make that depth Special Order,
-  // and a second import only adds, so it could not correct it.
-  const lvlDepths = new Set(items.filter((i) => i.family === 'lvl').map((i) => i.identity.size));
-  for (const d of depths) {
-    if (!lvlDepths.has(d.depth)) {
-      throw Object.assign(new Error(`No LVL item has the depth "${d.depth}". Check the LVL thresholds file.`), { code: 'IV400' });
-    }
-  }
-
   for (const p of JSON.parse(fs.readFileSync(PLATE_PACKS, 'utf8'))) {
     const identity = { sku: squeeze(p.sku) };
     packSizes.push({ family: 'plates', identity, kind: p.unit_label, pieces: p.eaches_per_unit });
@@ -162,7 +152,7 @@ async function importCatalog(url, files, adminEmail) {
     // ("Only an active user can make changes") does not say the address is
     // the problem, so the owner is told that here first.
     const { rows } = await client.query(
-      'SELECT 1 FROM inv.users WHERE email = pg_catalog.lower(pg_catalog.btrim($1)) AND active AND admin', [adminEmail]);
+      'SELECT 1 FROM inv.users WHERE email = pg_catalog.lower(inv.tidy($1)) AND active AND admin', [adminEmail]);
     if (!rows.length) {
       throw Object.assign(new Error(`No active admin has the address ${adminEmail}.`), { code: 'IV403' });
     }
