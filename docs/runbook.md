@@ -18,19 +18,22 @@ Below, `$OWNER_URL` stands for that Session-pooler string with the `postgres` lo
 
 ## Go-live steps, in order
 
-Steps 1 to 4 were done on 2026-09-29 for migration 001: Postgres is in the pod image, the
-Supabase project exists, migration 001 is applied, and the three logins have passwords.
+**The project changed on 2026-10-02.** The first project (East US, Free plan, set up
+2026-09-29) is replaced by **`truss-inventory`** in the **Conmat Group** organization, which is
+on the **Pro plan**: project ref `yhpdxbfwvrqwgyvbfsql`, region Canada (Central),
+`ca-central-1`, Postgres 17.11. On it, steps 1 to 3 are done and steps 4 to 8 are to do again.
+Its people and activity log were not copied: step 6 starts the list again, or bring them over
+first with a data-only dump of schema `inv` from the first project. Delete the first project
+once the app runs on the new one.
 
 1. **Postgres in the pod image.** Done.
-2. **The Supabase project** in East US (North Virginia), with "Enable Data API"
-   and "Automatically expose new tables" off, and "Enable automatic RLS" off. Done.
+2. **The Supabase project**, with "Enable Data API" and "Automatically expose new tables"
+   off, and "Enable automatic RLS" off. The project exists (above), on the Pro plan that
+   `docs/database-design.md` (Q10) plans for: daily backups kept 7 days, and no pausing.
 
-   **It is on the Free plan for now** (owner, 2026-09-30), not the $25 Pro plan that
-   `docs/database-design.md` (Q10) plans for go-live. Supabase's pricing page, checked
-   2026-09-30, gives the Free plan's limits: "Free projects are paused after 1 week of
-   inactivity", automatic backups "Not included", and a "Limit of 2 active projects". A
-   paused project stops answering, so sign-in fails until it is restored from the
-   dashboard. Move to Pro before go-live.
+   **The Data API is still on** (2026-10-02): `https://<project-ref>.supabase.co/rest/v1/`
+   answered `No API key found in request`, so a Data API is listening. Turn it off in
+   Project Settings → Data API, with the two other settings; step 7 checks it.
 3. **Run the migrations.** It applies only the files the database does not have yet, each in
    its own transaction.
 
@@ -38,11 +41,24 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    DIRECT_DATABASE_URL="$OWNER_URL" node src/db/migrate.js
    ```
 
-   Good result: `applied: 002-passwords.sql` (001 is already there). A failure prints
-   `migration <file> failed, nothing from it was applied` and changes nothing.
+   Good result: `applied: <the new files>`, or `nothing to apply` when the database has them
+   all. A failure prints `migration <file> failed, nothing from it was applied` and changes
+   nothing.
+
+   On the new project, 001 and 002 were applied on 2026-10-02 through Supabase's MCP server
+   as the `postgres` login, each file with its bookkeeping row in one transaction, as the
+   runner does. Checked: a fingerprint of every function body, table, column, constraint,
+   trigger, grant, default grant and role matched a database the runner built from the same
+   files. The runner answers `nothing to apply` for it.
 4. **Passwords for the three database logins** (`inv_app`, `inv_planner`, `inv_backup`): one
-   `ALTER ROLE <login> PASSWORD '...'` each, in Supabase's SQL editor. Done.
-5. **Vercel's environment variables** (Production, and Preview if previews should work):
+   `ALTER ROLE <login> PASSWORD '...'` each, in Supabase's SQL editor. **To do on the new
+   project**: its three logins have no password yet (checked 2026-10-02), so nothing can
+   connect as them.
+5. **Vercel's environment variables** (Production, and Preview if previews should work).
+   **To do again for the new project**: `DATABASE_URL` names the new project's pooler and
+   login, and `DATABASE_CA_CERT` is downloaded again from the new project's Database
+   Settings → SSL Configuration (if the text is the same as before, nothing changes).
+   `SESSION_SECRET` stays, unless everyone should be signed out.
 
    | Name | Value |
    |---|---|
@@ -57,14 +73,16 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    migration created. Supabase documents the `<login>.<project-ref>` form; the first sign-in
    proves it.
 6. **The first person**, as an admin, with a temporary password. It refuses to run once anyone
-   exists.
+   exists. **To do again on the new project** (no one is on its list; checked 2026-10-02),
+   unless the first project's people are brought over first (above).
 
    ```sh
    DIRECT_DATABASE_URL="$OWNER_URL" node src/db/add-first-user.js
    ```
 
    Then sign in to the app. It asks you to choose your own password before anything else.
-7. **Checks**, in Supabase's SQL editor. Each should answer as shown.
+7. **Checks**, in Supabase's SQL editor. Each should answer as shown (both did on the new
+   project, 2026-10-02).
 
    ```sql
    -- Supabase's browser roles have no way into the app's schema: f, f
@@ -81,7 +99,9 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    stolen copy of the hashes is hard to guess; in the pod one check takes a median of 162 ms
    (2026-09-29). Sign in once on the deployed app. If it is noticeably slow (several seconds),
    lower `N` in `src/auth/password.js`: old hashes keep working, because each hash carries its
-   own settings. Done 2026-09-29: sign-in felt fast.
+   own settings. Done 2026-09-29 on the first project: sign-in felt fast. Check again on the
+   new one: its database is in Montreal, and Vercel's functions run in Washington, D.C. by
+   default (`vercel.json` sets no region), where the first project also was.
 
    **Do not judge this by the duration in Vercel's log.** On 2026-09-29 the log showed
    6,814 ms for `POST /api/sign-in`, but the page answered at once. The extra is about
