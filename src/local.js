@@ -35,6 +35,7 @@ const PORT = Number(process.env.PORT) || 3000;
 const HOST = process.env.HOST || '127.0.0.1';
 const DATABASE = 'inv_local';
 const SECRET_FILE = path.join(__dirname, '..', '.local-session-secret');
+const PEOPLE_FILE = path.join(__dirname, '..', '.local-people.json');
 const FIXTURES = path.join(__dirname, '..', 'test');
 const TEST_CATALOG = {
   plates: path.join(FIXTURES, 'port-fixtures', 'stock', 'plate-stock-20260902.csv'),
@@ -64,28 +65,47 @@ function sessionSecret() {
 }
 
 // Every person in the old database, each as a JSON row, or none when there
-// is no old database yet (3D000). Any other failure stops the reset before
-// it drops anything, so a failed read never loses the people.
+// is no old database or no people table yet (3D000, 42P01). Any other
+// failure stops the reset before it drops anything.
 async function readPeople(server) {
   const client = new Client({ connectionString: urlFor(server) });
   try {
     await client.connect();
     return (await client.query('SELECT pg_catalog.to_jsonb(u) AS u FROM inv.users u ORDER BY id')).rows.map((r) => r.u);
   } catch (err) {
-    if (err.code === '3D000') return [];
+    if (err.code === '3D000' || err.code === '42P01') return [];
     throw new Error(`The people could not be read, so nothing was reset: ${err.message}`);
   } finally {
     await client.end().catch(() => {});
   }
 }
 
-// Puts the people back into the new database, with their ids and passwords.
-// Only the columns both versions have are copied; a new column takes its default.
+// The people to put back after a reset, saved to PEOPLE_FILE (not in git,
+// like the secret) before anything is dropped. A reset that fails part-way,
+// on a migration that does not apply, leaves a database with no one in it;
+// the next reset then takes the people from the file, so none are lost.
+async function keepPeople(server) {
+  const people = await readPeople(server);
+  if (people.length) {
+    fs.writeFileSync(PEOPLE_FILE, JSON.stringify(people), { mode: 0o600 });
+    return people;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(PEOPLE_FILE, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+// Puts the people back into the new database, with their ids and passwords,
+// all or none. Only the columns both versions have are copied; a new column
+// takes its default.
 async function restorePeople(server, people) {
   if (!people.length) return;
   const client = new Client({ connectionString: urlFor(server) });
   await client.connect();
   try {
+    await client.query('BEGIN');
     const { rows } = await client.query(`SELECT column_name FROM information_schema.columns
       WHERE table_schema = 'inv' AND table_name = 'users'`);
     const columns = rows.map((r) => r.column_name).filter((c) => c in people[0]);
@@ -96,6 +116,10 @@ async function restorePeople(server, people) {
     }
     await client.query(`SELECT pg_catalog.setval(pg_catalog.pg_get_serial_sequence('inv.users', 'id'),
       (SELECT pg_catalog.max(id) FROM inv.users))`);
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw new Error(`The people could not be put back; they are kept in ${path.basename(PEOPLE_FILE)}: ${err.message}`);
   } finally {
     await client.end();
   }
@@ -104,14 +128,17 @@ async function restorePeople(server, people) {
 async function main() {
   const server = process.env.TEST_DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres';
   const reset = process.argv.includes('--reset');
-  const people = reset ? await readPeople(server) : [];
 
   const admin = new Client({ connectionString: server });
   await admin.connect().catch(() => {
     throw new Error(`No Postgres answers at ${new URL(server).host}. Start it (README, "Run it"), then npm start again.`);
   });
+  let people = [];
   try {
-    if (reset) await admin.query(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
+    if (reset) {
+      people = await keepPeople(server);
+      await admin.query(`DROP DATABASE IF EXISTS ${DATABASE} WITH (FORCE)`);
+    }
     const { rowCount } = await admin.query('SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1', [DATABASE]);
     if (!rowCount) await admin.query(`CREATE DATABASE ${DATABASE}`);
   } finally {

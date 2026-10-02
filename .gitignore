@@ -12,5 +12,7 @@ samples/
 # Local node installs, if code lands here later.
 node_modules/
 
-# npm start's own sign-in secret, made on first start (src/local.js).
+# npm start's own sign-in secret, made on first start, and the people
+# npm run reset-local keeps (src/local.js).
 .local-session-secret
+.local-people.json
