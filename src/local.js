@@ -150,7 +150,13 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  console.error(err.message);
-  process.exit(1);
-});
+// The test catalog is also what test/import.test.js imports, so a renamed
+// fixture fails a test instead of breaking `npm run reset-local` unseen.
+module.exports = { TEST_CATALOG };
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err.message);
+    process.exit(1);
+  });
+}

@@ -179,8 +179,11 @@ function createApp({ database, sessionSecret }) {
   // Deliberately here and not in src/planner/server.js: the Planner module
   // reaches no database (test/port-guards.test.js).
   app.get('/api/lumber/menu', catchAsync(async (_req, res) => {
-    const [options, lumberSizes] = await Promise.all([readLumberOptions(database), readLumberSizes(database)]);
-    res.json({ ok: true, ...options, lumberSizes, gradeOrder: GRADE_STRENGTH_ORDER });
+    // One after the other: readLumberOptions already holds two of the pool's
+    // three connections (src/db/database.js), so a third read beside it would
+    // let one page load take the whole pool.
+    const options = await readLumberOptions(database);
+    res.json({ ok: true, ...options, lumberSizes: await readLumberSizes(database), gradeOrder: GRADE_STRENGTH_ORDER });
   }));
   // With every length switched off the engine would plan with its own
   // default, so that plan is refused instead.

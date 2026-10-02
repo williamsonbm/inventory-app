@@ -490,9 +490,9 @@ test('each family has its own pack size kinds, and an item one size of each kind
   await as(db, null, async (owner) => {
     const insert = (family, kind, pieces) => owner.query(
       'INSERT INTO inv.pack_sizes (item_id, kind, pieces) VALUES ($1, $2, $3)', [items[family].id, kind, pieces]);
-    await refused(insert('hangers', 'pallet', 2000), '23514', 'a hanger pallet');
+    await refused(insert('hangers', 'pallet', 2000), 'IV400', 'a hanger pallet');
     await refused(insert('hangers', 'carton', 99), '23505', 'a second hanger carton');
     await refused(owner.query("UPDATE inv.pack_sizes SET kind = 'carton' WHERE item_id = $1 AND kind = 'pack'", [items.lumber.id]),
-      '23514', 'a lumber pack changed to a carton');
+      'IV400', 'a lumber pack changed to a carton');
   });
 });

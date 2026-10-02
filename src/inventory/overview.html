@@ -94,7 +94,6 @@
   let families = [];
   let items = [];
   let gradeOrder = [];
-  let lumberSizes = [];   // the only sizes lumber comes in (inv.lumber_sizes)
   let current = null;     // the family the family bar shows, or 'all'
   const shown = new Set(STATUSES);
   let sort = null;        // { col, dir } a person chose; null is the family's own order
@@ -154,7 +153,7 @@
   async function load() {
     const body = await fetch('/api/items').then((r) => r.json()).catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
     if (!body.ok) return say(body.error, 'bad');
-    ({ families, items, gradeOrder, lumberSizes } = body);
+    ({ families, items, gradeOrder } = body);
     paintStatus();
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
       if (f === current) return;
@@ -299,21 +298,20 @@
       return save(what === 'retire' ? '/api/items/retire' : '/api/items/unretire', { key: crypto.randomUUID(), id: item.id, version: item.version },
         (i) => itemLabel(i) + (i.active ? ' is in use again.' : ' was retired. Its history stays.'));
     }
-    if (!tr.classList.contains('item')) return;
-    const id = Number(tr.dataset.id);
+    if (tr.classList.contains('item')) toggle(Number(tr.dataset.id));
+  });
+  function toggle(id) {
     open = open === id ? null : id;
     renaming = false;
     paint();
-  });
+  }
 
   // From the keyboard: Enter or Space on a focused row opens or closes it.
   el('rows').addEventListener('keydown', (e) => {
     if ((e.key !== 'Enter' && e.key !== ' ') || !e.target.matches('tr.item')) return;
     e.preventDefault();
     const id = Number(e.target.dataset.id);
-    open = open === id ? null : id;
-    renaming = false;
-    paint();
+    toggle(id);
     const row = el('rows').querySelector('tr.item[data-id="' + id + '"]');
     if (row) row.focus();
   });
@@ -354,12 +352,12 @@
   el('show-retired').addEventListener('change', paint);
 
   // The name fields of a family, as inputs, filled from `item` when given.
-  // A lumber size is picked from the sizes lumber comes in, never typed.
+  // A field with fixed choices (lumber sizes) is picked from them, never typed.
   function identityInputs(fam, item) {
     const f = families.find((x) => x.code === fam);
     const value = (field) => (item ? item[field] : '');
-    const box = (field) => (fam === 'lumber' && field === 'size'
-      ? '<select data-identity="size" required>' + lumberSizes.map((s) =>
+    const box = (field) => (f.choices && f.choices[field]
+      ? '<select data-identity="' + field + '" required>' + f.choices[field].map((s) =>
         '<option' + (s === value(field) ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select>'
       : '<input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : '') +
         ' required autocomplete="off" value="' + esc(value(field)) + '">');
@@ -388,8 +386,9 @@
       el('search').value = '';
       shown.add(i.stocking);
       paintStatus();
-      if ((VIEWS[i.family] || PLAIN).tab) {
-        tab = i[VIEWS[i.family].tab];
+      const tabField = VIEWS[i.family] && VIEWS[i.family].tab;
+      if (tabField) {
+        tab = i[tabField];
         try { localStorage.setItem(TAB_KEY + i.family, tab); } catch { /* storage blocked: this visit only */ }
       }
       open = i.id;

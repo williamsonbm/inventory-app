@@ -135,17 +135,20 @@ CREATE TABLE inv.pack_sizes (
 CREATE TRIGGER bump_version BEFORE UPDATE OF pieces ON inv.pack_sizes
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
 
--- A pack size is a kind its item's family comes in, whatever writes the row.
--- inv.check_pack_kind gives the plain message first; this is the guarantee.
--- A trigger, not a CHECK, because the kinds are data in inv.families.
+-- A pack size is a kind its item's family comes in, whatever writes the row,
+-- with the plain message a person sees. A trigger, not a CHECK, because the
+-- kinds are data in inv.families. An item that does not exist is left to
+-- the foreign key.
 CREATE FUNCTION inv.check_pack_size_kind() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp
 AS $$
+DECLARE
+  f inv.families;
 BEGIN
-  IF NOT EXISTS (SELECT FROM inv.items i JOIN inv.families f ON f.code = i.family
-                  WHERE i.id = NEW.item_id AND NEW.kind = ANY (f.pack_kinds)) THEN
-    RAISE EXCEPTION 'A % pack size is not one its item''s family comes in.', NEW.kind USING ERRCODE = 'check_violation';
+  SELECT fam.* INTO f FROM inv.items i JOIN inv.families fam ON fam.code = i.family WHERE i.id = NEW.item_id;
+  IF FOUND AND NOT NEW.kind = ANY (f.pack_kinds) THEN
+    RAISE EXCEPTION 'A pack size for % is a %.', f.name, inv.word_list(f.pack_kinds, 'or') USING ERRCODE = 'IV400';
   END IF;
   RETURN NEW;
 END
@@ -153,21 +156,6 @@ $$;
 
 CREATE TRIGGER check_kind BEFORE INSERT OR UPDATE OF item_id, kind ON inv.pack_sizes
   FOR EACH ROW EXECUTE FUNCTION inv.check_pack_size_kind();
-
--- Refuses a kind of pack size that the family does not come in.
-CREATE FUNCTION inv.check_pack_kind(p_family text, p_kind text) RETURNS void
-LANGUAGE plpgsql STABLE
-SET search_path = pg_catalog, pg_temp
-AS $$
-DECLARE
-  f inv.families;
-BEGIN
-  SELECT * INTO f FROM inv.families WHERE code = p_family;
-  IF p_kind IS NULL OR NOT p_kind = ANY (f.pack_kinds) THEN
-    RAISE EXCEPTION 'A pack size for % is a %.', f.name, inv.word_list(f.pack_kinds, 'or') USING ERRCODE = 'IV400';
-  END IF;
-END
-$$;
 
 -- LVL reorder thresholds, per depth in linear feet (Q16): LVL items carry
 -- none of their own. A depth gets its row on its first save. Blank is "not
@@ -233,7 +221,7 @@ CREATE TABLE inv.lumber_purchasable_lengths (
 );
 -- Capitals do not make a second group, as for items: "2x4 dss" is 2x4 DSS.
 CREATE UNIQUE INDEX lumber_purchasable_lengths_name_key
-  ON inv.lumber_purchasable_lengths (pg_catalog.lower(size), pg_catalog.lower(grade));
+  ON inv.lumber_purchasable_lengths (size, pg_catalog.lower(grade));
 
 CREATE TRIGGER bump_version BEFORE UPDATE OF lengths ON inv.lumber_purchasable_lengths
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
@@ -600,7 +588,6 @@ BEGIN
   IF NOT FOUND THEN
     RAISE EXCEPTION 'That item is not in the catalog.' USING ERRCODE = 'IV400';
   END IF;
-  PERFORM inv.check_pack_kind(i.family, p_kind);
   PERFORM inv.check_pieces(p_pieces);
   BEGIN
     INSERT INTO inv.pack_sizes (item_id, kind, pieces) VALUES (p_item_id, p_kind, p_pieces::integer)
@@ -907,8 +894,7 @@ BEGIN
   END IF;
   IF was.size IS NULL THEN
     SELECT * INTO l FROM inv.lumber_purchasable_lengths
-     WHERE pg_catalog.lower(size) = pg_catalog.lower(inv.tidy(p_size))
-       AND pg_catalog.lower(grade) = pg_catalog.lower(inv.tidy(p_grade));
+     WHERE size = inv.tidy(p_size) AND pg_catalog.lower(grade) = pg_catalog.lower(inv.tidy(p_grade));
     IF FOUND THEN
       RAISE EXCEPTION '% % is already on the list as % %.', inv.tidy(p_size), inv.tidy(p_grade), l.size, l.grade
         USING ERRCODE = 'IV400';
@@ -1069,7 +1055,6 @@ BEGIN
     IF NOT FOUND THEN
       RAISE EXCEPTION 'A pack size names %, which is not in the catalog.', inv.item_label(v) USING ERRCODE = 'IV400';
     END IF;
-    PERFORM inv.check_pack_kind(v.family, r ->> 'kind');
     PERFORM inv.check_pieces((r ->> 'pieces')::numeric);
     IF v_id = ANY (v_added) THEN
       INSERT INTO inv.pack_sizes (item_id, kind, pieces) VALUES (v_id, r ->> 'kind', (r ->> 'pieces')::integer)

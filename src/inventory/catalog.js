@@ -19,7 +19,7 @@ function itemLabel(i) {
 }
 
 // The only lumber sizes an item or a buying option can have, in screen
-// order (inv.lumber_sizes), for the size pickers.
+// order (inv.lumber_sizes), for the Planner's "Add size and grade" form.
 async function readLumberSizes(database) {
   return (await database.read('SELECT inv.lumber_sizes() AS sizes'))[0].sizes;
 }
@@ -27,22 +27,24 @@ async function readLumberSizes(database) {
 // The families Inventory holds, for the family bar (in the Planner's order,
 // so the two bars match) and "+ Add item", and
 // every item. A family with no identity fields (EWP until step 5) cannot hold
-// items, so it is left out. The version rides along so a save can say which
-// version it read (S41).
+// items, so it is left out. choices gives a name field's only values, which
+// the page offers as a list: lumber sizes (inv.lumber_sizes). The version
+// rides along so a save can say which version it read (S41).
 async function listCatalog(database) {
-  const [families, items, lumberSizes] = await Promise.all([
+  const [families, items] = await Promise.all([
     database.read(`
-      SELECT code, name, identity, pack_kinds FROM inv.families
+      SELECT code, name, identity, pack_kinds,
+             CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
+        FROM inv.families
        WHERE identity IS NOT NULL
        ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`),
     database.read(`
       SELECT id::int, family, sku, product, size, grade, length_ft, stocking, threshold, note, active, version
         FROM inv.items ORDER BY family, sku, product, size, grade, length_ft`),
-    readLumberSizes(database),
   ]);
   // gradeOrder: lumber grades weakest first, the engine's own ranking, so the
   // Overview sorts 2x4 #2 ahead of 2x4 #1 (owner, 2026-10-01).
-  return { families, items, lumberSizes, gradeOrder: GRADE_STRENGTH_ORDER };
+  return { families, items, gradeOrder: GRADE_STRENGTH_ORDER };
 }
 
 // Route → the database function it calls, its arguments after the actor and
@@ -101,7 +103,7 @@ async function readLumberOptions(database) {
 const SETTINGS_LISTS = {
   '/api/pack-sizes': {
     as: 'pack_sizes',
-    sql: 'SELECT id::int, item_id::int, kind, pieces, version FROM inv.pack_sizes ORDER BY item_id, kind, pieces',
+    sql: 'SELECT id::int, item_id::int, kind, pieces, version FROM inv.pack_sizes ORDER BY item_id, kind',
   },
   '/api/suppliers': {
     as: 'suppliers',

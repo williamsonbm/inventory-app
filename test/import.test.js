@@ -17,16 +17,9 @@ const path = require('node:path');
 const { freshDatabase, urlFor, as, APP, firstUser, call, logRows, refused, HASH } = require('./support/database.js');
 const { importCatalog } = require('../src/db/import-catalog.js');
 
-const ON_HAND_EXPORTS = path.join(__dirname, 'port-fixtures', 'stock');  // the Planner's recorded exports
-const HERE = path.join(__dirname, 'import-fixtures');
-const FILES = {
-  plates: path.join(ON_HAND_EXPORTS, 'plate-stock-20260902.csv'),
-  hangers: path.join(ON_HAND_EXPORTS, 'hanger-stock-20260902.csv'),
-  lumber: path.join(ON_HAND_EXPORTS, 'lumber-stock-20260902.csv'),
-  ewp: path.join(HERE, 'ewp-on-hand-20260930.csv'),
-  specialOrder: path.join(HERE, 'special-order.csv'),
-  lvlDepthThresholds: path.join(HERE, 'lvl-depth-thresholds.csv'),
-};
+// The Planner's recorded exports and this file's fixtures: the same files
+// `npm run reset-local` imports.
+const { TEST_CATALOG: FILES } = require('../src/local.js');
 
 async function counts(db) {
   return as(db, APP, async (app) => (await app.query(`

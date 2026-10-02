@@ -71,7 +71,7 @@
   const SECTIONS = {
     'pack-sizes': {
       title: 'Pack sizes',
-      help: 'In pieces. Each item has at most one size of each kind its family comes in: hangers in cartons, plates in packs, boxes and pallets, lumber and LVL in packs. Changing a size here changes no receipt or count already saved: each keeps the size it was entered with.',
+      help: 'In pieces. Each item has at most one size of each kind its family comes in, and Kind lists those it has none of yet. Changing a size here changes no receipt or count already saved: each keeps the size it was entered with.',
       async load() {
         const [catalog, packs] = await Promise.all([get('/api/items'), get('/api/pack-sizes')]);
         this.items = catalog.items;
@@ -88,10 +88,11 @@
           '<label class="field">Kind <select id="f-kind" required></select></label>' +
           '<label class="field">Pieces <input id="f-pieces" type="number" min="1" step="1" required style="width:7em"></label><button>Add pack size</button>';
       },
+      picked() { return this.items.find((i) => this.name(i) === el('f-item').value.trim()); },
       // Kind offers only what the picked item's family comes in, less the
       // kinds it already has a size for: one size of each (owner, 2026-10-02).
       onAddInput() {
-        const item = this.items.find((i) => this.name(i) === el('f-item').value.trim());
+        const item = this.picked();
         const has = new Set(this.packs.filter((p) => item && p.item_id === item.id).map((p) => p.kind));
         const left = item ? this.kinds[item.family].filter((k) => !has.has(k)) : [];
         el('f-kind').innerHTML = left.length
@@ -99,7 +100,7 @@
           : '<option value="">' + (item ? 'has every kind' : 'pick an item') + '</option>';
       },
       addBody() {
-        const item = this.items.find((i) => this.name(i) === el('f-item').value.trim());
+        const item = this.picked();
         if (!item) throw new Error('Pick an item from the list.');
         return ['/api/pack-sizes/add', { item_id: item.id, kind: el('f-kind').value, pieces: Number(el('f-pieces').value) }];
       },
@@ -258,7 +259,7 @@
   }
   if (section.addForm) el('add').innerHTML = section.addForm(); else el('add').hidden = true;
   if (section.onAddInput) {
-    el('add').addEventListener('input', (e) => { if (e.target.id !== 'f-kind') section.onAddInput(); });
+    el('add').addEventListener('input', (e) => { if (e.target.id === 'f-item') section.onAddInput(); });
     section.onAddInput();
   }
   paint();

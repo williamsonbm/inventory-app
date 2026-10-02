@@ -61,9 +61,6 @@ a{color:var(--accent)}
 .themebtn:hover{background:var(--surface-2)}
 .appbar-user{font-size:14px;color:var(--muted)}
 .appbar-signout{padding:4px 12px;font-size:13px}
-/* Settings (#77): the task row under the modes, and its forms. */
-.appbar-tasks{border-top:0;padding-top:0}
-.appbar-tasks a{font-size:13px}
 .field{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
 /* A label beside its box, several to a line: pack sizes in Settings. */
 .field.inline{display:inline-flex;flex-direction:row;align-items:center;gap:6px;margin-right:14px}
@@ -95,7 +92,7 @@ form.row > button{padding-top:6px;padding-bottom:6px}
   border-top:1px solid var(--line);background:var(--surface-2)}
 .appbar-filter .label{font-size:12px;color:var(--muted)}
 .seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden}
-.seg button,.seg a{border:0;border-radius:0;background:var(--card);color:var(--muted);font-size:13px;padding:5px 16px;
+.seg button,.seg a{border:0;border-radius:0;background:var(--card);color:var(--muted);padding:5px 16px;
   text-decoration:none}
 .seg > * + *{border-left:1px solid var(--line-strong)}
 .seg button[aria-pressed="true"],.seg a[aria-current="page"]{background:var(--accent);color:#fff;font-weight:600}
@@ -107,13 +104,15 @@ form.row > button{padding-top:6px;padding-bottom:6px}
    fills it only after two requests; an empty bar was 13px shorter, and the
    page jumped when the buttons arrived (owner, 2026-10-02). */
 .seg:has(> .placeholder){visibility:hidden}
-/* Activity Log: its filters in the bar, each box as tall as a family button
-   (13px text, 19.5px line, 5px padding, 1px border), so every bar is one
-   height and a change of mode never moves the page. */
+/* Every control in a bar has one text size, line and padding, so a family
+   button (in its bordered .seg) and an Activity Log box (with its own
+   border) are one height, and a change of mode never moves the page. */
+.appbar-filter :is(.seg button,.seg a,select,input),.appbar-filter > button{font-size:13px;line-height:19.5px;
+  padding-top:5px;padding-bottom:5px}
 .appbar-filter label.label{display:inline-flex;align-items:center;gap:6px;margin-right:6px}
-.appbar-filter select,.appbar-filter input{font:inherit;font-size:13px;line-height:19.5px;padding:5px 8px;
+.appbar-filter select,.appbar-filter input{font-family:inherit;padding-left:8px;padding-right:8px;
   border:1px solid var(--line-strong);border-radius:6px;background:var(--card);color:var(--ink)}
-.appbar-filter > button{font-size:13px;line-height:19.5px;padding:5px 16px}
+.appbar-filter > button{padding-left:16px;padding-right:16px}
 @media(max-width:760px){
   .appbar{position:static}
   .appbar-primary,.appbar-nav,.appbar-filter{padding-left:14px;padding-right:14px}
