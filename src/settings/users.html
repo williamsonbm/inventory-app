@@ -30,16 +30,21 @@
 -->
 <header class="appbar">
   <div class="appbar-primary">
-    <span class="appbar-brand">Inventory</span>
+    <span class="appbar-brand">RTW Inventory Tracker</span>
     <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
     <span class="appbar-user" id="user-name"></span>
     <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
   </div>
   <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users" class="here" aria-current="page">Settings</a><a href="/activity">Activity Log</a></nav>
-  <nav class="appbar-nav appbar-tasks" aria-label="Tasks"><span class="task-group">Accounts</span><a href="/settings/users" class="here" aria-current="page">Users</a><a href="/password">Your password</a><span class="task-group">Catalogue</span><a href="/settings/pack-sizes">Pack sizes</a><a href="/settings/suppliers">Suppliers</a><a href="/settings/reasons">Reasons</a><a href="/settings/lvl-thresholds">LVL thresholds</a></nav>
+  <nav class="appbar-filter" aria-label="Tasks" id="tasks">
+    <span class="label" id="accounts-label">Accounts</span>
+    <div class="seg" role="group" aria-labelledby="accounts-label"><a href="/settings/users" aria-current="page">Users</a><a href="/password">Your password</a></div>
+    <span class="label" id="catalog-label">Catalog</span>
+    <div class="seg" role="group" aria-labelledby="catalog-label"><a href="/settings/pack-sizes">Pack sizes</a><a href="/settings/suppliers">Suppliers</a><a href="/settings/reasons">Reasons</a><a href="/settings/lvl-thresholds">LVL thresholds</a></div>
+  </nav>
 </header>
 
-<div class="wrap wide">
+<div class="wrap">
   <div id="message" role="status"></div>
 
   <form id="add" class="row" hidden>
@@ -48,6 +53,8 @@
     <label class="field">Temporary password <input id="add-password" required autocomplete="new-password" minlength="12"></label>
     <button id="add-btn">Add person</button>
   </form>
+
+  <label><input type="checkbox" id="show-removed"> Show removed</label>
 
   <div class="tw"><table class="one-line">
     <thead><tr><th>Name</th><th>Email address</th><th>Active</th><th>Admin</th><th>Last signed in</th><th class="admin-only" hidden></th></tr></thead>
@@ -102,7 +109,8 @@
   function paint() {
     document.querySelectorAll('.admin-only').forEach((n) => { n.hidden = !me.admin; });
     el('add').hidden = !me.admin;
-    el('rows').innerHTML = users.map((u) =>
+    // A removed person shows only when asked for (owner, 2026-10-02).
+    el('rows').innerHTML = users.filter((u) => u.active || el('show-removed').checked).map((u) =>
       '<tr data-id="' + u.id + '">' +
       '<td class="name">' + esc(u.name) + '</td><td>' + esc(u.email) + '</td>' +
       '<td>' + (u.active ? 'Yes' : 'Removed') + '</td><td>' + (u.admin ? 'Yes' : '') + '</td>' +
@@ -145,6 +153,8 @@
     }
     ACTIONS[what](u);
   });
+
+  el('show-removed').addEventListener('change', paint);
 
   el('add').addEventListener('submit', (e) => {
     e.preventDefault();

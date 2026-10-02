@@ -105,8 +105,10 @@ _Not_: family — plates, hangers, lumber, LVL and EWP are the families an item 
 
 **Pack size**:
 A known number of pieces in one pack, box, carton or pallet of an item. *Carton* is Simpson's word
-for a hanger pack. A receipt or count line keeps its own copy of the size it used, so correcting a
-pack size changes no line already saved. A plate with no pallet size listed has an unknown one.
+for a hanger pack. An item has at most one size of each kind its family comes in: hangers in
+cartons; plates in packs (bands of 20), boxes and pallets; lumber, LVL and EWP in packs. A receipt
+or count line keeps its own copy of the size it used, so correcting a pack size changes no line
+already saved. A plate with no pallet size listed has an unknown one.
 _Avoid_: pack factor, unit
 
 **LVL threshold**:

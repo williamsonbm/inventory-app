@@ -17,7 +17,7 @@ const { signIn, loadPerson, changePassword } = require('./auth/sign-in.js');
 const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js');
 const { readActivity } = require('./settings/activity.js');
 const {
-  listCatalog, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
+  listCatalog, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -179,7 +179,8 @@ function createApp({ database, sessionSecret }) {
   // Deliberately here and not in src/planner/server.js: the Planner module
   // reaches no database (test/port-guards.test.js).
   app.get('/api/lumber/menu', catchAsync(async (_req, res) => {
-    res.json({ ok: true, ...await readLumberOptions(database), gradeOrder: GRADE_STRENGTH_ORDER });
+    const [options, lumberSizes] = await Promise.all([readLumberOptions(database), readLumberSizes(database)]);
+    res.json({ ok: true, ...options, lumberSizes, gradeOrder: GRADE_STRENGTH_ORDER });
   }));
   // With every length switched off the engine would plan with its own
   // default, so that plan is refused instead.

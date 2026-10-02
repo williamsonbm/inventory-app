@@ -20,32 +20,36 @@
 <body>
 <!--
   overview.html — Inventory → Overview (#81 part 1): the item catalog, one
-  tab per family as in the web app's Stock page. A row opens a panel below
-  itself, where its stocking status, threshold and note are edited (owner,
-  2026-10-01). On hand, Incoming and Reorder arrive with part 2.
+  family at a time or All, picked in the same family bar as the Planner's
+  (owner, 2026-10-02). A row opens a panel below itself, where its stocking
+  status, threshold and note are edited (owner, 2026-10-01). On hand,
+  Incoming and Reorder arrive with part 2. Inventory has no task row while
+  the Overview is its only task; Receive, Count and Month-end join the
+  family bar on its right when they arrive (owner, 2026-10-02).
 
   Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
   repo has no DOM harness. Every route it calls is tested in
   test/inventory.test.js. The layout, filters, sorting and the family
-  tab's saved choice are checked by hand (#81, Testing Decisions).
+  bar's saved choice are checked by hand (#81, Testing Decisions).
 -->
 <header class="appbar">
   <div class="appbar-primary">
-    <span class="appbar-brand">Inventory</span>
+    <span class="appbar-brand">RTW Inventory Tracker</span>
     <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
     <span class="appbar-user" id="user-name"></span>
     <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
   </div>
   <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory" class="here" aria-current="page">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
-  <nav class="appbar-nav appbar-tasks" aria-label="Tasks"><a href="/inventory" class="here" aria-current="page">Overview</a></nav>
+  <div class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+  </div>
 </header>
 
-<div class="wrap wide">
+<div class="wrap">
   <div id="message" role="status"></div>
 
-  <div id="family-tabs" class="seg" role="group" aria-label="Family"></div>
-
-  <div class="row" style="align-items:flex-end;margin-top:12px">
+  <div class="row" style="align-items:flex-end">
     <label class="field">Search <input id="search" type="search" autocomplete="off" placeholder="Name or note…"></label>
     <div class="field">Show <span id="show-status" class="pills"></span></div>
     <label style="padding-bottom:6px"><input type="checkbox" id="show-retired"> Show retired</label>
@@ -85,13 +89,13 @@
   const FIELD_LABELS = { sku: 'SKU', product: 'Product', size: 'Size', grade: 'Grade', length_ft: 'Length (ft)' };
   const LVL_LABELS = { size: 'Depth' };
   const fieldLabel = (family, field) => (family === 'lvl' && LVL_LABELS[field]) || FIELD_LABELS[field];
-  const FAMILY_KEY = 'inventory.family';
   const TAB_KEY = 'inventory.tab.';   // + family: the size or depth tab last open
 
   let families = [];
   let items = [];
   let gradeOrder = [];
-  let current = null;     // the family whose tab is open
+  let lumberSizes = [];   // the only sizes lumber comes in (inv.lumber_sizes)
+  let current = null;     // the family the family bar shows, or 'all'
   const shown = new Set(STATUSES);
   let sort = null;        // { col, dir } a person chose; null is the family's own order
   let tab = null;         // the open size (lumber) or depth (LVL) tab
@@ -112,13 +116,16 @@
   // so neither repeats it in a column. What a person changes is in the row's
   // panel (panel, below), not in the columns.
   const COL = {
+    family: { head: 'Family', width: 14, sort: (i) => families.findIndex((f) => f.code === i.family), cell: (i) => esc(familyName(i.family)) },
     item: { head: 'Item', width: 40, sort: (i) => itemLabel(i), cell: (i) => esc(itemLabel(i)), name: true },
     sku: { head: 'SKU', width: 40, sort: (i) => i.sku, cell: (i) => esc(i.sku), name: true },
     product: { head: 'Product', width: 36, sort: (i) => i.product, cell: (i) => esc(i.product), name: true },
     grade: { head: 'Grade', width: 20, sort: (i) => gradeRank(i.grade), cell: (i) => esc(i.grade), name: true },
     length: { head: 'Length', width: 16, sort: (i) => i.length_ft, cell: (i) => i.length_ft + '′', name: true },
     stocking: { head: 'Stocking', width: 20, sort: (i) => i.stocking, cell: (i) => esc(i.stocking) },
-    threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold, cell: (i) => (i.threshold ?? '—') },
+    // Under All, an LVL row says where its threshold is instead of "not set".
+    threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold,
+      cell: (i) => (i.family === 'lvl' ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
     // A marker only: the note itself shows when the row is open.
     note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
   };
@@ -134,9 +141,11 @@
   // A search looks across every size or depth, so the rows then name their
   // item in full instead of leaving the size to the tab.
   // A family with no view of its own (EWP, once step 5 names its items) lists
-  // its items by name.
+  // its items by name. All lists every family's items by family, then name.
   const PLAIN = { cols: ['item', 'stocking', 'threshold', 'note'], order: ['item'] };
+  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'note'], order: ['family', 'item'] };
   const view = () => {
+    if (current === 'all') return ALL;
     const v = VIEWS[current] || PLAIN;
     if (!v.tab || !el('search').value.trim()) return v;
     return { cols: ['item'].concat(v.cols.filter((c) => !COL[c].name)), order: ['item'] };
@@ -145,33 +154,38 @@
   async function load() {
     const body = await fetch('/api/items').then((r) => r.json()).catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
     if (!body.ok) return say(body.error, 'bad');
-    ({ families, items, gradeOrder } = body);
-    let saved = '';
-    try { saved = localStorage.getItem(FAMILY_KEY) || ''; } catch { /* storage blocked */ }
-    if (!families.length) return say('No family holds items yet.', 'bad');
-    current = families.some((f) => f.code === saved) ? saved : families[0].code;
-    paintFamilies();
+    ({ families, items, gradeOrder, lumberSizes } = body);
     paintStatus();
-    paint();
+    AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+      if (f === current) return;
+      current = f;
+      sort = null;
+      tab = null;
+      open = null;
+      renaming = false;
+      el('add').hidden = true;
+      // "+ Add item" adds to the family shown, so All has none to add to.
+      el('add-open').disabled = f === 'all';
+      el('add-open').title = f === 'all' ? 'Pick a family to add an item.' : '';
+      paint();
+    });
   }
 
-  // One tab per family, as in the web app's Stock page.
-  function paintFamilies() {
-    el('family-tabs').innerHTML = families.map((f) =>
-      '<button type="button" data-family="' + esc(f.code) + '" aria-pressed="' + (f.code === current) + '">' + esc(f.name) + '</button>').join('');
-  }
   function paintStatus() {
     el('show-status').innerHTML = STATUSES.map((s) =>
       '<button type="button" data-status="' + esc(s) + '" aria-pressed="' + shown.has(s) + '">' + esc(s) + '</button>').join('');
   }
 
   // The size or depth tabs, for lumber and LVL: one per value the family's
-  // items have, in numeric order. The tab last open on this computer opens again.
+  // items have, in numeric order, so a size whose items are all retired has
+  // a tab only while retired items are shown. The tab last open on this
+  // computer opens again.
   function paintTabs() {
     const v = view();
     el('tabs').hidden = !v.tab;
     if (!v.tab) { tab = null; return; }
-    const values = [...new Set(items.filter((i) => i.family === current).map((i) => i[v.tab]))].sort(byText);
+    const retired = el('show-retired').checked;
+    const values = [...new Set(items.filter((i) => i.family === current && (retired || i.active)).map((i) => i[v.tab]))].sort(byText);
     if (!values.includes(tab)) {
       let saved = null;
       try { saved = localStorage.getItem(TAB_KEY + current); } catch { /* storage blocked */ }
@@ -189,7 +203,7 @@
     // The person's choice first, then the family's own order, then the name.
     const keys = (sort ? [sort] : []).concat(v.order.map((col) => ({ col, dir: 1 })), [{ col: 'item', dir: 1 }]);
     return items
-      .filter((i) => i.family === current && shown.has(i.stocking) && (retired || i.active))
+      .filter((i) => (current === 'all' || i.family === current) && shown.has(i.stocking) && (retired || i.active))
       .filter((i) => !v.tab || i[v.tab] === tab)
       .filter((i) => {
         const text = (itemLabel(i) + ' ' + (i.note || '')).toLowerCase();
@@ -240,7 +254,9 @@
       cols.map(([, c]) => '<td' + (c.name ? ' class="name"' : '') + '>' + c.cell(i) + (c === first && !i.active ? ' (retired)' : '') + '</td>').join('') +
       '</tr>' +
       (i.id === open ? '<tr class="detail" data-id="' + i.id + '"><td colspan="' + cols.length + '">' + panel(i) + '</td></tr>' : '')).join('');
-    el('count').textContent = rows.length + ' of ' + items.filter((i) => i.family === current).length + ' ' + familyName(current) + ' items shown.';
+    el('count').textContent = current === 'all'
+      ? rows.length + ' of ' + items.length + ' items shown.'
+      : rows.length + ' of ' + items.filter((i) => i.family === current).length + ' ' + familyName(current) + ' items shown.';
   }
 
   // Runs one change. On a stale save, the refusal carries the current item,
@@ -320,19 +336,6 @@
     sort = { col, dir: sort && sort.col === col ? -sort.dir : 1 };
     paint();
   });
-  el('family-tabs').addEventListener('click', (e) => {
-    const f = e.target.dataset && e.target.dataset.family;
-    if (!f || f === current) return;
-    current = f;
-    try { localStorage.setItem(FAMILY_KEY, f); } catch { /* storage blocked: this visit only */ }
-    sort = null;
-    tab = null;
-    open = null;
-    renaming = false;
-    el('add').hidden = true;
-    paintFamilies();
-    paint();
-  });
   el('tabs').addEventListener('click', (e) => {
     const t = e.target.dataset && e.target.dataset.tab;
     if (t === undefined) return;
@@ -351,16 +354,20 @@
   el('show-retired').addEventListener('change', paint);
 
   // The name fields of a family, as inputs, filled from `item` when given.
+  // A lumber size is picked from the sizes lumber comes in, never typed.
   function identityInputs(fam, item) {
     const f = families.find((x) => x.code === fam);
-    return f.identity.map((field) =>
-      '<label class="field">' + esc(fieldLabel(fam, field)) +
-      ' <input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : '') +
-      ' required autocomplete="off" value="' + esc(item ? item[field] : '') + '"></label>').join(' ');
+    const value = (field) => (item ? item[field] : '');
+    const box = (field) => (fam === 'lumber' && field === 'size'
+      ? '<select data-identity="size" required>' + lumberSizes.map((s) =>
+        '<option' + (s === value(field) ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select>'
+      : '<input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : '') +
+        ' required autocomplete="off" value="' + esc(value(field)) + '">');
+    return f.identity.map((field) => '<label class="field">' + esc(fieldLabel(fam, field)) + ' ' + box(field) + '</label>').join(' ');
   }
   function identityFrom(container) {
     const identity = {};
-    for (const input of container.querySelectorAll('input[data-identity]')) {
+    for (const input of container.querySelectorAll('[data-identity]')) {
       identity[input.dataset.identity] = input.dataset.identity === 'length_ft' ? Number(input.value) : input.value;
     }
     return identity;

@@ -31,16 +31,21 @@
 -->
 <header class="appbar">
   <div class="appbar-primary">
-    <span class="appbar-brand">Inventory</span>
+    <span class="appbar-brand">RTW Inventory Tracker</span>
     <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
     <span class="appbar-user" id="user-name"></span>
     <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
   </div>
   <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users" class="here" aria-current="page">Settings</a><a href="/activity">Activity Log</a></nav>
-  <nav class="appbar-nav appbar-tasks" aria-label="Tasks" id="tasks"><span class="task-group">Accounts</span><a href="/settings/users">Users</a><a href="/password">Your password</a><span class="task-group">Catalogue</span><a href="/settings/pack-sizes">Pack sizes</a><a href="/settings/suppliers">Suppliers</a><a href="/settings/reasons">Reasons</a><a href="/settings/lvl-thresholds">LVL thresholds</a></nav>
+  <nav class="appbar-filter" aria-label="Tasks" id="tasks">
+    <span class="label" id="accounts-label">Accounts</span>
+    <div class="seg" role="group" aria-labelledby="accounts-label"><a href="/settings/users">Users</a><a href="/password">Your password</a></div>
+    <span class="label" id="catalog-label">Catalog</span>
+    <div class="seg" role="group" aria-labelledby="catalog-label"><a href="/settings/pack-sizes">Pack sizes</a><a href="/settings/suppliers">Suppliers</a><a href="/settings/reasons">Reasons</a><a href="/settings/lvl-thresholds">LVL thresholds</a></div>
+  </nav>
 </header>
 
-<div class="wrap wide">
+<div class="wrap">
   <div id="message" role="status"></div>
   <form id="add" class="row"></form>
   <div class="row"><label class="field" id="search-field" hidden>Search <input id="search" type="search" autocomplete="off"></label></div>
@@ -66,10 +71,11 @@
   const SECTIONS = {
     'pack-sizes': {
       title: 'Pack sizes',
-      help: 'Packs, boxes, cartons and pallets, in pieces. Changing a size here changes no receipt or count already saved: each keeps the size it was entered with.',
+      help: 'In pieces. Each item has at most one size of each kind its family comes in: hangers in cartons, plates in packs, boxes and pallets, lumber and LVL in packs. Changing a size here changes no receipt or count already saved: each keeps the size it was entered with.',
       async load() {
         const [catalog, packs] = await Promise.all([get('/api/items'), get('/api/pack-sizes')]);
         this.items = catalog.items;
+        this.kinds = Object.fromEntries(catalog.families.map((f) => [f.code, f.pack_kinds]));
         this.packs = packs.pack_sizes;
         // A plate and a hanger may share a SKU, so a shared name carries its family.
         const uses = new Map();
@@ -79,8 +85,18 @@
       addForm() {
         return '<label class="field">Item <input id="f-item" list="item-list" required autocomplete="off"></label>' +
           '<datalist id="item-list">' + this.items.filter((i) => i.active).map((i) => '<option value="' + esc(this.name(i)) + '">').join('') + '</datalist>' +
-          '<label class="field">Kind <select id="f-kind"><option>pack</option><option>box</option><option>carton</option><option>pallet</option></select></label>' +
+          '<label class="field">Kind <select id="f-kind" required></select></label>' +
           '<label class="field">Pieces <input id="f-pieces" type="number" min="1" step="1" required style="width:7em"></label><button>Add pack size</button>';
+      },
+      // Kind offers only what the picked item's family comes in, less the
+      // kinds it already has a size for: one size of each (owner, 2026-10-02).
+      onAddInput() {
+        const item = this.items.find((i) => this.name(i) === el('f-item').value.trim());
+        const has = new Set(this.packs.filter((p) => item && p.item_id === item.id).map((p) => p.kind));
+        const left = item ? this.kinds[item.family].filter((k) => !has.has(k)) : [];
+        el('f-kind').innerHTML = left.length
+          ? left.map((k) => '<option>' + esc(k) + '</option>').join('')
+          : '<option value="">' + (item ? 'has every kind' : 'pick an item') + '</option>';
       },
       addBody() {
         const item = this.items.find((i) => this.name(i) === el('f-item').value.trim());
@@ -173,8 +189,8 @@
   const name = location.pathname.replace(/\/+$/, '').split('/').pop();  // Express also serves /settings/reasons/
   const section = SECTIONS[name];
   document.title = section.title + ' · Settings';
-  for (const a of el('tasks').children) {
-    if (a.getAttribute('href') === location.pathname) { a.className = 'here'; a.setAttribute('aria-current', 'page'); }
+  for (const a of el('tasks').querySelectorAll('a')) {
+    if (a.getAttribute('href') === location.pathname) a.setAttribute('aria-current', 'page');
   }
   el('help').textContent = section.help;
   el('head').innerHTML = section.head;
@@ -226,7 +242,10 @@
   el('add').addEventListener('submit', (e) => {
     e.preventDefault();
     try {
-      save(section.addBody(), () => el('add').reset());
+      save(section.addBody(), () => {
+        el('add').reset();
+        if (section.onAddInput) section.onAddInput();
+      });
     } catch (err) {
       say(err.message, 'bad');
     }
@@ -238,6 +257,10 @@
     return say(err.message, 'bad');
   }
   if (section.addForm) el('add').innerHTML = section.addForm(); else el('add').hidden = true;
+  if (section.onAddInput) {
+    el('add').addEventListener('input', (e) => { if (e.target.id !== 'f-kind') section.onAddInput(); });
+    section.onAddInput();
+  }
   paint();
 })();
 </script>

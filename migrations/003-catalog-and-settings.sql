@@ -10,18 +10,53 @@
 -- item can be added: EWP stays out of Inventory until step 5 (Q28). Step 5
 -- sets it to the web app's key, the item text and its length ({product,
 -- length_ft}; hanger-web-app/sql/ewp_schema.sql keys a board by item and span).
+-- pack_kinds lists the kinds of pack size the family's items come in, in
+-- screen order, smallest first (owner, 2026-10-02): hangers in cartons
+-- (Simpson's word for a hanger pack), plates in bands of 20 ("pack"), boxes
+-- and pallets, lumber and engineered wood in packs.
 CREATE TABLE inv.families (
-  code     text PRIMARY KEY,
-  name     text NOT NULL UNIQUE,
-  identity text[]
+  code       text PRIMARY KEY,
+  name       text NOT NULL UNIQUE,
+  identity   text[],
+  pack_kinds text[] NOT NULL
 );
 
-INSERT INTO inv.families (code, name, identity) VALUES
-  ('plates',  'Plates',  '{sku}'),
-  ('hangers', 'Hangers', '{sku}'),
-  ('lumber',  'Lumber',  '{size,grade,length_ft}'),
-  ('lvl',     'LVL',     '{product,size,length_ft}'),
-  ('ewp',     'EWP',     NULL);
+INSERT INTO inv.families (code, name, identity, pack_kinds) VALUES
+  ('plates',  'Plates',  '{sku}',                    '{pack,box,pallet}'),
+  ('hangers', 'Hangers', '{sku}',                    '{carton}'),
+  ('lumber',  'Lumber',  '{size,grade,length_ft}',   '{pack}'),
+  ('lvl',     'LVL',     '{product,size,length_ft}', '{pack}'),
+  ('ewp',     'EWP',     NULL,                       '{pack}');
+
+-- "a, b and c" or "a, b or c", for a refusal that lists what is allowed.
+CREATE FUNCTION inv.word_list(p_words text[], p_last text) RETURNS text
+LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT CASE WHEN pg_catalog.cardinality(p_words) < 2 THEN p_words[1]
+              ELSE pg_catalog.array_to_string(p_words[1:pg_catalog.cardinality(p_words) - 1], ', ')
+                   || ' ' || p_last || ' ' || p_words[pg_catalog.cardinality(p_words)] END
+$$;
+
+-- The lumber sizes the yard handles, in screen order (owner, 2026-10-02).
+-- No other size is added, as an item, a buying option or a redirect: the
+-- tables' CHECKs are the guarantee, and inv.check_lumber_size gives the
+-- plain message first.
+CREATE FUNCTION inv.lumber_sizes() RETURNS text[]
+LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$ SELECT '{2x4,2x6,2x8,2x10,2x12}'::text[] $$;
+
+CREATE FUNCTION inv.check_lumber_size(p_size text) RETURNS void
+LANGUAGE plpgsql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF p_size IS NULL OR NOT p_size = ANY (inv.lumber_sizes()) THEN
+    RAISE EXCEPTION 'Lumber comes in %.', inv.word_list(inv.lumber_sizes(), 'and') USING ERRCODE = 'IV400';
+  END IF;
+END
+$$;
 
 -- The catalog: one row per item, never deleted (S62).
 CREATE TABLE inv.items (
@@ -41,7 +76,8 @@ CREATE TABLE inv.items (
   note      text CHECK (note = inv.tidy(note) AND note <> ''),  -- S61: e.g. weathered, kept for now
   active    boolean NOT NULL DEFAULT true,
   version   integer NOT NULL DEFAULT 1,
-  CHECK (family <> 'lvl' OR threshold IS NULL)
+  CHECK (family <> 'lvl' OR threshold IS NULL),
+  CHECK (family <> 'lumber' OR size = ANY (inv.lumber_sizes()))
 );
 
 -- S19: one family never holds the same item twice; blanks count as equal,
@@ -83,20 +119,55 @@ CREATE TRIGGER check_identity BEFORE INSERT OR UPDATE OF family, sku, product, s
 -- Known pack, box, carton and pallet sizes per item (Q13), shown as a choice
 -- on receipts and counts. Each receipt and count line keeps its own copy of
 -- the size it used, so correcting a size here changes no line already saved.
--- Carton is Simpson's word for a hanger pack (owner, 2026-09-30): a fourth
--- kind added to Q13's three. An item with no pallet row has an unknown pallet
--- size, never a guessed one (S18).
+-- An item has at most one size of each kind its family comes in
+-- (inv.families.pack_kinds; owner, 2026-10-02, replacing S74's "several
+-- sizes"). An item with no pallet row has an unknown pallet size, never a
+-- guessed one (S18).
 CREATE TABLE inv.pack_sizes (
   id      bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   item_id bigint NOT NULL REFERENCES inv.items (id),
-  kind    text NOT NULL CHECK (kind IN ('pack', 'box', 'carton', 'pallet')),
+  kind    text NOT NULL,
   pieces  integer NOT NULL CHECK (pieces > 0),
   version integer NOT NULL DEFAULT 1,
-  UNIQUE (item_id, kind, pieces)
+  UNIQUE (item_id, kind)
 );
 
 CREATE TRIGGER bump_version BEFORE UPDATE OF pieces ON inv.pack_sizes
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
+
+-- A pack size is a kind its item's family comes in, whatever writes the row.
+-- inv.check_pack_kind gives the plain message first; this is the guarantee.
+-- A trigger, not a CHECK, because the kinds are data in inv.families.
+CREATE FUNCTION inv.check_pack_size_kind() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM inv.items i JOIN inv.families f ON f.code = i.family
+                  WHERE i.id = NEW.item_id AND NEW.kind = ANY (f.pack_kinds)) THEN
+    RAISE EXCEPTION 'A % pack size is not one its item''s family comes in.', NEW.kind USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_kind BEFORE INSERT OR UPDATE OF item_id, kind ON inv.pack_sizes
+  FOR EACH ROW EXECUTE FUNCTION inv.check_pack_size_kind();
+
+-- Refuses a kind of pack size that the family does not come in.
+CREATE FUNCTION inv.check_pack_kind(p_family text, p_kind text) RETURNS void
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  f inv.families;
+BEGIN
+  SELECT * INTO f FROM inv.families WHERE code = p_family;
+  IF p_kind IS NULL OR NOT p_kind = ANY (f.pack_kinds) THEN
+    RAISE EXCEPTION 'A pack size for % is a %.', f.name, inv.word_list(f.pack_kinds, 'or') USING ERRCODE = 'IV400';
+  END IF;
+END
+$$;
 
 -- LVL reorder thresholds, per depth in linear feet (Q16): LVL items carry
 -- none of their own. A depth gets its row on its first save. Blank is "not
@@ -149,10 +220,10 @@ INSERT INTO inv.reasons (text, built_in) VALUES
 -- (S37), replacing each browser's own copy (lumberMenu.v1). One row per size
 -- and grade: the stock lengths the yard buys, in whole feet, ascending. An
 -- empty list is a group not bought.
--- The page names a group "size|grade" and splits it there, so neither part
--- holds a "|".
+-- The page names a group "size|grade" and splits it there, so the grade
+-- holds no "|" (no size on the list does).
 CREATE TABLE inv.lumber_purchasable_lengths (
-  size    text NOT NULL CHECK (size = inv.tidy(size) AND size <> '' AND pg_catalog.strpos(size, '|') = 0),
+  size    text NOT NULL CHECK (size = ANY (inv.lumber_sizes())),
   grade   text NOT NULL CHECK (grade = inv.tidy(grade) AND grade <> '' AND pg_catalog.strpos(grade, '|') = 0),
   -- Whole feet above 0; none means the group is not bought.
   lengths integer[] NOT NULL
@@ -190,7 +261,7 @@ INSERT INTO inv.lumber_purchasable_lengths (size, grade, lengths) VALUES
 -- drops a redirect it refuses with a warning at plan time. A second copy in
 -- SQL could disagree with it.
 CREATE TABLE inv.lumber_grade_redirects (
-  size       text NOT NULL CHECK (size = inv.tidy(size) AND size <> ''),
+  size       text NOT NULL CHECK (size = ANY (inv.lumber_sizes())),
   from_grade text NOT NULL CHECK (from_grade = inv.tidy(from_grade) AND from_grade <> ''),
   to_grade   text CHECK (to_grade = inv.tidy(to_grade) AND to_grade <> '' AND to_grade <> from_grade),
   version    integer NOT NULL DEFAULT 1,
@@ -272,6 +343,7 @@ BEGIN
   i.size := inv.tidy(p_identity ->> 'size');
   i.grade := inv.tidy(p_identity ->> 'grade');
   i.length_ft := (v_length::numeric)::integer;
+  IF p_family = 'lumber' THEN PERFORM inv.check_lumber_size(i.size); END IF;
   RETURN i;
 END
 $$;
@@ -518,23 +590,23 @@ SET search_path = pg_catalog, pg_temp
 AS $$
 DECLARE
   a record;
+  i inv.items;
   p inv.pack_sizes;
 BEGIN
   a := inv.claim_action(p_actor, p_key, 'add pack size', 'pack_sizes', NULL,
                         pg_catalog.jsonb_build_object('item_id', p_item_id, 'kind', p_kind, 'pieces', p_pieces));
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
-  IF NOT EXISTS (SELECT FROM inv.items WHERE id = p_item_id) THEN
+  SELECT * INTO i FROM inv.items WHERE id = p_item_id;
+  IF NOT FOUND THEN
     RAISE EXCEPTION 'That item is not in the catalog.' USING ERRCODE = 'IV400';
   END IF;
-  IF p_kind IS NULL OR p_kind NOT IN ('pack', 'box', 'carton', 'pallet') THEN
-    RAISE EXCEPTION 'A pack size is a pack, box, carton or pallet.' USING ERRCODE = 'IV400';
-  END IF;
+  PERFORM inv.check_pack_kind(i.family, p_kind);
   PERFORM inv.check_pieces(p_pieces);
   BEGIN
     INSERT INTO inv.pack_sizes (item_id, kind, pieces) VALUES (p_item_id, p_kind, p_pieces::integer)
     RETURNING * INTO p;
   EXCEPTION WHEN unique_violation THEN
-    RAISE EXCEPTION 'That item already has a % of %.', p_kind, p_pieces::integer USING ERRCODE = 'IV400';
+    RAISE EXCEPTION '% already has a % size. Change it in its row.', inv.item_label(i), p_kind USING ERRCODE = 'IV400';
   END;
   RETURN inv.finish_action(a.log_id, p.id, NULL, inv.pack_size_json(p));
 END
@@ -820,6 +892,7 @@ BEGIN
   IF coalesce(inv.tidy(p_size), '') = '' OR coalesce(inv.tidy(p_grade), '') = '' THEN
     RAISE EXCEPTION 'A lumber group needs a size and a grade.' USING ERRCODE = 'IV400';
   END IF;
+  PERFORM inv.check_lumber_size(inv.tidy(p_size));
   IF p_lengths IS NULL OR EXISTS (SELECT FROM pg_catalog.unnest(p_lengths) n
                                    WHERE n IS NULL OR n <> pg_catalog.trunc(n) OR n <= 0) THEN
     RAISE EXCEPTION 'A stock length is a whole number of feet above 0.' USING ERRCODE = 'IV400';
@@ -915,6 +988,7 @@ BEGIN
   IF coalesce(inv.tidy(p_size), '') = '' OR coalesce(inv.tidy(p_from_grade), '') = '' THEN
     RAISE EXCEPTION 'A redirect needs a size and a grade.' USING ERRCODE = 'IV400';
   END IF;
+  PERFORM inv.check_lumber_size(inv.tidy(p_size));
   IF v_to = inv.tidy(p_from_grade) THEN
     RAISE EXCEPTION 'A grade cannot be redirected to itself.' USING ERRCODE = 'IV400';
   END IF;
@@ -995,9 +1069,7 @@ BEGIN
     IF NOT FOUND THEN
       RAISE EXCEPTION 'A pack size names %, which is not in the catalog.', inv.item_label(v) USING ERRCODE = 'IV400';
     END IF;
-    IF coalesce(r ->> 'kind', '') NOT IN ('pack', 'box', 'carton', 'pallet') THEN
-      RAISE EXCEPTION 'A pack size is a pack, box, carton or pallet.' USING ERRCODE = 'IV400';
-    END IF;
+    PERFORM inv.check_pack_kind(v.family, r ->> 'kind');
     PERFORM inv.check_pieces((r ->> 'pieces')::numeric);
     IF v_id = ANY (v_added) THEN
       INSERT INTO inv.pack_sizes (item_id, kind, pieces) VALUES (v_id, r ->> 'kind', (r ->> 'pieces')::integer)
@@ -1048,3 +1120,5 @@ GRANT EXECUTE ON FUNCTION inv.set_lumber_lengths(bigint, uuid, text, text, integ
 GRANT EXECUTE ON FUNCTION inv.set_grade_redirect(bigint, uuid, text, text, integer, text) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.remove_lumber_group(bigint, uuid, text, text, integer) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.rename_item(bigint, uuid, bigint, integer, jsonb) TO inv_app;
+-- The app reads the list for the size pickers (src/inventory/catalog.js).
+GRANT EXECUTE ON FUNCTION inv.lumber_sizes() TO inv_app;

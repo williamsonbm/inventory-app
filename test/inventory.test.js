@@ -40,16 +40,22 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   const back = await change(ctx, '/api/items/unretire', { id: item.id, version: 3 });
   assert.equal(back.body.item.active, true);
 
-  const { families, items } = await read(ctx, '/api/items');
+  const { families, items, lumberSizes } = await read(ctx, '/api/items');
   assert.deepEqual(items, [back.body.item]);
-  // EWP stays out of Inventory until step 5, so the family tabs leave it out.
-  // The web app's order, with LVL where its EWP tab is.
+  // EWP stays out of Inventory until step 5, so the family bar leaves it out.
+  // The Planner's order, so the two family bars match (owner, 2026-10-02).
+  // pack_kinds: what Settings → Pack sizes offers for each family's items.
   assert.deepEqual(families, [
-    { code: 'hangers', name: 'Hangers', identity: ['sku'] },
-    { code: 'plates', name: 'Plates', identity: ['sku'] },
-    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'] },
-    { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'] },
+    { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'], pack_kinds: ['pack'] },
+    { code: 'plates', name: 'Plates', identity: ['sku'], pack_kinds: ['pack', 'box', 'pallet'] },
+    { code: 'hangers', name: 'Hangers', identity: ['sku'], pack_kinds: ['carton'] },
+    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'], pack_kinds: ['pack'] },
   ]);
+  // "+ Add item" and Rename offer only these sizes for lumber.
+  assert.deepEqual(lumberSizes, ['2x4', '2x6', '2x8', '2x10', '2x12']);
+  const odd = await change(ctx, '/api/items/add', { family: 'lumber', identity: { size: '2x5', grade: '#2', length_ft: 8 } });
+  assert.equal(odd.status, 400);
+  assert.equal(odd.body.error, 'Lumber comes in 2x4, 2x6, 2x8, 2x10 and 2x12.');
 
   // S41: a second screen still holding version 1 sees the other save.
   const stale = await change(ctx, '/api/items/edit', { id: item.id, version: 1, changes: { note: 'x' } });
@@ -136,6 +142,7 @@ test('Settings adds a lumber size and grade with no lengths, and its lengths are
   const added = await change(ctx, '/api/lumber/lengths', { size: '2x4', grade: 'SS', version: null, lengths: [] });
   assert.equal(added.status, 200, added.body.error);
   let options = await read(ctx, '/api/lumber/menu');
+  assert.deepEqual(options.lumberSizes, ['2x4', '2x6', '2x8', '2x10', '2x12'], 'the sizes the add form offers');
   assert.equal(options.versions.lengths['2x4|SS'], 1, 'listed, so the page shows its row');
   assert.equal(options.menu['2x4|SS'], undefined, 'not bought until a length is switched on');
 

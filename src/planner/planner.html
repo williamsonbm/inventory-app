@@ -37,17 +37,17 @@
 -->
 <header class="appbar">
   <div class="appbar-primary">
-    <span class="appbar-brand">Inventory</span>
+    <span class="appbar-brand">RTW Inventory Tracker</span>
     <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
     <span class="appbar-user" id="user-name"></span>
     <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
   </div>
-  <!-- Planner and Settings until Jobs and Inventory ship (spec #72): no tab
-       leads nowhere. The Planner has no tasks yet, so no task row. -->
+  <!-- The Planner has no tasks yet, so no task row. The family bar is the
+       same as Inventory's (AppHeader.familyBar). -->
   <nav class="appbar-nav" aria-label="Modes"><a href="/" class="here" aria-current="page">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
   <div class="appbar-filter">
     <span class="label" id="family-label">Family</span>
-    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"></div>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
   </div>
 </header>
 
@@ -100,35 +100,12 @@
   }
 
   // ── Family filter ──────────────────────────────────────────────────────────
-  // All, or one family. Kept in this browser only (spec #72), under an
-  // app-wide key so it follows the user into the other modes when they ship.
-  // Deliberately, only a click on a filter button saves it, not applyFilter:
-  // an old family address arrives as /?family=<family> and shows that family
-  // for this visit only. Saving in applyFilter would let an old bookmark
-  // silently replace the saved choice, and every later visit would open on
-  // that family with no hint why.
-  const FILTER_KEY = 'app.family';
-  const filterEl = el('family-filter');
-  // The families in screen order, then All at the far right (owner, 2026-09-25).
-  const choices = FAMILIES.concat(['all']);
-  filterEl.innerHTML = choices.map((f) =>
-    '<button type="button" data-family="' + f + '">' + esc(f === 'all' ? 'All' : sections[f].label) + '</button>').join('');
-
-  function applyFilter(family) {
-    for (const f of FAMILIES) familyParts[f].sec.toggleAttribute('data-filtered-out', family !== 'all' && family !== f);
-    filterEl.querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.family === family)));
-  }
-  filterEl.addEventListener('click', (e) => {
-    const b = e.target.closest('button[data-family]');
-    if (!b) return;
-    applyFilter(b.dataset.family);
-    try { localStorage.setItem(FILTER_KEY, b.dataset.family); } catch { /* storage blocked: this visit only */ }
-  });
-
+  // All, or one family (AppHeader.familyBar). An old family address arrives
+  // as /?family=<family> and shows that family for this visit only.
   const fromAddress = new URLSearchParams(location.search).get('family');
-  let saved = null;
-  try { saved = localStorage.getItem(FILTER_KEY); } catch { /* storage blocked */ }
-  applyFilter([fromAddress, saved].find((f) => choices.includes(f)) || 'all');
+  AppHeader.familyBar(FAMILIES.map((code) => ({ code, label: sections[code].label })), (family) => {
+    for (const f of FAMILIES) familyParts[f].sec.toggleAttribute('data-filtered-out', family !== 'all' && family !== f);
+  }, fromAddress);
   if (fromAddress !== null) history.replaceState(null, '', '/');
 
   // ── Printing ───────────────────────────────────────────────────────────────

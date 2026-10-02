@@ -29,23 +29,24 @@
 -->
 <header class="appbar">
   <div class="appbar-primary">
-    <span class="appbar-brand">Inventory</span>
+    <span class="appbar-brand">RTW Inventory Tracker</span>
     <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
     <span class="appbar-user" id="user-name"></span>
     <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
   </div>
   <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity" class="here" aria-current="page">Activity Log</a></nav>
-  <nav class="appbar-nav appbar-tasks" aria-label="Tasks"><a href="/activity" class="here" aria-current="page">Activity Log</a></nav>
+  <!-- The filters sit in the grey bar, as Family does on the Planner and
+       Inventory (owner, 2026-10-02). -->
+  <form id="filters" class="appbar-filter">
+    <label class="label">Person <select id="person"><option value="">Everyone</option></select></label>
+    <label class="label">Action <select id="action"><option value="">Every action</option></select></label>
+    <label class="label">From <input id="from" type="date"></label>
+    <label class="label">To <input id="to" type="date"></label>
+    <button>Show</button>
+  </form>
 </header>
 
 <div class="wrap">
-  <form id="filters" class="row">
-    <label class="field">Person <select id="person"><option value="">Everyone</option></select></label>
-    <label class="field">Action <select id="action"><option value="">Every action</option></select></label>
-    <label class="field">From <input id="from" type="date"></label>
-    <label class="field">To <input id="to" type="date"></label>
-    <button>Show</button>
-  </form>
   <div id="message" role="status"></div>
   <table>
     <thead><tr><th>When (Eastern)</th><th>Who</th><th>Action</th><th>Person</th><th>Was → now</th></tr></thead>

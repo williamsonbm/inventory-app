@@ -141,7 +141,10 @@ test('pack sizes: each item lists its known sizes; a size is corrected, logged w
   const carton = await add('carton', 50);
   assert.deepEqual(carton, { id: carton.id, item_id: item.id, kind: 'carton', pieces: 50, version: 1 });
   assert.equal((await logRows(db)).at(-1).action, 'add pack size');
-  await add('pallet', 2000);  // S74: one item may have several sizes
+  // S74 as changed by the owner (2026-10-02): one size of each kind, and a
+  // plate may have all three, as MT20 3x6 does.
+  const plate = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'plates', { sku: 'MT20 3x6' });
+  for (const [kind, pieces] of [['pack', 20], ['box', 260], ['pallet', 14000]]) await add(kind, pieces, plate);
 
   const fixed = await call(db, 'change_pack_size', ann.id, crypto.randomUUID(), carton.id, 1, 25);
   assert.deepEqual(fixed, { ...carton, pieces: 25, version: 2 });
@@ -154,7 +157,7 @@ test('pack sizes: each item lists its known sizes; a size is corrected, logged w
     ['a size of 0 (S40)', () => add('box', 0), 'IV400'],
     ['a size that is not a whole number', () => add('box', 2.5), 'IV400'],
     ['a kind not on the list', () => add('bundle', 10), 'IV400'],
-    ['a size the item already has', () => add('carton', 25), 'IV400'],
+    ['a second carton size', () => add('carton', 25), 'IV400'],
     ['an item that does not exist', () => add('box', 10, { id: 999999 }), 'IV400'],
     ['a change to 0', () => call(db, 'change_pack_size', ann.id, crypto.randomUUID(), carton.id, 2, 0), 'IV400'],
   ];
@@ -354,8 +357,8 @@ test('a name that differs from an item\'s name only in capitals names the same i
   const lus = await add('hangers', { sku: 'LUS28' });
   let err = await refused(add('hangers', { sku: 'lus28' }), 'IV400', 'a SKU in other capitals');
   assert.match(err.message, /LUS28|lus28/);
-  await refused(add('lumber', { size: '2X4', grade: '#2', length_ft: 8 }).then(() => add('lumber', { size: '2x4', grade: '#2', length_ft: 8 })),
-    'IV400', 'a lumber size in other capitals');
+  await add('lumber', { size: '2x4', grade: 'dss', length_ft: 8 });
+  await refused(add('lumber', { size: '2x4', grade: 'DSS', length_ft: 8 }), 'IV400', 'a lumber grade in other capitals');
   await call(db, 'retire_item', ann.id, crypto.randomUUID(), lus.id, 1);
   err = await refused(add('hangers', { sku: 'Lus28' }), 'IV400', 'a retired SKU in other capitals');
   assert.match(err.message, /retired; un-retire it instead/);
@@ -371,10 +374,10 @@ test('a lumber group that differs from another only in capitals, or holds a "|",
   const set = (size, grade) => call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), size, grade, null, [8]);
   const err = await refused(set('2x4', 'dss'), 'IV400', 'the seeded 2x4 DSS in other capitals');
   assert.equal(err.message, '2x4 dss is already on the list as 2x4 DSS.');
-  await refused(set('2X4', 'DSS'), 'IV400', 'the size in other capitals');
+  await refused(set('2x4', 'Dss'), 'IV400', 'the grade in other capitals');
   // The page names a group "size|grade" and splits it there again.
   await refused(set('2x4', 'A|B'), '23514', 'a grade with "|"');
-  await refused(set('2x4|2x6', 'SS'), '23514', 'a size with "|"');
+  await refused(set('2x4|2x6', 'SS'), 'IV400', 'a size with "|", which is no lumber size');
   await set('2x4', 'SS');
 });
 
@@ -403,4 +406,93 @@ test('a lumber group is removed only when no length is switched on and no redire
   assert.equal(last.action, 'remove lumber group');
   assert.deepEqual(last.old_value, { size: '2x4', grade: '1650', lengths: [], version: 1 });
   assert.equal(last.new_value, null);
+});
+
+// The sizes the yard handles (owner, 2026-10-02). Frozen here, not read from
+// inv.lumber_sizes, so a change to the list fails this test.
+const LUMBER_SIZES = ['2x4', '2x6', '2x8', '2x10', '2x12'];
+
+test('lumber comes only in 2x4, 2x6, 2x8, 2x10 and 2x12, as an item or a buying option', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const add = (size) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size, grade: '#2', length_ft: 8 });
+  const sizes = await as(db, APP, async (app) => (await app.query('SELECT inv.lumber_sizes() AS s')).rows[0].s);
+  assert.deepEqual(sizes, LUMBER_SIZES, 'the list, in screen order');
+  const items = [];
+  for (const size of LUMBER_SIZES) items.push(await add(size));
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['a 2x5 item', () => add('2x5')],
+    ['a 2x4 in other capitals', () => add('2X4')],
+    ['an LVL depth as a lumber size', () => add('11-7/8')],
+    ['a rename to 2x5',
+      () => call(db, 'rename_item', ann.id, crypto.randomUUID(), items[0].id, 1, { size: '2x5', grade: '#2', length_ft: 8 })],
+    ['a 2x5 buying option', () => call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x5', '#2', null, [8])],
+    ['a 2x5 redirect', () => call(db, 'set_grade_redirect', ann.id, crypto.randomUUID(), '2x5', '#2', null, 'DSS')],
+  ];
+  for (const [label, attempt] of cases) {
+    const err = await refused(attempt(), 'IV400', label);
+    assert.equal(err.message, 'Lumber comes in 2x4, 2x6, 2x8, 2x10 and 2x12.', label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  // An LVL depth is not a lumber size, and stays free.
+  await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 26 });
+});
+
+test('the database refuses a lumber size outside the list, whatever writes it', async () => {
+  const db = await freshDatabase();
+  await as(db, null, async (owner) => {
+    await refused(owner.query("INSERT INTO inv.items (family, size, grade, length_ft) VALUES ('lumber', '2x5', '#2', 8)"),
+      '23514', 'a 2x5 item');
+    await refused(owner.query("INSERT INTO inv.lumber_purchasable_lengths (size, grade, lengths) VALUES ('2x5', '#2', '{8}')"),
+      '23514', 'a 2x5 buying option');
+    await refused(owner.query("INSERT INTO inv.lumber_grade_redirects (size, from_grade, to_grade) VALUES ('2x5', '#2', 'DSS')"),
+      '23514', 'a 2x5 redirect');
+  });
+});
+
+// The kinds each family comes in (owner, 2026-10-02). Frozen here, not read
+// from inv.families, so a change to the rule fails this test.
+const PACK_KINDS = { plates: ['pack', 'box', 'pallet'], hangers: ['carton'], lumber: ['pack'], lvl: ['pack'] };
+
+test('each family has its own pack size kinds, and an item one size of each kind', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const identities = {
+    plates: { sku: 'MT20 3x6' }, hangers: { sku: 'LUS28' },
+    lumber: { size: '2x4', grade: '#2', length_ft: 16 }, lvl: { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 },
+  };
+  const items = {};
+  for (const [family, identity] of Object.entries(identities)) {
+    items[family] = await call(db, 'add_item', ann.id, crypto.randomUUID(), family, identity);
+  }
+  const add = (family, kind) => call(db, 'add_pack_size', ann.id, crypto.randomUUID(), items[family].id, kind, 10);
+  for (const [family, kinds] of Object.entries(PACK_KINDS)) {
+    for (const kind of kinds) await add(family, kind);
+  }
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['a hanger pallet', () => add('hangers', 'pallet'), 'A pack size for Hangers is a carton.'],
+    ['a plate carton', () => add('plates', 'carton'), 'A pack size for Plates is a pack, box or pallet.'],
+    ['a lumber box', () => add('lumber', 'box'), 'A pack size for Lumber is a pack.'],
+    ['an LVL carton', () => add('lvl', 'carton'), 'A pack size for LVL is a pack.'],
+    ['a second plate box', () => add('plates', 'box'), 'MT20 3x6 already has a box size. Change it in its row.'],
+  ];
+  for (const [label, attempt, message] of cases) {
+    const err = await refused(attempt(), 'IV400', label);
+    assert.equal(err.message, message, label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+
+  // Whatever writes the row.
+  await as(db, null, async (owner) => {
+    const insert = (family, kind, pieces) => owner.query(
+      'INSERT INTO inv.pack_sizes (item_id, kind, pieces) VALUES ($1, $2, $3)', [items[family].id, kind, pieces]);
+    await refused(insert('hangers', 'pallet', 2000), '23514', 'a hanger pallet');
+    await refused(insert('hangers', 'carton', 99), '23505', 'a second hanger carton');
+    await refused(owner.query("UPDATE inv.pack_sizes SET kind = 'carton' WHERE item_id = $1 AND kind = 'pack'", [items.lumber.id]),
+      '23514', 'a lumber pack changed to a carton');
+  });
 });
