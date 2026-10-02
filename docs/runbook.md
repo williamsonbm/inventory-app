@@ -42,13 +42,15 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    `migration <file> failed, nothing from it was applied` and changes nothing.
 4. **Passwords for the three database logins** (`inv_app`, `inv_planner`, `inv_backup`): one
    `ALTER ROLE <login> PASSWORD '...'` each, in Supabase's SQL editor. Done.
-5. **Vercel's environment variables** (Production, and Preview if previews should work):
+5. **Vercel's environment variables**, in **Production only** until Preview has a database of
+   its own ("Give Preview its own database", below):
 
    | Name | Value |
    |---|---|
    | `DATABASE_URL` | The **Transaction** pooler string (port **6543**), with the `inv_app` login (`inv_app.<project-ref>` on the pooler) and its password. **No `sslmode`** in it: the app sets SSL from the next variable, and `pg` lets settings in the string override it. |
    | `DATABASE_CA_CERT` | The whole text of Supabase's CA certificate file, `-----BEGIN CERTIFICATE-----` line included. |
    | `SESSION_SECRET` | At least 32 random characters. Make one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. |
+   | `DATABASE_IS_PREVIEW` | `yes`, **in the Preview environment only**, set last in "Give Preview its own database" below. Until then every preview deployment refuses to start, on purpose: with the live `DATABASE_URL`, a branch under test would write real rows that can never be deleted (#81). Production never sets it, and the app ignores it there. |
 
    The app refuses to start without the first two, and throws if the secret is shorter than 32
    characters. **A deploy made before these are set fails at start-up.**
@@ -91,6 +93,21 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
 9. **The nightly backup**: a private repository with the workflow, its secrets and the
    encryption public key, and the company drive chosen (#77, Backups). Not in this repository.
 10. **One practice restore** (below), into an empty database, before go-live.
+
+## Give Preview its own database
+
+Until this is done, keep the variables of step 5 in **Production only**. A preview deployment
+then fails at start-up whatever branch it runs, including a branch from before the
+`DATABASE_IS_PREVIEW` check existed (#81, "A separate database for Preview deployments"). In
+this order:
+
+1. Create the Preview Supabase project. On it, run the migrations (step 3), set the three
+   logins' passwords (step 4) and add the first person (step 6).
+2. In Vercel's **Preview** environment, set `DATABASE_URL` and `DATABASE_CA_CERT` for the
+   Preview project, and a `SESSION_SECRET` of its own.
+3. Last, set `DATABASE_IS_PREVIEW` to `yes` in the Preview environment, never in Production.
+4. Push a branch and sign in on its preview. In Supabase, the Preview project, not the live
+   one, shows that sign-in.
 
 ## Sign everyone out
 
