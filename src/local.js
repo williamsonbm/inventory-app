@@ -17,11 +17,16 @@
 // `npm run reset-local` builds the database again from the migrations, for
 // a migration that changed after it was applied. It keeps the people and
 // their passwords, and imports the test catalog (test/port-fixtures and
-// test/import-fixtures) as the first admin. Everything else is lost.
+// test/import-fixtures) as the first admin. Everything else is lost. It runs
+// only on this computer's Postgres.
 //
-// Glue, NOT UNIT-TESTED: it only wires existing pieces together. Checked by
-// starting it and signing in (PR #79). The app itself is tested through
-// test/support/app.js, which builds it the same way.
+// NOT UNIT-TESTED: it drops and builds the database by its fixed name on the
+// Postgres the tests also use, and then serves the app; a test of it would
+// drop the database a person is trying the app on. Checked by hand instead
+// (PR #83): a reset keeps the people, and a reset that finds the people file
+// of a reset that stopped takes the people from it. The app itself is tested
+// through test/support/app.js, which builds it the same way. TEST_CATALOG is
+// exported for test/import.test.js, which imports the same files.
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -80,21 +85,25 @@ async function readPeople(server) {
   }
 }
 
-// The people to put back after a reset, saved to PEOPLE_FILE (not in git,
-// like the secret) before anything is dropped. A reset that fails part-way,
-// on a migration that does not apply, leaves a database with no one in it;
-// the next reset then takes the people from the file, so none are lost.
+// The people to put back after a reset. Before anything is dropped they are
+// saved to PEOPLE_FILE (not in git, and readable only by this computer's
+// user, because it holds their password hashes); the file is deleted once
+// they are back. So a file found here means the last reset stopped part-way,
+// on a migration that does not apply: its people are the ones to keep, even
+// if someone was added by hand since.
 async function keepPeople(server) {
-  const people = await readPeople(server);
-  if (people.length) {
-    fs.writeFileSync(PEOPLE_FILE, JSON.stringify(people), { mode: 0o600 });
-    return people;
-  }
   try {
-    return JSON.parse(fs.readFileSync(PEOPLE_FILE, 'utf8'));
-  } catch {
-    return [];
+    const people = JSON.parse(fs.readFileSync(PEOPLE_FILE, 'utf8'));
+    console.log(`The last reset did not finish, so the people come from ${path.basename(PEOPLE_FILE)} (${people.length}).`);
+    return people;
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      throw new Error(`${path.basename(PEOPLE_FILE)} could not be read, so nothing was reset: ${err.message}`);
+    }
   }
+  const people = await readPeople(server);
+  fs.writeFileSync(PEOPLE_FILE, JSON.stringify(people), { mode: 0o600 });
+  return people;
 }
 
 // Puts the people back into the new database, with their ids and passwords,
@@ -128,6 +137,10 @@ async function restorePeople(server, people) {
 async function main() {
   const server = process.env.TEST_DATABASE_URL || 'postgres://postgres@127.0.0.1:5432/postgres';
   const reset = process.argv.includes('--reset');
+  const host = new URL(server).hostname;
+  if (reset && !['127.0.0.1', 'localhost', '[::1]'].includes(host)) {
+    throw new Error(`npm run reset-local drops a database, so it runs only on this computer's Postgres, not on ${host}.`);
+  }
 
   const admin = new Client({ connectionString: server });
   await admin.connect().catch(() => {
@@ -144,10 +157,16 @@ async function main() {
   } finally {
     await admin.end();
   }
-  const applied = await migrate(urlFor(server));
+  const applied = await migrate(urlFor(server)).catch((err) => {
+    if (reset) {
+      err.message += `\nThe people are kept in ${path.basename(PEOPLE_FILE)}. Fix the migration, then run npm run reset-local again.`;
+    }
+    throw err;
+  });
   if (applied.length) console.log(`applied: ${applied.join(', ')}`);
   if (reset) {
     await restorePeople(server, people);
+    fs.rmSync(PEOPLE_FILE, { force: true });
     const first = people.find((p) => p.active && p.admin);
     if (first) {
       const report = await importCatalog(urlFor(server), TEST_CATALOG, first.email);
