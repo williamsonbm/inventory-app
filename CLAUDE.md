@@ -14,8 +14,9 @@ under `claude-pod` they are at `/workspace/`.
 - **Try the simpler thing first, and say you did.** Before new machinery, test the version
   without it; report both results. Name inherited assumptions before building on them.
 - **Spec before code for a feature.** The owner runs `/to-spec` — agents cannot — to put the
-  spec in a tracker issue. Implement logic with `/tdd`; then `/simplify`, re-run tests, `/code-review` the diff,
-  ask to commit. `/simplify` is this repo's refactor stage, including where `tdd` says
+  spec in a tracker issue. Implement logic with `/tdd`; then `/simplify`, re-run tests, ask
+  to commit. A fresh Opus session reviews the PR; run `/code-review` in the authoring session
+  only when asked. `/simplify` is this repo's refactor stage, including where `tdd` says
   "the review stage"; it can break passing code.
 - **State test results plainly** — real counts, real pass/fail, never "should pass".
 
@@ -41,7 +42,7 @@ database and access-control rules too, moved there from #28 by step 2 (#77).
 **Precedence.** Recorded decisions in `docs/CODING-STANDARDS.md`, `CONTEXT.md` and accepted
 ADRs beat generic skill advice; an ADR wins between them. A task may change a decision:
 name the departure first. Nothing overrides **Hard constraints**, commit trailer bans or
-`Safety`. Answer each `/code-review` finding on its merits or name the recorded decision
+`Safety`. Answer each review finding on its merits or name the recorded decision
 that covers it.
 
 **Review lens: correctness before style.** You own wrong-output and edge-case bugs; naming
@@ -60,11 +61,6 @@ Read `.claude/skills/writing-commits-and-prs/SKILL.md` before writing either.
   under relaxed permissions.
 - **Ask before committing or pushing.** The owner decides every time.
 - **Secrets stay out of the transcript.** `.env*`, `/keys/*` and private-key material.
-
-## The effort — read before planning work
-
-Read the planning corrections and handoff instructions in `docs/agents/domain.md` before
-planning; they correct the handoff's family coverage and hosting assumptions.
 
 ## Vocabulary
 
