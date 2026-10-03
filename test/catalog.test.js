@@ -559,3 +559,28 @@ test('the import refuses two sizes of one kind for an item, and an LVL depth no 
     '23514', 'a blank depth, whatever writes it');
   await run([carton(50)], [{ depth: '14', threshold_lf: 100 }]);
 });
+
+test('a save that changes nothing is refused on every edit, so it leaves no log row (story 106)', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const item = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LUS28' });
+  const lvl = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 });
+  const carton = await call(db, 'add_pack_size', ann.id, crypto.randomUUID(), item.id, 'carton', 50);
+  const boise = await call(db, 'add_supplier', ann.id, crypto.randomUUID(), 'Boise Cascade');
+  const depth = await call(db, 'set_lvl_depth_threshold', ann.id, crypto.randomUUID(), lvl.size, null, 720);
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['edit item', 'edit_item', item.id, 1, { stocking: 'Special Order' }],
+    ['rename item', 'rename_item', item.id, 1, { sku: ' LUS28 ' }],
+    ['change pack size', 'change_pack_size', carton.id, 1, 50],
+    ['rename supplier', 'rename_supplier', boise.id, 1, ' Boise Cascade '],
+    ['rename user', 'rename_user', ann.id, ann.version, 'Ann Lee'],
+    ['set LVL depth threshold', 'set_lvl_depth_threshold', lvl.size, depth.version, 720],
+  ];
+  for (const [label, fn, ...args] of cases) {
+    const err = await refused(call(db, fn, ann.id, crypto.randomUUID(), ...args), 'IV422', label);
+    assert.equal(err.message, 'Nothing changed, so nothing was saved.', label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+});

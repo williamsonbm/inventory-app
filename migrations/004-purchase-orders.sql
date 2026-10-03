@@ -101,6 +101,31 @@ SELECT i.id AS item_id, coalesce(pg_catalog.sum(l.ordered), 0)::integer AS incom
 INSERT INTO inv.actions (name, admin_only) VALUES ('enter PO', false), ('edit PO', false),
   ('close PO line', false), ('re-open PO line', false), ('switch family live', true);
 
+-- 001's inv.finish_action, with one change: a change whose record is the
+-- same before and after, the version aside, is refused (owner, 2026-10-03).
+-- One place for every edit, 003's and later parts' included, so the log
+-- holds only changes (story 106) and the version stays where the screen read
+-- it. An addition or a password action records no "before", so it never
+-- meets this.
+CREATE OR REPLACE FUNCTION inv.finish_action(p_log_id bigint, p_target_id bigint, p_old jsonb, p_new jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_new jsonb;
+BEGIN
+  IF p_old - 'version' = p_new - 'version' THEN
+    RAISE EXCEPTION 'Nothing changed, so nothing was saved.' USING ERRCODE = 'IV422';
+  END IF;
+  UPDATE inv.activity_log
+     SET target_id = p_target_id, old_value = p_old, new_value = p_new
+   WHERE id = p_log_id
+  RETURNING new_value INTO v_new;
+  RETURN v_new;
+END
+$$;
+
 CREATE FUNCTION inv.family_json(f inv.families) RETURNS jsonb
 LANGUAGE sql IMMUTABLE
 SET search_path = pg_catalog, pg_temp
@@ -396,7 +421,7 @@ $$;
 -- without one; a closed line may be listed too, unchanged. A line is never
 -- removed: one not wanted is closed with a reason (inv.close_po_line), and a
 -- closed line is re-opened before it is changed. A save that changes nothing
--- is refused. Receiving adds its own limits on a line with receipts: its item
+-- is refused by inv.finish_action. Receiving adds its own limits on a line with receipts: its item
 -- stays, and its amount never goes below what arrived.
 CREATE FUNCTION inv.edit_po(
   p_actor bigint, p_key uuid, p_id bigint, p_version integer,
@@ -408,7 +433,6 @@ AS $$
 DECLARE
   a record;
   was jsonb;
-  now jsonb;
   po inv.purchase_orders;
   old inv.po_lines;
   l inv.po_lines;
@@ -466,14 +490,7 @@ BEGIN
     END IF;
     UPDATE inv.po_lines SET item_id = l.item_id, ordered = l.ordered, pack_size = l.pack_size WHERE id = old.id;
   END LOOP;
-  now := inv.po_json(p_id);
-  -- A save that changes nothing is refused, so a PO's log holds only changes
-  -- (story 106) and the version stays where the screen read it. A PO-only
-  -- rule for now: the catalog's edits in 003 still log such a save.
-  IF now - 'version' = was - 'version' THEN
-    RAISE EXCEPTION 'Nothing on PO % changed, so nothing was saved.', po.number USING ERRCODE = 'IV422';
-  END IF;
-  RETURN inv.finish_action(a.log_id, p_id, was, now);
+  RETURN inv.finish_action(a.log_id, p_id, was, inv.po_json(p_id));
 END
 $$;
 

@@ -292,7 +292,7 @@ test('an edit that changes nothing is refused, so it leaves no log row and keeps
   const err = await refused(call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, po.version, supplier.id, ' 4501 ', '2026-10-03',
     JSON.stringify(po.lines.map((l) => keep(l)))),
   'IV422', 'nothing changed');
-  assert.equal(err.message, 'Nothing on PO 4501 changed, so nothing was saved.');
+  assert.equal(err.message, 'Nothing changed, so nothing was saved.');
   assert.equal((await logRows(db)).length, before);
   const err2 = await refused(call(db, 'reopen_po_line', ann.id, crypto.randomUUID(), po.lines[0].id, po.version + 1),
     'IV409', 'the version did not move');
