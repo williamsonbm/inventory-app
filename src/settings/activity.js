@@ -92,8 +92,7 @@ const ADDED = {
 // line, numbered as the Receive page numbers them (lines in the order
 // entered, so a new line comes last).
 const PO_FIELDS = { supplier: 'supplier', number: 'number', po_date: 'date' };
-const LINE_FIELDS = { item_id: 'item', ordered: 'ordered', pack_size: 'pack size' };
-const LINE_CHANGE = (word, was, now) => (word === 'item' ? 'item changed' : `${word}: ${was ?? 'none'} → ${now ?? 'none'}`);
+const LINE_FIELDS = { ordered: 'ordered', pack_size: 'pack size' };
 function describePoChange(was, now) {
   const changes = Object.entries(PO_FIELDS).filter(([k]) => was[k] !== now[k]).map(([k, word]) => `${word}: ${was[k]} → ${now[k]}`);
   now.lines.forEach((line, n) => {
@@ -102,9 +101,10 @@ function describePoChange(was, now) {
     if (before.closed_reason !== line.closed_reason) {
       changes.push(line.closed_reason ? `line ${n + 1} closed: ${line.closed_reason}` : `line ${n + 1} re-opened`);
     }
+    if (before.item_id !== line.item_id) changes.push(`line ${n + 1} item: ${before.item} → ${line.item}`);
     for (const [k, word] of Object.entries(LINE_FIELDS)) {
       if (before[k] === line[k]) continue;
-      changes.push(`line ${n + 1} ${LINE_CHANGE(word, before[k], line[k])}`);
+      changes.push(`line ${n + 1} ${word}: ${before[k] ?? 'none'} → ${line[k] ?? 'none'}`);
     }
   });
   return changes.join('; ');

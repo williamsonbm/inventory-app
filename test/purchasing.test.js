@@ -35,8 +35,8 @@ test('a PO for a live family shows its lines as incoming, and one log row record
   assert.deepEqual(po, {
     id: po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03',
     lines: [
-      { id: po.lines[0].id, item_id: hanger.id, ordered: 100, pack_size: 50, closed_reason: null },
-      { id: po.lines[1].id, item_id: hanger.id, ordered: 30, pack_size: null, closed_reason: null },
+      { id: po.lines[0].id, item_id: hanger.id, item: 'LUS28', ordered: 100, pack_size: 50, closed_reason: null },
+      { id: po.lines[1].id, item_id: hanger.id, item: 'LUS28', ordered: 30, pack_size: null, closed_reason: null },
     ],
   });
   assert.equal((await incoming(db))[hanger.id], 130);
@@ -214,8 +214,8 @@ test('an edit fixes the PO\'s header and lines and adds a line, logged was → n
     ...po, version: po.version + 1, number: '4510', po_date: '2026-10-04',
     lines: [
       { ...first, ordered: 80, pack_size: 40 },
-      { ...second, item_id: other.id },
-      { id: edited.lines[2].id, item_id: hanger.id, ordered: 5, pack_size: null, closed_reason: null },
+      { ...second, item_id: other.id, item: 'HUS26' },
+      { id: edited.lines[2].id, item_id: hanger.id, item: 'LUS28', ordered: 5, pack_size: null, closed_reason: null },
     ],
   });
   assert.deepEqual(await incoming(db), { [hanger.id]: 85, [other.id]: 30 });

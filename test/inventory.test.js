@@ -278,7 +278,7 @@ test('Receive enters a PO, lists it, and the Overview shows its lines as Incomin
   assert.equal(entered.status, 200, entered.body.error);
   assert.deepEqual(entered.body.po, {
     id: entered.body.po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03',
-    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], closed_reason: null }],
+    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], item: 'LUS28', closed_reason: null }],
   });
   assert.deepEqual((await read(ctx, '/api/pos')).pos, [entered.body.po]);
 
@@ -308,6 +308,7 @@ test('the Activity Log names the PO entered and the family switched live', async
 test('Receive edits a PO and closes and re-opens a line; the Activity Log says what changed', async () => {
   const ctx = await withAdmin();
   const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const other = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'HUS26' } })).body.item;
   const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
   const reason = (await change(ctx, '/api/reasons/add', { text: 'Cancelled by supplier' })).body.reason;
   await goLive(ctx.db, 'hangers');
@@ -316,7 +317,7 @@ test('Receive edits a PO and closes and re-opens a line; the Activity Log says w
   const [first, second] = po.lines;
 
   const edited = await change(ctx, '/api/pos/edit', { id: po.id, version: 1, supplier_id: supplier.id, number: '4510', po_date: '2026-10-03',
-    lines: [{ id: first.id, item_id: hanger.id, ordered: 80 }, { id: second.id, item_id: hanger.id, ordered: 20 }, { item_id: hanger.id, ordered: 5 }] });
+    lines: [{ id: first.id, item_id: hanger.id, ordered: 80 }, { id: second.id, item_id: other.id, ordered: 20 }, { item_id: hanger.id, ordered: 5 }] });
   assert.equal(edited.status, 200, edited.body.error);
   const closed = await change(ctx, '/api/pos/close-line', { id: second.id, po_version: 2, reason_id: reason.id });
   assert.equal(closed.body.po.lines[1].closed_reason, 'Cancelled by supplier');
@@ -325,12 +326,13 @@ test('Receive edits a PO and closes and re-opens a line; the Activity Log says w
   assert.deepEqual(stale.body.current, closed.body.po, 'a stale screen gets the PO as it is now');
   const reopened = await change(ctx, '/api/pos/reopen-line', { id: second.id, po_version: 3 });
   assert.equal(reopened.status, 200, reopened.body.error);
-  assert.equal((await read(ctx, '/api/items')).items[0].incoming, 105);
+  const { items } = await read(ctx, '/api/items');
+  assert.deepEqual([hanger.id, other.id].map((id) => items.find((i) => i.id === id).incoming), [85, 20]);
 
   const { entries } = await read(ctx, '/api/activity');
   assert.deepEqual(entries.slice(0, 3).map((e) => [e.action, e.target, e.change]), [
     ['re-open PO line', 'PO 4510', 'line 2 re-opened'],
     ['close PO line', 'PO 4510', 'line 2 closed: Cancelled by supplier'],
-    ['edit PO', 'PO 4510', 'number: 4501 → 4510; line 1 ordered: 100 → 80; line 3 added'],
+    ['edit PO', 'PO 4510', 'number: 4501 → 4510; line 1 ordered: 100 → 80; line 2 item: LUS28 → HUS26; line 3 added'],
   ]);
 });

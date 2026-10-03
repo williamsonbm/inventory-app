@@ -170,7 +170,8 @@ END
 $$;
 
 -- A PO with its supplier's name and its lines, in the shape every function
--- returns and logs, and the Receive page lists.
+-- returns and logs, and the Receive page lists. Each line carries its item's
+-- name, so the Activity Log names the item as it was at the time.
 CREATE FUNCTION inv.po_json(p_id bigint) RETURNS jsonb
 LANGUAGE sql STABLE
 SET search_path = pg_catalog, pg_temp
@@ -179,9 +180,10 @@ AS $$
     'id', po.id, 'version', po.version, 'supplier_id', po.supplier_id, 'supplier', s.name,
     'number', po.number, 'po_date', po.po_date,
     'lines', (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
-                'id', l.id, 'item_id', l.item_id, 'ordered', l.ordered, 'pack_size', l.pack_size,
-                'closed_reason', r.text) ORDER BY l.id), '[]')
-                FROM inv.po_lines l LEFT JOIN inv.reasons r ON r.id = l.closed_reason_id
+                'id', l.id, 'item_id', l.item_id, 'item', inv.item_label(i), 'ordered', l.ordered,
+                'pack_size', l.pack_size, 'closed_reason', r.text) ORDER BY l.id), '[]')
+                FROM inv.po_lines l JOIN inv.items i ON i.id = l.item_id
+                LEFT JOIN inv.reasons r ON r.id = l.closed_reason_id
                WHERE l.po_id = po.id))
     FROM inv.purchase_orders po JOIN inv.suppliers s ON s.id = po.supplier_id
    WHERE po.id = p_id
@@ -499,5 +501,7 @@ GRANT EXECUTE ON FUNCTION inv.enter_po(bigint, uuid, bigint, text, text, jsonb) 
 GRANT EXECUTE ON FUNCTION inv.edit_po(bigint, uuid, bigint, integer, bigint, text, text, jsonb) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.close_po_line(bigint, uuid, bigint, integer, bigint) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.reopen_po_line(bigint, uuid, bigint, integer) TO inv_app;
--- The app lists POs in the shape inv.enter_po answers with (src/inventory/catalog.js).
+-- The app lists POs in the shape inv.enter_po answers with (src/inventory/catalog.js);
+-- inv.po_json names each line's item with inv.item_label, so the app runs that too.
 GRANT EXECUTE ON FUNCTION inv.po_json(bigint) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.item_label(inv.items) TO inv_app;
