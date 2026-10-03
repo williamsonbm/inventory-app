@@ -1,5 +1,5 @@
-// Inventory → Overview and the catalog's Settings (#81 part 1): what the
-// screens list, and the changes a signed-in person makes.
+// Inventory → Overview and Receive, and the catalog's Settings (#81 parts 1
+// and 2): what the screens list, and the changes a signed-in person makes.
 //
 // Every change differs only in DATA — which database function it calls, which
 // fields of the request it passes, and the name its answer goes back under —
@@ -26,21 +26,24 @@ async function readLumberSizes(database) {
 
 // The families Inventory holds, for the family bar (in the Planner's order,
 // so the two bars match) and "+ Add item", and
-// every item. A family with no identity fields (EWP until step 5) cannot hold
+// every item with its figures (inv.item_figures). live says whether the
+// family takes POs yet, and order_unit what its PO lines are ordered in. A family with no identity fields (EWP until step 5) cannot hold
 // items, so it is left out. choices gives a name field's only values, which
 // the page offers as a list: lumber sizes (inv.lumber_sizes). The version
 // rides along so a save can say which version it read (S41).
 async function listCatalog(database) {
   const [families, items] = await Promise.all([
     database.read(`
-      SELECT code, name, identity, pack_kinds,
+      SELECT code, name, identity, pack_kinds, live, order_unit,
              CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
         FROM inv.families
        WHERE identity IS NOT NULL
        ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`),
     database.read(`
-      SELECT id::int, family, sku, product, size, grade, length_ft, stocking, threshold, note, active, version
-        FROM inv.items ORDER BY family, sku, product, size, grade, length_ft`),
+      SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
+             i.active, i.version, f.incoming
+        FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
+       ORDER BY i.family, i.sku, i.product, i.size, i.grade, i.length_ft`),
   ]);
   // gradeOrder: lumber grades weakest first, the engine's own ranking, so the
   // Overview sorts 2x4 #2 ahead of 2x4 #1 (owner, 2026-10-01).
@@ -68,6 +71,16 @@ const CATALOG_CHANGES = {
   },
   '/api/lumber/lengths': { fn: 'set_lumber_lengths', args: (b) => [b.size, b.grade, b.version, b.lengths], as: 'lengths' },
   '/api/lumber/remove': { fn: 'remove_lumber_group', args: (b) => [b.size, b.grade, b.version], as: 'removed' },
+  // Inventory → Receive. A list of lines is sent as JSON text: pg would send
+  // a JavaScript array as a Postgres array, which a jsonb argument refuses.
+  '/api/pos/enter': {
+    fn: 'enter_po', args: (b) => [b.supplier_id, b.number, b.po_date, JSON.stringify(b.lines)], as: 'po',
+  },
+  '/api/pos/edit': {
+    fn: 'edit_po', args: (b) => [b.id, b.version, b.supplier_id, b.number, b.po_date, JSON.stringify(b.lines)], as: 'po',
+  },
+  '/api/pos/close-line': { fn: 'close_po_line', args: (b) => [b.id, b.po_version, b.reason_id], as: 'po' },
+  '/api/pos/reopen-line': { fn: 'reopen_po_line', args: (b) => [b.id, b.po_version], as: 'po' },
   '/api/lumber/redirect': {
     fn: 'set_grade_redirect', args: (b) => [b.size, b.from_grade, b.version, b.to_grade], as: 'redirect',
   },
@@ -124,6 +137,14 @@ const SETTINGS_LISTS = {
   },
 };
 
+// Inventory → Receive: every PO, newest first, each in the shape
+// /api/pos/enter answers with.
+async function listPos(database) {
+  const rows = await database.read(
+    'SELECT inv.po_json(id) AS po FROM inv.purchase_orders ORDER BY po_date DESC, id DESC');
+  return rows.map((r) => r.po);
+}
+
 async function listSettings(database, route) {
   const { as, sql } = SETTINGS_LISTS[route];
   return { [as]: await database.read(sql) };
@@ -138,5 +159,5 @@ async function saveCatalogChange(database, actor, route, body) {
 }
 
 module.exports = {
-  itemLabel, listCatalog, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
+  itemLabel, listCatalog, listPos, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
 };

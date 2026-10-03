@@ -12,7 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { get, post, signInAndChoose, withAdmin } = require('./support/app.js');
-const { connect, urlFor } = require('./support/database.js');
+const { connect, goLive, urlFor } = require('./support/database.js');
 
 // Posts one change as the signed-in admin and returns the status and parsed answer.
 async function change(ctx, route, body) {
@@ -44,16 +44,18 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   assert.equal(back.body.item.active, true);
 
   const { families, items } = await read(ctx, '/api/items');
-  assert.deepEqual(items, [back.body.item]);
+  assert.deepEqual(items, [{ ...back.body.item, incoming: 0 }], 'a list row also carries the item\'s figures');
   // EWP stays out of Inventory until step 5, so the family bar leaves it out.
   // The Planner's order, so the two family bars match (owner, 2026-10-02).
   // pack_kinds: what Settings → Pack sizes offers for each family's items.
   // choices: "+ Add item" and Rename offer only these sizes for lumber.
+  // Every family starts not live (#81, "Live in Inventory").
+  const common = { live: false, order_unit: 'pieces', choices: null };
   assert.deepEqual(families, [
-    { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'], pack_kinds: ['pack'], choices: { size: LUMBER_SIZES } },
-    { code: 'plates', name: 'Plates', identity: ['sku'], pack_kinds: ['pack', 'box', 'pallet'], choices: null },
-    { code: 'hangers', name: 'Hangers', identity: ['sku'], pack_kinds: ['carton'], choices: null },
-    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'], pack_kinds: ['pack'], choices: null },
+    { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'], pack_kinds: ['pack'], ...common, order_unit: 'linear feet', choices: { size: LUMBER_SIZES } },
+    { code: 'plates', name: 'Plates', identity: ['sku'], pack_kinds: ['pack', 'box', 'pallet'], ...common },
+    { code: 'hangers', name: 'Hangers', identity: ['sku'], pack_kinds: ['carton'], ...common },
+    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'], pack_kinds: ['pack'], ...common },
   ]);
   const odd = await change(ctx, '/api/items/add', { family: 'lumber', identity: { size: '2x5', grade: '#2', length_ft: 8 } });
   assert.equal(odd.status, 400);
@@ -254,4 +256,78 @@ test('only an admin can rename an item', async () => {
   const renamed = await change(ctx, '/api/items/rename', { id: item.id, version: 1, identity: { sku: 'LUS28' } });
   assert.equal(renamed.status, 200, renamed.body.error);
   assert.equal(renamed.body.item.sku, 'LUS28');
+});
+
+test('Receive enters a PO, lists it, and the Overview shows its lines as Incoming (stories 29–32)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
+  const lines = [{ item_id: hanger.id, ordered: 100, pack_size: 50 }];
+  const po = { supplier_id: supplier.id, number: '4501', po_date: '2026-10-03', lines };
+
+  // Story 57: until the owner switches hangers live, the database refuses the PO.
+  const off = await change(ctx, '/api/pos/enter', po);
+  assert.equal(off.status, 422);
+  assert.equal(off.body.error, 'The Hangers family is not live in Inventory yet, so it takes no POs, receipts or counts.');
+
+  await goLive(ctx.db, 'hangers');
+  const entered = await change(ctx, '/api/pos/enter', po);
+  assert.equal(entered.status, 200, entered.body.error);
+  assert.deepEqual(entered.body.po, {
+    id: entered.body.po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03',
+    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], closed_reason: null }],
+  });
+  assert.deepEqual((await read(ctx, '/api/pos')).pos, [entered.body.po]);
+
+  // live: Receive offers only live families' items; order_unit: how an amount is ordered (Q14).
+  const { families, items } = await read(ctx, '/api/items');
+  assert.deepEqual(families.map((f) => [f.code, f.live, f.order_unit]), [
+    ['lumber', false, 'linear feet'], ['plates', false, 'pieces'], ['hangers', true, 'pieces'], ['lvl', false, 'pieces'],
+  ]);
+  assert.equal(items.find((i) => i.id === hanger.id).incoming, 100);
+});
+
+test('the Activity Log names the PO entered and the family switched live', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
+  await goLive(ctx.db, 'hangers');
+  await change(ctx, '/api/pos/enter', { supplier_id: supplier.id, number: '4501', po_date: '2026-10-03',
+    lines: [{ item_id: hanger.id, ordered: 100 }, { item_id: hanger.id, ordered: 20 }] });
+
+  const { entries } = await read(ctx, '/api/activity');
+  assert.deepEqual(entries.slice(0, 2).map((e) => [e.action, e.target, e.change]), [
+    ['enter PO', 'PO 4501', 'added: Simpson, dated 2026-10-03, 2 lines'],
+    ['switch family live', 'Hangers', 'live: false → true'],
+  ]);
+});
+
+test('Receive edits a PO and closes and re-opens a line; the Activity Log says what changed', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
+  const reason = (await change(ctx, '/api/reasons/add', { text: 'Cancelled by supplier' })).body.reason;
+  await goLive(ctx.db, 'hangers');
+  const po = (await change(ctx, '/api/pos/enter', { supplier_id: supplier.id, number: '4501', po_date: '2026-10-03',
+    lines: [{ item_id: hanger.id, ordered: 100 }, { item_id: hanger.id, ordered: 20 }] })).body.po;
+  const [first, second] = po.lines;
+
+  const edited = await change(ctx, '/api/pos/edit', { id: po.id, version: 1, supplier_id: supplier.id, number: '4510', po_date: '2026-10-03',
+    lines: [{ id: first.id, item_id: hanger.id, ordered: 80 }, { id: second.id, item_id: hanger.id, ordered: 20 }, { item_id: hanger.id, ordered: 5 }] });
+  assert.equal(edited.status, 200, edited.body.error);
+  const closed = await change(ctx, '/api/pos/close-line', { id: second.id, po_version: 2, reason_id: reason.id });
+  assert.equal(closed.body.po.lines[1].closed_reason, 'Cancelled by supplier');
+  const stale = await change(ctx, '/api/pos/reopen-line', { id: second.id, po_version: 2 });
+  assert.equal(stale.status, 409);
+  assert.deepEqual(stale.body.current, closed.body.po, 'a stale screen gets the PO as it is now');
+  const reopened = await change(ctx, '/api/pos/reopen-line', { id: second.id, po_version: 3 });
+  assert.equal(reopened.status, 200, reopened.body.error);
+  assert.equal((await read(ctx, '/api/items')).items[0].incoming, 105);
+
+  const { entries } = await read(ctx, '/api/activity');
+  assert.deepEqual(entries.slice(0, 3).map((e) => [e.action, e.target, e.change]), [
+    ['re-open PO line', 'PO 4510', 'line 2 re-opened'],
+    ['close PO line', 'PO 4510', 'line 2 closed: Cancelled by supplier'],
+    ['edit PO', 'PO 4510', 'number: 4501 → 4510; line 1 ordered: 100 → 80; line 3 added'],
+  ]);
 });

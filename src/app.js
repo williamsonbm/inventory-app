@@ -17,7 +17,7 @@ const { signIn, loadPerson, changePassword } = require('./auth/sign-in.js');
 const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js');
 const { readActivity } = require('./settings/activity.js');
 const {
-  listCatalog, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
+  listCatalog, listPos, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -39,6 +39,7 @@ const TEMPORARY_OPEN = new Set([
 // address names.
 const PAGE_FILES = {
   '/inventory': ['inventory/overview.html', 'text/html'],
+  '/inventory/receive': ['inventory/receive.html', 'text/html'],
   '/settings/users': ['settings/users.html', 'text/html'],
   '/settings/pack-sizes': ['settings/catalog.html', 'text/html'],
   '/settings/suppliers': ['settings/catalog.html', 'text/html'],
@@ -146,6 +147,9 @@ function createApp({ database, sessionSecret }) {
   // admins (owner, 2026-10-01).
   app.get('/api/items', catchAsync(async (_req, res) => {
     res.json({ ok: true, ...await listCatalog(database) });
+  }));
+  app.get('/api/pos', catchAsync(async (_req, res) => {
+    res.json({ ok: true, pos: await listPos(database) });
   }));
   for (const route of Object.keys(SETTINGS_LISTS)) {
     app.get(route, catchAsync(async (_req, res) => {

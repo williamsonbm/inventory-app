@@ -68,6 +68,8 @@ const TARGET_NAMES = {
   lvl_depth_thresholds: (_item, row) => `LVL ${row.depth}″`,
   lumber_purchasable_lengths: (_item, row) => `${row.size} ${row.grade}`,
   lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
+  purchase_orders: (_item, row) => `PO ${row.number}`,
+  families: (_item, row) => row.name,
 };
 const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
 
@@ -83,12 +85,39 @@ const ADDED = {
   lvl_depth_thresholds: (row) => (row.threshold_lf === null ? 'no threshold' : `${row.threshold_lf} linear feet`),
   lumber_purchasable_lengths: (row) => (row.lengths.length ? row.lengths.map((l) => `${l}′`).join(', ') : 'no lengths'),
   lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
+  purchase_orders: (row) => `${row.supplier}, dated ${row.po_date}, ${row.lines.length} line${row.lines.length === 1 ? '' : 's'}`,
 };
 
+// What a change to a PO did, by its supplier, number and date, then line by
+// line, numbered as the Receive page numbers them (lines in the order
+// entered, so a new line comes last).
+const PO_FIELDS = { supplier: 'supplier', number: 'number', po_date: 'date' };
+const LINE_FIELDS = { item_id: 'item', ordered: 'ordered', pack_size: 'pack size' };
+const LINE_CHANGE = (word, was, now) => (word === 'item' ? 'item changed' : `${word}: ${was ?? 'none'} → ${now ?? 'none'}`);
+function describePoChange(was, now) {
+  const changes = Object.entries(PO_FIELDS).filter(([k]) => was[k] !== now[k]).map(([k, word]) => `${word}: ${was[k]} → ${now[k]}`);
+  now.lines.forEach((line, n) => {
+    const before = was.lines.find((l) => l.id === line.id);
+    if (!before) return changes.push(`line ${n + 1} added`);
+    if (before.closed_reason !== line.closed_reason) {
+      changes.push(line.closed_reason ? `line ${n + 1} closed: ${line.closed_reason}` : `line ${n + 1} re-opened`);
+    }
+    for (const [k, word] of Object.entries(LINE_FIELDS)) {
+      if (before[k] === line[k]) continue;
+      changes.push(`line ${n + 1} ${LINE_CHANGE(word, before[k], line[k])}`);
+    }
+  });
+  return changes.join('; ');
+}
+
+// A change told its own way, by the table it changed; any other table's
+// change lists each field that differs.
+const CHANGED = { purchase_orders: describePoChange };
+
 // What a change did, in words, for the "Was → now" column: an addition (no
-// was) says what was added; a removal (no now) says so; any other change
-// lists each field that differs, was → now. A password action shows nothing:
-// the log keeps no password.
+// was) says what was added; a removal (no now) says so; a table in CHANGED
+// tells its own; any other change lists each field that differs, was → now.
+// A password action shows nothing: the log keeps no password.
 function describeChange(action, table, was, now) {
   if (action.includes('password')) return '';
   if (!now) return 'removed';
@@ -96,6 +125,7 @@ function describeChange(action, table, was, now) {
     const added = ADDED[table]?.(now);
     return added ? `added: ${added}` : 'added';
   }
+  if (CHANGED[table]) return CHANGED[table](was, now);
   return Object.keys(now).filter((k) => k !== 'version' && JSON.stringify(was[k]) !== JSON.stringify(now[k]))
     .map((k) => `${k}: ${was[k]} → ${now[k]}`).join('; ');
 }

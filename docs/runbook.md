@@ -158,6 +158,8 @@ project pauses after a week of inactivity, and a paused Preview stops sign-in. S
    Then read the live project: the sign-in must not add a row to its `inv.activity_log`.
    Checked on 2026-10-03: the sign-in landed in the Preview project, and the live project's
    newest activity row was older than the Preview project.
+7. **Switch the families live** (*Switch a family live in Inventory*, below), from migration
+   004 on, so the office can try POs on the preview.
 
 ## Import the catalog
 
@@ -217,6 +219,25 @@ a refused row leaves nothing imported. Try it on the local practice database fir
    a line for each item it skipped because it was already in the catalog, and a line for each
    thing it left out (NAILED, the per-length LVL thresholds it dropped, a
    Special Order SKU missing from its export). Then check a few items in Inventory → Overview.
+
+## Switch a family live in Inventory
+
+Until a family is live, the database refuses its PO lines, and later its receipts and counts
+(#81, "Live in Inventory"). Migration 004 adds the switch, off for every family. **Switch
+families on in the Preview database only.** Production stays off until the cutover. There is no
+switch back: once a family has records, the way back is a correction.
+
+Run it with the owner login, naming an active admin; the activity log shows that admin as the
+one who switched it. Name one family or several (`lumber`, `plates`, `hangers`, `lvl`); each is
+its own save. EWP is refused until step 5.
+
+```sh
+DIRECT_DATABASE_URL="$OWNER_URL" node src/db/switch-family-live.js you@example.com lumber plates hangers lvl
+```
+
+Good result: one line per family, `Hangers is live in Inventory.` A family already live is
+refused with `Hangers is already live in Inventory.`, and the families after it in the
+command are not switched; run the command again without it.
 
 ## Sign everyone out
 

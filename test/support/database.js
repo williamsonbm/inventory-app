@@ -97,6 +97,13 @@ async function call(db, fn, ...args) {
   });
 }
 
+// The owner's command (src/db/switch-family-live.js): switches `family` live
+// in Inventory, naming Ann, the first person, as the admin who did it.
+function goLive(db, family) {
+  return as(db, null, async (owner) => (await owner.query(
+    'SELECT inv.set_family_live($1, $2) AS result', ['ann@example.com', family])).rows[0].result);
+}
+
 async function logRows(db) {
   return as(db, APP, async (app) =>
     (await app.query('SELECT * FROM inv.activity_log ORDER BY id')).rows);
@@ -112,5 +119,5 @@ async function refused(promise, code, label) {
 }
 
 module.exports = {
-  urlFor, connect, freshDatabase, as, HASH, APP, firstUser, call, logRows, refused,
+  urlFor, connect, freshDatabase, as, HASH, APP, firstUser, call, goLive, logRows, refused,
 };

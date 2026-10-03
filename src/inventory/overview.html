@@ -22,10 +22,10 @@
   overview.html — Inventory → Overview (#81 part 1): the item catalog, one
   family at a time or All, picked in the same family bar as the Planner's
   (owner, 2026-10-02). A row opens a panel below itself, where its stocking
-  status, threshold and note are edited (owner, 2026-10-01). On hand,
-  Incoming and Reorder arrive with part 2. Inventory has no task row while
-  the Overview is its only task; Receive, Count and Month-end join the
-  family bar on its right when they arrive (owner, 2026-10-02).
+  status, threshold and note are edited (owner, 2026-10-01). Incoming
+  (story 32) comes from inv.item_figures; On hand and Reorder join it in a
+  later in part 2. The tasks sit in the grey bar, right of Family
+  (#81, entry 7); Count and Month-end join them with part 3.
 
   Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
   repo has no DOM harness. Every route it calls is tested in
@@ -43,6 +43,8 @@
   <div class="appbar-filter">
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+    <span class="label" id="task-label">Task</span>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory" aria-current="page">Overview</a><a href="/inventory/receive">Receive</a></nav>
   </div>
 </header>
 
@@ -71,14 +73,14 @@
     <tbody id="rows"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
-  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item.</p>
+  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. Incoming is what open POs still bring: linear feet (LF) for lumber, pieces for the rest.</p>
 </div>
 
 <script src="/app-header.js"></script>
 <script src="/planner-ui.js"></script>
 <script>
 (async () => {
-  const { esc } = PlannerUI;
+  const { esc, fmtInt } = PlannerUI;
   const { send, say, itemLabel } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
@@ -101,6 +103,7 @@
   let renaming = false;   // the open row shows the rename fields
 
   const familyName = (code) => (families.find((f) => f.code === code) || { name: code }).name;
+  const orderUnit = (code) => (families.find((f) => f.code === code) || {}).order_unit;
 
   // Text with numbers in it compared as numbers, so 2x6 comes before 2x10
   // and 9-1/2 before 11-7/8.
@@ -124,6 +127,10 @@
     // Under All, an LVL row says where its threshold is instead of "not set".
     threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold,
       cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
+    // What open POs still bring, in the family's order unit: linear feet
+    // for lumber (Q14), pieces otherwise. None shows blank, not 0.
+    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => (i.incoming
+      ? fmtInt(i.incoming) + (orderUnit(i.family) === 'linear feet' ? ' LF' : '') : '') },
     // A marker only: the note itself shows when the row is open.
     note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
   };
@@ -132,11 +139,11 @@
   // LVL calls its size the depth, in inches (″), and its thresholds are per
   // depth (Settings → LVL thresholds), so LVL rows have no Threshold column.
   const VIEWS = {
-    plates: { cols: ['sku', 'stocking', 'threshold', 'note'], order: ['sku'] },
-    hangers: { cols: ['sku', 'stocking', 'threshold', 'note'], order: ['sku'] },
-    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'note'], order: ['grade', 'length'] },
+    plates: { cols: ['sku', 'stocking', 'threshold', 'incoming', 'note'], order: ['sku'] },
+    hangers: { cols: ['sku', 'stocking', 'threshold', 'incoming', 'note'], order: ['sku'] },
+    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'incoming', 'note'], order: ['grade', 'length'] },
     lvl: {
-      tab: 'size', cols: ['product', 'length', 'stocking', 'note'], order: ['product', 'length'],
+      tab: 'size', cols: ['product', 'length', 'stocking', 'incoming', 'note'], order: ['product', 'length'],
       labels: { size: 'Depth' }, tabUnit: '″', perDepth: true,
     },
   };
@@ -144,8 +151,8 @@
   // item in full instead of leaving the size to the tab.
   // A family with no view of its own (EWP, once step 5 names its items) lists
   // its items by name. All lists every family's items by family, then name.
-  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'note'], order: ['item'] };
-  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'note'], order: ['family', 'item'] };
+  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'incoming', 'note'], order: ['item'] };
+  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'incoming', 'note'], order: ['family', 'item'] };
   const view = () => {
     if (current === 'all') return ALL;
     const v = VIEWS[current] || PLAIN;

@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Receive · Inventory</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  receive.html — Inventory → Receive (#81 part 2): enter a PO when the
+  office orders (stories 29–31), edit it, close or re-open a line (story
+  39), and the list of POs entered. Like the web app's Receiving page,
+  which also takes PO lines. Receiving against a PO and without one joins
+  this page later in part 2.
+
+  The family bar narrows the item choices and the PO list. Only items of a
+  family that is live in Inventory can go on a PO: the database refuses the
+  rest (story 57), and this page says which families are not live yet.
+
+  Glue, NOT UNIT-TESTED: the form and the table need a browser, and this
+  repo has no DOM harness. Every route it calls is tested in
+  test/inventory.test.js. The layout is checked by hand (#81, Testing
+  Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">RTW Inventory Tracker</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory" class="here" aria-current="page">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
+  <div class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+    <span class="label" id="task-label">Task</span>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory">Overview</a><a href="/inventory/receive" aria-current="page">Receive</a></nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="message" role="status"></div>
+  <p class="sub" id="not-live" hidden></p>
+
+  <form id="po">
+    <h2 style="margin:8px 0" id="form-title">Enter a PO</h2>
+    <div class="row" style="align-items:flex-end">
+      <label class="field">Supplier <select id="supplier" required></select></label>
+      <label class="field">PO number <input id="number" required autocomplete="off"></label>
+      <label class="field">PO date <input id="po-date" type="date" required></label>
+    </div>
+    <div class="tw" style="margin-top:10px"><table class="one-line">
+      <thead><tr><th style="width:55%">Item</th><th>Amount ordered</th><th>Pack size (optional)</th><th></th></tr></thead>
+      <tbody id="lines"></tbody>
+    </table></div>
+    <datalist id="item-choices"></datalist>
+    <div class="row" style="margin-top:10px">
+      <button type="button" class="ghost" id="add-line">+ Add line</button>
+      <button id="save">Save PO</button>
+      <button type="button" class="ghost" id="cancel-edit" hidden>Cancel</button>
+    </div>
+  </form>
+
+  <h2 style="margin:20px 0 8px">POs entered</h2>
+  <div class="tw"><table class="one-line">
+    <thead><tr><th>PO</th><th>Supplier</th><th>Date</th><th>Item</th><th>Ordered</th><th>Pack size</th><th></th></tr></thead>
+    <tbody id="pos"></tbody>
+  </table></div>
+  <p class="sub" id="count"></p>
+  <p class="sub">Lumber is ordered in linear feet (LF), everything else in pieces. A pack size is the pieces in one pack, box or carton, if the PO names one. Each open line shows as Incoming on the Overview. A line is never deleted: close one you no longer expect, with a reason, and re-open it if it comes after all.</p>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+(async () => {
+  const { esc, fmtInt } = PlannerUI;
+  const { send, say, itemLabel, today } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  const me = await AppHeader.me;
+  if (!me) return;
+
+  let families = [];
+  let items = [];
+  let reasons = [];
+  let pos = [];
+  let current = null;   // the family the family bar shows, or 'all'
+  let editing = null;   // the PO the form is editing, or null to enter a new one
+  let closing = null;   // the id of the line whose Close asks for a reason
+
+  const family = (code) => families.find((f) => f.code === code);
+  const unitOf = (item) => (family(item.family).order_unit === 'linear feet' ? 'LF' : 'pieces');
+  // An item as the item box offers it: under All, its family first, so a
+  // plate and a hanger with the same SKU stay two choices. Either form is
+  // read back, so a line typed before the family bar changed still matches.
+  const choiceLabel = (i) => (current === 'all' ? family(i.family).name + ' · ' : '') + itemLabel(i);
+  const isNamed = (i, text) => [itemLabel(i), family(i.family).name + ' · ' + itemLabel(i)].includes(text.trim());
+  // The items a PO can order: in use, of a live family, in the family shown.
+  const orderable = () => items.filter((i) => i.active && family(i.family).live && (current === 'all' || i.family === current));
+  const itemById = (id) => items.find((i) => i.id === id);
+
+  async function load() {
+    const fail = { ok: false, error: 'The page did not load. Reload it to try again.' };
+    const get = (route) => fetch(route).then((r) => r.json()).catch(() => fail);
+    const [catalog, suppliers, list, reasonList] = await Promise.all(
+      ['/api/items', '/api/suppliers', '/api/pos', '/api/reasons'].map(get));
+    const bad = [catalog, suppliers, list, reasonList].find((b) => !b.ok);
+    if (bad) return say(bad.error, 'bad');
+    ({ families, items } = catalog);
+    pos = list.pos;
+    reasons = reasonList.reasons.filter((r) => r.active);
+    el('supplier').innerHTML = '<option value="">Pick one…</option>' +
+      suppliers.suppliers.map((s) => '<option value="' + s.id + '">' + esc(s.name) + '</option>').join('');
+    if (!suppliers.suppliers.length) say('Add your suppliers in Settings → Suppliers first; a PO is picked from that list.', 'bad');
+    const off = families.filter((f) => !f.live).map((f) => f.name);
+    el('not-live').hidden = !off.length;
+    el('not-live').textContent = off.length === families.length
+      ? 'No family is live in Inventory yet, so no PO can be entered. That starts at the cutover.'
+      : 'Not live in Inventory yet: ' + off.join(', ') + '. Their items cannot go on a PO until the cutover.';
+    showForm(null);
+    AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+      current = f;
+      paintChoices();
+      paintPos();
+    });
+  }
+
+  function paintChoices() {
+    el('item-choices').innerHTML = orderable().map((i) => '<option value="' + esc(choiceLabel(i)) + '">').join('');
+  }
+
+  // One line of the form, empty or filled from a saved line. A saved line
+  // keeps its id, and has no remove button: a line is never deleted, only
+  // closed (owner, 2026-10-03). Its unit follows the item typed in it.
+  function addLine(saved) {
+    const tr = document.createElement('tr');
+    const item = saved && itemById(saved.item_id);
+    if (saved) Object.assign(tr.dataset, { id: saved.id, itemId: saved.item_id });
+    tr.innerHTML = '<td><input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…" value="' +
+        esc(item ? choiceLabel(item) : '') + '"></td>' +
+      '<td><input data-f="ordered" type="number" min="1" step="1" style="width:8em" value="' + (saved ? saved.ordered : '') + '">' +
+        ' <span class="sub" data-f="unit">' + (item ? unitOf(item) : '') + '</span></td>' +
+      '<td><input data-f="pack" type="number" min="1" step="1" style="width:7em" value="' + (saved?.pack_size ?? '') + '"></td>' +
+      '<td>' + (saved ? '' : '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>') + '</td>';
+    el('lines').append(tr);
+  }
+
+  // The form enters a new PO (po null) or edits `po`, with its open lines.
+  function showForm(po) {
+    editing = po;
+    el('form-title').textContent = po ? 'Edit PO ' + po.number + ' from ' + po.supplier : 'Enter a PO';
+    el('save').textContent = po ? 'Save changes' : 'Save PO';
+    el('cancel-edit').hidden = !po;
+    el('supplier').value = po ? po.supplier_id : '';
+    el('number').value = po ? po.number : '';
+    el('po-date').value = po ? po.po_date : today();
+    el('lines').replaceChildren();
+    if (po) po.lines.filter((l) => !l.closed_reason).forEach(addLine);
+    addLine();
+  }
+
+  // The item a form line names: one picked from the list, or the item a
+  // saved line already orders, which may since be retired.
+  function lineItem(tr, text) {
+    const kept = itemById(Number(tr.dataset.itemId));
+    return orderable().find((i) => isNamed(i, text)) || (kept && isNamed(kept, text) ? kept : null);
+  }
+
+  el('lines').addEventListener('input', (e) => {
+    if (e.target.dataset.f !== 'item') return;
+    const tr = e.target.closest('tr');
+    const item = lineItem(tr, e.target.value);
+    tr.querySelector('[data-f="unit"]').textContent = item ? unitOf(item) : '';
+  });
+  el('lines').addEventListener('click', (e) => {
+    if (e.target.dataset.f !== 'remove') return;
+    e.target.closest('tr').remove();
+    if (!el('lines').querySelector('[data-f="remove"]')) addLine();
+  });
+  el('add-line').addEventListener('click', () => addLine());
+  el('cancel-edit').addEventListener('click', () => { say(''); showForm(null); });
+
+  // Reads the form into the request. An item typed but not picked from the
+  // list stops here with the line's number; every other rule is the
+  // database's, which answers in the same words.
+  function request() {
+    const lines = [];
+    for (const [n, tr] of [...el('lines').children].entries()) {
+      const value = (f) => tr.querySelector('[data-f="' + f + '"]').value.trim();
+      const number = (f) => (value(f) === '' ? null : Number(value(f)));
+      if (!tr.dataset.id && !value('item') && !value('ordered') && !value('pack')) continue;   // an empty new line is left out
+      const item = lineItem(tr, value('item'));
+      if (!item) throw new Error('Line ' + (n + 1) + ': pick the item from the list.');
+      lines.push({ id: tr.dataset.id ? Number(tr.dataset.id) : null, item_id: item.id,
+        ordered: number('ordered'), pack_size: number('pack') });
+    }
+    const po = { key: crypto.randomUUID(), supplier_id: Number(el('supplier').value) || null,
+      number: el('number').value, po_date: el('po-date').value, lines };
+    return editing ? ['/api/pos/edit', { ...po, id: editing.id, version: editing.version }] : ['/api/pos/enter', po];
+  }
+
+  // Sends one change to a PO and shows the PO as it comes back. A reply that
+  // never arrives keeps the same body, retry key included, so "Try again"
+  // acts once. A stale screen gets the PO as it is now, shown in the list.
+  async function save(route, body, done) {
+    say('');
+    try {
+      const { po } = await send(route, body);
+      pos = pos.some((p) => p.id === po.id) ? pos.map((p) => (p.id === po.id ? po : p)) : [po].concat(pos);
+      say(done(po), 'ok');
+    } catch (err) {
+      if (err.current) pos = pos.map((p) => (p.id === err.current.id ? err.current : p));
+      say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done) : null);
+    }
+    paintPos();
+  }
+  el('po').addEventListener('submit', (e) => {
+    e.preventDefault();
+    let route, body;
+    try { [route, body] = request(); } catch (err) { return say(err.message, 'bad'); }
+    el('save').disabled = true;
+    save(route, body, (po) => {
+      const word = editing ? ' was changed.' : ' was entered. Its lines show as Incoming on the Overview.';
+      showForm(null);
+      return 'PO ' + po.number + ' from ' + po.supplier + word;
+    }).finally(() => { el('save').disabled = false; });
+  });
+
+  // One row per line, newest PO first; a PO's own cells and its Edit button
+  // show on its first line. The family bar shows only that family's lines.
+  function paintPos() {
+    let shown = 0;
+    el('pos').innerHTML = pos.map((po) => {
+      const lines = po.lines.filter((l) => current === 'all' || itemById(l.item_id).family === current);
+      shown += lines.length ? 1 : 0;
+      return lines.map((l, n) => {
+        const item = itemById(l.item_id);
+        return '<tr' + (l.closed_reason ? ' class="sub"' : '') + ' data-po="' + po.id + '" data-line="' + l.id + '">' +
+          (n ? '<td></td><td></td><td></td>'
+            : '<td>' + esc(po.number) + ' <button type="button" class="ghost" data-do="edit">Edit</button></td>' +
+              '<td>' + esc(po.supplier) + '</td><td>' + esc(po.po_date) + '</td>') +
+          '<td class="name">' + esc(choiceLabel(item)) + '</td>' +
+          '<td>' + fmtInt(l.ordered) + ' ' + unitOf(item) + '</td>' +
+          '<td>' + (l.pack_size ?? '—') + '</td><td>' + lineAction(l) + '</td></tr>';
+      }).join('');
+    }).join('');
+    el('count').textContent = shown + ' PO' + (shown === 1 ? '' : 's') + ' shown.';
+  }
+  // An open line offers Close, which first asks for a reason; a closed line
+  // says why and offers Re-open.
+  function lineAction(l) {
+    if (l.closed_reason) return 'Closed: ' + esc(l.closed_reason) + ' <button type="button" class="ghost" data-do="reopen">Re-open</button>';
+    if (l.id !== closing) return '<button type="button" class="ghost" data-do="close">Close…</button>';
+    return '<select data-f="reason"><option value="">Reason…</option>' +
+      reasons.map((r) => '<option value="' + r.id + '">' + esc(r.text) + '</option>').join('') + '</select> ' +
+      '<button type="button" data-do="close-line">Close line</button> <button type="button" class="ghost" data-do="close-cancel">Cancel</button>';
+  }
+
+  el('pos').addEventListener('click', (e) => {
+    const what = e.target.dataset && e.target.dataset.do;
+    if (!what) return;
+    const tr = e.target.closest('tr');
+    const po = pos.find((p) => p.id === Number(tr.dataset.po));
+    const line = Number(tr.dataset.line);
+    if (what === 'edit') {
+      say('');
+      showForm(po);
+      return el('po').scrollIntoView({ behavior: 'smooth' });
+    }
+    if (what === 'close' || what === 'close-cancel') { closing = what === 'close' ? line : null; return paintPos(); }
+    if (what === 'close-line') {
+      const reasonId = Number(tr.querySelector('[data-f="reason"]').value) || null;
+      if (!reasonId) return say('Pick the reason the line is closed.', 'bad');
+      closing = null;
+      return save('/api/pos/close-line', { key: crypto.randomUUID(), id: line, po_version: po.version, reason_id: reasonId },
+        (p) => 'A line of PO ' + p.number + ' was closed. It no longer counts as Incoming.');
+    }
+    if (what === 'reopen') {
+      save('/api/pos/reopen-line', { key: crypto.randomUUID(), id: line, po_version: po.version },
+        (p) => 'A line of PO ' + p.number + ' was re-opened. It counts as Incoming again.');
+    }
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>
