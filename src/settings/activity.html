@@ -49,7 +49,7 @@
 <div class="wrap">
   <div id="message" role="status"></div>
   <table>
-    <thead><tr><th>When (Eastern)</th><th>Who</th><th>Action</th><th>Person</th><th>Was → now</th></tr></thead>
+    <thead><tr><th>When (Eastern)</th><th>Who</th><th>Action</th><th>What</th><th>Was → now</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
   <div class="row"><button type="button" class="ghost" id="older" hidden>Older entries</button></div>
@@ -66,16 +66,6 @@
   let before = null;
   let actionsListed = false;
 
-  // What changed, as was → now: only the fields that differ. An addition has
-  // no "was". A password action has none either, and shows nothing: the log
-  // keeps no password.
-  function describe(action, was, now) {
-    if (!now || action.includes('password')) return '';
-    if (!was) return 'added: ' + now.name + ', ' + now.email;
-    const changed = Object.keys(now).filter((k) => k !== 'version' && JSON.stringify(was[k]) !== JSON.stringify(now[k]));
-    return changed.map((k) => k + ': ' + was[k] + ' → ' + now[k]).join('; ');
-  }
-
   async function load(more) {
     const q = new URLSearchParams();
     for (const id of ['person', 'action', 'from', 'to']) if (el(id).value) q.set(id, el(id).value);
@@ -88,7 +78,7 @@
       actionsListed = true;
     }
     const html = body.entries.map((e) => '<tr><td>' + esc(showTime(e.at)) + '</td><td>' + esc(e.who) + '</td><td>' +
-      esc(e.action) + '</td><td>' + esc(e.target || '') + '</td><td>' + esc(describe(e.action, e.was, e.now)) + '</td></tr>').join('');
+      esc(e.action) + '</td><td>' + esc(e.target || '') + '</td><td>' + esc(e.change) + '</td></tr>').join('');
     if (more) el('rows').insertAdjacentHTML('beforeend', html);
     else el('rows').innerHTML = html || '<tr><td colspan="5" class="sub">Nothing matches.</td></tr>';
     before = body.before;

@@ -216,18 +216,30 @@ test('the Activity Log names the item, pack size, supplier or reason each change
   await change(ctx, '/api/lumber/redirect', { size: '2x6', from_grade: '#2', version: null, to_grade: 'DSS' });
   await change(ctx, '/api/items/add', { family: 'lumber', identity: { size: '2x6', grade: 'DSS', length_ft: 16 } });
 
+  // Each row says what the change did, in words; an addition says what was added.
   const { entries } = await read(ctx, '/api/activity');
-  assert.deepEqual(entries.slice(0, 9).map((e) => [e.action, e.target]), [
-    ['add item', '2x6 DSS 16′'],
-    ['set grade redirect', '2x6 #2'],
-    ['set lumber lengths', '2x4 #2'],
-    ['set LVL depth threshold', 'LVL 14″'],
-    ['add item', '2.1 RigidLam LVL 1-3/4 x 14 48′'],
-    ['add reason', 'Miscounted'],
-    ['add supplier', 'Boise Cascade'],
-    ['add pack size', 'BOGUS26 carton'],
-    ['add item', 'BOGUS26'],
+  assert.deepEqual(entries.slice(0, 9).map((e) => [e.action, e.target, e.change]), [
+    ['add item', '2x6 DSS 16′', 'added: Special Order, no threshold'],
+    ['set grade redirect', '2x6 #2', 'added: to DSS'],
+    ['set lumber lengths', '2x4 #2', 'lengths: 6,7,8,10,12,14,16,20 → 8'],
+    ['set LVL depth threshold', 'LVL 14″', 'added: 720 linear feet'],
+    ['add item', '2.1 RigidLam LVL 1-3/4 x 14 48′', 'added: Special Order, no threshold'],
+    ['add reason', 'Miscounted', 'added'],
+    ['add supplier', 'Boise Cascade', 'added'],
+    ['add pack size', 'BOGUS26 carton', 'added: 50 pieces'],
+    ['add item', 'BOGUS26', 'added: Special Order, no threshold'],
   ]);
+});
+
+test('the Activity Log says what the catalog import and a removal did', async () => {
+  const { describeChange } = require('../src/settings/activity.js');
+  const report = { added: { items: 378, pack_sizes: 209, lvl_depth_thresholds: 7 },
+    skipped: { items: 2, pack_sizes: 0, lvl_depth_thresholds: 0 }, skipped_items: ['LUS28', 'A35'] };
+  assert.equal(describeChange('import catalog', 'items', null, report),
+    'added: 378 items, 209 pack sizes and 7 LVL depth thresholds; 2 items were there already');
+  assert.equal(describeChange('remove lumber group', 'lumber_purchasable_lengths',
+    { size: '2x4', grade: '1650', lengths: [], version: 1 }, null), 'removed');
+  assert.equal(describeChange('set password', 'users', { name: 'Bob' }, { name: 'Bob' }), '', 'the log keeps no password');
 });
 
 test('only an admin can rename an item', async () => {

@@ -44,12 +44,13 @@ test('add, rename, remove and re-activate each write one log row: who, what, was
 
   const { entries } = await activity(ctx);
   const mine = entries.filter((e) => e.target === 'Robert Ray');
-  assert.deepEqual(mine.map(({ who, action, was, now }) => ({ who, action, was, now })), [
-    { who: 'Ann Lee', action: 're-activate user', was: removed, now: back },
-    { who: 'Ann Lee', action: 'remove user', was: renamed, now: removed },
-    { who: 'Ann Lee', action: 'rename user', was: bob, now: renamed },
-    { who: 'Ann Lee', action: 'add user', was: null, now: bob },
+  assert.deepEqual(mine.map(({ who, action, change }) => ({ who, action, change })), [
+    { who: 'Ann Lee', action: 're-activate user', change: 'active: false → true' },
+    { who: 'Ann Lee', action: 'remove user', change: 'active: true → false' },
+    { who: 'Ann Lee', action: 'rename user', change: 'name: Bob Ray → Robert Ray' },
+    { who: 'Ann Lee', action: 'add user', change: 'added: Bob Ray, bob@example.com' },
   ], 'newest first, one row per change');
+  assert.equal(removed.active, false);
 });
 
 test('the same retry key sent twice makes one change and one log row, and both answers match', async () => {
@@ -172,9 +173,10 @@ test('the activity log filters by person, action and office day, newest first, a
 
   const bobsRenames = await activity(ctx, `?person=${bob.id}&action=rename%20user`);
   assert.equal(bobsRenames.entries.length, 50, 'one page');
-  assert.deepEqual(bobsRenames.entries.slice(0, 2).map((e) => e.now.name), ['Bob 60', 'Bob 59'], 'newest first');
+  const newName = (e) => e.change.split(' → ')[1];
+  assert.deepEqual(bobsRenames.entries.slice(0, 2).map(newName), ['Bob 60', 'Bob 59'], 'newest first');
   const rest = await activity(ctx, `?person=${bob.id}&action=rename%20user&before=${bobsRenames.before}`);
-  assert.deepEqual(rest.entries.map((e) => e.now.name), ['Bob 10', 'Bob 9', 'Bob 8', 'Bob 7', 'Bob 6',
+  assert.deepEqual(rest.entries.map(newName), ['Bob 10', 'Bob 9', 'Bob 8', 'Bob 7', 'Bob 6',
     'Bob 5', 'Bob 4', 'Bob 3', 'Bob 2', 'Bob 1']);
   assert.equal(rest.before, null, 'no page after the last');
 

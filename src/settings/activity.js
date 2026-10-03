@@ -48,8 +48,11 @@ async function readActivity(database, { person, action, from, to, before }) {
   const page = rows.slice(0, PAGE_SIZE);
   const nextBefore = rows.length > PAGE_SIZE ? page.at(-1).id : null;
   const actions = actionRows.map((r) => r.name);
-  const entries = page.map(({ id, target_table: table, item, target, ...entry }) =>
-    ({ ...entry, target: target ?? targetName(table, item, entry.now || entry.was) }));
+  const entries = page.map(({ id, target_table: table, item, target, was, now, ...entry }) => ({
+    ...entry,
+    target: target ?? targetName(table, item, now || was),
+    change: describeChange(entry.action, table, was, now),
+  }));
   return { entries, before: nextBefore, actions };
 }
 
@@ -68,4 +71,33 @@ const TARGET_NAMES = {
 };
 const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
 
-module.exports = { readActivity };
+// What an addition added, beyond the name the row already shows, by the
+// table it went into. The catalog import's row holds its own report.
+const ADDED = {
+  users: (row) => `${row.name}, ${row.email}`,
+  items: (row) => (row.added
+    ? `${row.added.items} items, ${row.added.pack_sizes} pack sizes and ${row.added.lvl_depth_thresholds} LVL depth thresholds; `
+      + `${row.skipped.items} items were there already`
+    : `${row.stocking}, ${row.threshold === null ? 'no threshold' : `threshold ${row.threshold}`}`),
+  pack_sizes: (row) => `${row.pieces} pieces`,
+  lvl_depth_thresholds: (row) => (row.threshold_lf === null ? 'no threshold' : `${row.threshold_lf} linear feet`),
+  lumber_purchasable_lengths: (row) => (row.lengths.length ? row.lengths.map((l) => `${l}′`).join(', ') : 'no lengths'),
+  lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
+};
+
+// What a change did, in words, for the "Was → now" column: an addition (no
+// was) says what was added; a removal (no now) says so; any other change
+// lists each field that differs, was → now. A password action shows nothing:
+// the log keeps no password.
+function describeChange(action, table, was, now) {
+  if (action.includes('password')) return '';
+  if (!now) return 'removed';
+  if (!was) {
+    const added = ADDED[table]?.(now);
+    return added ? `added: ${added}` : 'added';
+  }
+  return Object.keys(now).filter((k) => k !== 'version' && JSON.stringify(was[k]) !== JSON.stringify(now[k]))
+    .map((k) => `${k}: ${was[k]} → ${now[k]}`).join('; ');
+}
+
+module.exports = { readActivity, describeChange };
