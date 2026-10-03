@@ -209,8 +209,10 @@
   }
 
   function paint() {
+    const typing = AppHeader.typingIn(el('rows'));
     const words = el('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
     el('rows').innerHTML = section.rows(words).join('');
+    typing.restore();
   }
 
   // Runs one change. On a stale save, the refusal carries the current row,

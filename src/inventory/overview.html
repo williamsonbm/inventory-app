@@ -243,6 +243,7 @@
   }
 
   function paint() {
+    const typing = AppHeader.typingIn(el('rows'));
     paintTabs();
     const cols = view().cols.map((c) => [c, COL[c]]);
     const first = cols.find(([, c]) => c.name)[1];
@@ -259,6 +260,7 @@
     el('count').textContent = current === 'all'
       ? rows.length + ' of ' + items.length + ' items shown.'
       : rows.length + ' of ' + items.filter((i) => i.family === current).length + ' ' + familyName(current) + ' items shown.';
+    typing.restore();
   }
 
   // Runs one change. On a stale save, the refusal carries the current item,

@@ -1,7 +1,8 @@
 // app-header.js — the header every signed-in page shares (#77): the theme
 // switch, the signed-in person's name, and Sign out. Also `send`, the one way
-// a page posts a change, `say`, its message area, `itemLabel`, and
-// `familyBar`, the family filter the Planner and Inventory share.
+// a page posts a change, `say`, its message area, `itemLabel`,
+// `familyBar`, the family filter the Planner and Inventory share, and
+// `typingIn`, which keeps a box's typing through a repaint.
 //
 // Glue, NOT UNIT-TESTED: it needs a browser, and this repo has no DOM harness.
 // The routes it calls are tested in test/sign-in.test.js and
@@ -151,5 +152,29 @@ window.AppHeader = (() => {
     show([first, saved].find((f) => choices.some((c) => c.code === f)) || 'all');
   }
 
-  return { me, send, say, itemLabel, showTime, familyBar };
+  // A repaint rebuilds every row, so text a person is typing in one box while
+  // another save comes back would be lost. typingIn(container), called before
+  // the repaint, notes the focused box: its text, if not saved yet, and its
+  // cursor. restore(), after the repaint, finds the same box (the same data-
+  // attributes, in the row with the same data-id) and puts them back.
+  function typingIn(container) {
+    const box = document.activeElement;
+    if (!box || box.tagName !== 'INPUT' || !container.contains(box)) return { restore() {} };
+    const mark = (n) => JSON.stringify([{ ...n.dataset }, (n.closest('[data-id]') || { dataset: {} }).dataset.id]);
+    const which = mark(box);
+    const typed = box.value !== box.defaultValue ? box.value : null;
+    let cursor = null;
+    try { cursor = [box.selectionStart, box.selectionEnd]; } catch { /* a number box has no cursor position */ }
+    return {
+      restore() {
+        const again = [...container.querySelectorAll('input')].find((n) => mark(n) === which);
+        if (!again) return;
+        if (typed !== null) again.value = typed;
+        again.focus();
+        try { if (cursor && cursor[0] !== null) again.setSelectionRange(cursor[0], cursor[1]); } catch { /* number box */ }
+      },
+    };
+  }
+
+  return { me, send, say, itemLabel, showTime, familyBar, typingIn };
 })();

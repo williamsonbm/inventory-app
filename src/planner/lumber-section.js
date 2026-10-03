@@ -72,13 +72,17 @@
   }
 
   // The "Redirect to" picker for one menu row — only rendered when there's a
-  // stronger grade we buy to send this one to. Saved at once, and applies
+  // stronger grade we buy to send this one to, or a redirect saved already.
+  // Saved at once, and applies
   // on the next "Work out what to buy", on every computer.
   function redirectSelectHtml(key) {
     const [size, grade] = key.split('|');
-    const targets = validRedirectTargets(size, grade);
-    if (!targets.length) return '';
     const current = activeRedirects[key] || '';
+    // The saved target stays a choice even when it has no lengths switched on
+    // now, so the redirect can still be cleared, and the group then removed.
+    const valid = validRedirectTargets(size, grade);
+    const targets = current && !valid.includes(current) ? valid.concat(current) : valid;
+    if (!targets.length) return '';
     const opts = ['<option value="">— no redirect —</option>']
       .concat(targets.map((g) => `<option value="${esc(g)}"${g === current ? ' selected' : ''}>${esc(g)}</option>`))
       .join('');
