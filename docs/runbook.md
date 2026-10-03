@@ -16,21 +16,26 @@ password in them) never go into this repository, an issue or a chat.
 
 Below, `$OWNER_URL` stands for that Session-pooler string with the `postgres` login.
 
-**Load a connection string without typing it in a command**, so that the password stays out of
-the shell history and off the screen. Paste it into a private file, read it into the variable,
-and delete the file:
+**Load `$OWNER_URL` without typing the string in a command**, so that the password stays out of
+the shell history and off the screen. Paste the string of the project you mean to change (the
+Preview string for the Preview database) into a private file, read it into the variable, and
+delete the file:
 
 ```sh
 umask 077
 nano ~/owner-url.txt           # paste with Shift+Insert, then Ctrl+O, Enter, Ctrl+X
-DIRECT_DATABASE_URL="$(tr -d ' \r\n' < ~/owner-url.txt)"
+OWNER_URL="$(tr -d ' \r\n' < ~/owner-url.txt)"
 rm ~/owner-url.txt
-export DIRECT_DATABASE_URL="$DIRECT_DATABASE_URL?sslmode=verify-full&sslrootcert=<path to the file>"
+OWNER_URL="$OWNER_URL?sslmode=verify-full&sslrootcert=<full path to the certificate file>"
 ```
 
-Run the command, then `unset DIRECT_DATABASE_URL`. `read -rs` also works, but a paste that starts
-with a line break ends it at once and leaves the variable empty (2026-10-03). `echo ${#DIRECT_DATABASE_URL}`
-prints the length without showing the string.
+Then run the commands below as written: each passes `$OWNER_URL` to the script. Give the
+certificate as a full path, for example `$HOME/<file name>`: the shell does not expand `~`
+inside the quotes, and the `pg` library does not expand it either. Finish with
+`unset OWNER_URL`, and always do so before you load the string of the other project: a value
+left over sends the next command to the old database. `read -rs` also works, but a paste that
+starts with a line break ends it at once and leaves the variable empty (2026-10-03).
+`echo ${#OWNER_URL}` prints the length without showing the string.
 
 ## Go-live steps, in order
 
@@ -54,9 +59,10 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    DIRECT_DATABASE_URL="$OWNER_URL" node src/db/migrate.js
    ```
 
-   Good result: `applied: 002-passwords.sql` (001 is already there). A failure prints
-   `migration <file> failed, nothing from it was applied` and changes nothing. Migration 003
-   was applied to Production on 2026-10-03; `inv.schema_migrations` lists it.
+   Good result: `applied:` and the names of the files it applied, or `nothing to apply` when
+   the database has them all. A failure prints `migration <file> failed, nothing from it was
+   applied` and changes nothing. Migration 003 went to Production on 2026-10-03, before the
+   Preview database existed, so it skipped the order below; `inv.schema_migrations` lists it.
 
    **The order for every migration from 003 on** (#81): apply it to the Preview database (see
    *Create the Preview database*), try the preview, apply it to Production, then merge the PR.
@@ -119,16 +125,22 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
 ## Create the Preview database
 
 A second Supabase project, so that a Vercel preview never touches the live data (#81). Done
-2026-10-03: `inventory-app-preview`, East US, on the Free plan (which allows 2 active projects).
-Repeat the go-live steps against it. Only the differences are listed.
+2026-10-03: `inventory-app-preview`, East US, on the Free plan. Repeat the go-live steps
+against it. Only the differences are listed. Preview skips go-live steps 8 to 10 (sign-in
+speed, nightly backup, practice restore).
 
-1. **Create the project** with the settings of step 2: East US (North Virginia), and "Enable
-   Data API", "Automatically expose new tables" and "Enable automatic RLS" all unticked.
-   Download its CA certificate under a different file name from the live one.
-2. **Run the migrations** (step 3) with the Preview Session-pooler string and its certificate.
-   The good result lists every file in `migrations/`.
-3. **Set the three passwords** (step 4), different from the live ones. Check them in the
-   Preview project:
+The Free plan allows 2 active projects (go-live step 2), and Preview holds the second. A restore
+target (*Restore a backup*, step 2) therefore needs a paused project or the Pro plan. A Free
+project pauses after a week of inactivity, and a paused Preview stops sign-in. Story 103 of #81
+(empty and rebuild the Preview database) has no steps yet.
+
+1. **Create the project** with the settings of go-live step 2: East US (North Virginia), and
+   "Enable Data API", "Automatically expose new tables" and "Enable automatic RLS" all
+   unticked. Download its CA certificate under a different file name from the live one.
+2. **Run the migrations** (go-live step 3) with the Preview Session-pooler string and its
+   certificate. The good result lists every file in `migrations/`.
+3. **Set the three passwords** (go-live step 4), different from the live ones. Check them in
+   the Preview project:
 
    ```sql
    SELECT usename, passwd IS NOT NULL AS has_password FROM pg_shadow WHERE usename LIKE 'inv\_%';
@@ -136,13 +148,13 @@ Repeat the go-live steps against it. Only the differences are listed.
 
    Do not use `pg_roles` for this: it shows a masked password for every login, so it always
    looks set.
-4. **Add the first person** (step 6).
-5. **Set the Preview variables in Vercel** (step 5), in the Preview environment only: the
+4. **Add the first person** (go-live step 6).
+5. **Set the Preview variables in Vercel** (go-live step 5), in the Preview environment only: the
    Preview project's Transaction-pooler string with the `inv_app.<preview-project-ref>` login,
    the Preview certificate text, and a new `SESSION_SECRET` that differs from the live one. If
    Production and Preview share a variable, untick Preview on it and add a Preview-only entry.
    Variables reach new deployments only, so redeploy a preview afterwards.
-6. **Check.** Run the step 7 checks in the Preview project. Sign in on the redeployed preview.
+6. **Check.** Run the checks of go-live step 7 in the Preview project. Sign in on the redeployed preview.
    Then read the live project: the sign-in must not add a row to its `inv.activity_log`.
    Checked on 2026-10-03: the sign-in landed in the Preview project, and the live project's
    newest activity row was older than the Preview project.
