@@ -58,6 +58,10 @@ const squeeze = (sku) => sku.replace(/\s+/g, ' ');
 // owner about what was left out. Stocking status: Special Order for the
 // special-order lists, Stocked with a threshold, Non-Stock otherwise; LVL is
 // Stocked where its depth has a threshold, Special Order where it has none.
+// Names are matched ignoring capitals, as the database matches items
+// (inv.same_item): "dtt2z" on the special-order list is the hanger DTT2Z.
+const nameKey = (text) => text.toLowerCase();
+
 function catalogFromFiles(files) {
   const items = [];
   const packSizes = [];
@@ -66,8 +70,9 @@ function catalogFromFiles(files) {
 
   for (const family of ['plates', 'hangers']) {
     const rows = readCsv(files[family]);
-    const skus = new Set(rows.map((r) => squeeze(r.sku)));
-    const specialHere = new Set(special.filter((s) => s.family === family).map((s) => squeeze(s.sku)));
+    const skus = new Set(rows.map((r) => nameKey(squeeze(r.sku))));
+    const specialHere = special.filter((s) => s.family === family).map((s) => squeeze(s.sku));
+    const isSpecial = new Set(specialHere.map(nameKey));
     for (const r of rows) {
       const sku = squeeze(r.sku);
       if ((NOT_ITEMS[family] || []).includes(sku)) {
@@ -75,11 +80,11 @@ function catalogFromFiles(files) {
         continue;
       }
       const t = threshold(r.threshold);
-      const stocking = specialHere.has(sku) ? 'Special Order' : t === null ? 'Non-Stock' : 'Stocked';
+      const stocking = isSpecial.has(nameKey(sku)) ? 'Special Order' : t === null ? 'Non-Stock' : 'Stocked';
       items.push({ family, identity: { sku }, stocking, threshold: t });
     }
-    for (const sku of specialHere) {
-      if (!skus.has(sku)) {
+    for (const sku of new Set(specialHere)) {
+      if (!skus.has(nameKey(sku))) {
         notes.push(`Special Order ${family.replace(/s$/, '')} ${sku} is not in the ${family.replace(/s$/, '')} export, so it was not added.`);
       }
     }
@@ -128,8 +133,9 @@ function catalogFromFiles(files) {
 
   // A pack size whose item is not in today's export is left out, so one
   // retired SKU never blocks the whole import.
-  const known = new Set(items.map((i) => `${i.family}|${JSON.stringify(i.identity)}`));
-  const kept = packSizes.filter((p) => known.has(`${p.family}|${JSON.stringify(p.identity)}`));
+  const key = (x) => nameKey(`${x.family}|${JSON.stringify(x.identity)}`);
+  const known = new Set(items.map(key));
+  const kept = packSizes.filter((p) => known.has(key(p)));
   for (const family of ['plates', 'hangers']) {
     const left = packSizes.filter((p) => p.family === family && !kept.includes(p)).length;
     const one = family.replace(/s$/, '');

@@ -137,3 +137,19 @@ test('a pack size for an item not in the export is left out and counted in a not
   assert.ok(report.notes.includes('Left out 111 hanger pack sizes whose items are not in the hanger export.'),
     `notes: ${report.notes.join(' | ')}`);
 });
+
+test('the import ignores capitals when it matches special-order and pack-size SKUs to the export', async () => {
+  const db = await freshDatabase();
+  await firstUser(db);
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'import-'));
+  const special = path.join(dir, 'special-order.csv');
+  fs.writeFileSync(special, 'family,sku\nhangers,dtt2z\n');
+  const hangers = path.join(dir, 'hangers.csv');
+  fs.writeFileSync(hangers, 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted\nDTT2Z,0,0,0,0,,,\nlus28,0,0,0,0,,,\n');
+  const report = await importCatalog(urlFor(db), { ...FILES, specialOrder: special, hangers }, 'ann@example.com');
+  assert.ok(!report.notes.some((n) => /dtt2z/i.test(n)), `notes: ${report.notes.join(' | ')}`);
+  const rows = await as(db, APP, async (app) => (await app.query(`
+    SELECT i.sku, i.stocking, p.kind, p.pieces FROM inv.items i LEFT JOIN inv.pack_sizes p ON p.item_id = i.id
+     WHERE i.family = 'hangers' ORDER BY i.sku`)).rows);
+  assert.deepEqual(rows.map((r) => [r.sku, r.stocking, r.kind]), [['DTT2Z', 'Special Order', 'carton'], ['lus28', 'Non-Stock', 'carton']]);
+});
