@@ -48,7 +48,7 @@ Under the `claude-pod` alias both sit at `/workspace/`; elsewhere the path diffe
 | `test/` | Node test suites and sheet fixtures |
 | `docs/adr/` | Accepted decisions (start with ADR 0001) |
 | `docs/research/` | Platform, database, and schema assessments — the numbers behind the decisions |
-| `docs/agents/` | The domain model, the issue-tracker map, and session handoffs |
+| `docs/agents/` | The domain model and the issue-tracker map |
 | `docs/runbook.md` | The owner's steps: setting up the database, the first user, signing everyone out, and restoring a backup |
 | `CONTEXT.md` | The glossary — the words this project uses, and two it forbids |
 
