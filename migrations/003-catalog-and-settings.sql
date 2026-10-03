@@ -217,13 +217,17 @@ CREATE TABLE inv.lumber_purchasable_lengths (
   lengths integer[] NOT NULL
           CHECK (0 < ALL (lengths) AND pg_catalog.array_position(lengths, NULL) IS NULL),
   version integer NOT NULL DEFAULT 1,
+  -- A removed group (story 108) keeps its row, because nothing is deleted
+  -- (docs/database-design.md). Adding it again brings the row back, and its
+  -- version keeps counting, so a screen from before the removal is refused.
+  removed boolean NOT NULL DEFAULT false CHECK (NOT removed OR pg_catalog.cardinality(lengths) = 0),
   PRIMARY KEY (size, grade)
 );
 -- Capitals do not make a second group, as for items: "2x4 dss" is 2x4 DSS.
 CREATE UNIQUE INDEX lumber_purchasable_lengths_name_key
   ON inv.lumber_purchasable_lengths (size, pg_catalog.lower(grade));
 
-CREATE TRIGGER bump_version BEFORE UPDATE OF lengths ON inv.lumber_purchasable_lengths
+CREATE TRIGGER bump_version BEFORE UPDATE OF lengths, removed ON inv.lumber_purchasable_lengths
   FOR EACH ROW EXECUTE FUNCTION inv.bump_version();
 
 -- Seed: the engine's default menu (DEFAULT_LUMBER_MENU in src/lumber/lumberMenu.js,
@@ -337,7 +341,17 @@ BEGIN
   i.size := inv.tidy(p_identity ->> 'size');
   i.grade := inv.tidy(p_identity ->> 'grade');
   i.length_ft := (v_length::numeric)::integer;
-  IF p_family = 'lumber' THEN PERFORM inv.check_lumber_size(i.size); END IF;
+  IF p_family = 'lumber' THEN
+    PERFORM inv.check_lumber_size(i.size);
+    -- A grade typed in other capitals takes the spelling already in use, from
+    -- the buying options first, then from the lumber items: "dss" is DSS.
+    i.grade := coalesce(
+      (SELECT l.grade FROM inv.lumber_purchasable_lengths l
+        WHERE pg_catalog.lower(l.grade) = pg_catalog.lower(i.grade) ORDER BY l.grade LIMIT 1),
+      (SELECT x.grade FROM inv.items x
+        WHERE x.family = 'lumber' AND pg_catalog.lower(x.grade) = pg_catalog.lower(i.grade) ORDER BY x.id LIMIT 1),
+      i.grade);
+  END IF;
   RETURN i;
 END
 $$;
@@ -873,6 +887,7 @@ DECLARE
   was inv.lumber_purchasable_lengths;
   l inv.lumber_purchasable_lengths;
   v_lengths integer[];
+  v_listed boolean;
 BEGIN
   a := inv.claim_action(p_actor, p_key, 'set lumber lengths', 'lumber_purchasable_lengths', NULL,
                         pg_catalog.jsonb_build_object('size', p_size, 'grade', p_grade,
@@ -888,19 +903,19 @@ BEGIN
   END IF;
   SELECT coalesce(pg_catalog.array_agg(DISTINCT n::integer ORDER BY n::integer), '{}') INTO v_lengths
     FROM pg_catalog.unnest(p_lengths) n;
+  -- The group in any capitals, removed or not: one row per group, for good.
   SELECT * INTO was FROM inv.lumber_purchasable_lengths
-   WHERE size = inv.tidy(p_size) AND grade = inv.tidy(p_grade) FOR UPDATE;
-  IF FOUND IS DISTINCT FROM (p_version IS NOT NULL) OR p_version IS DISTINCT FROM was.version THEN
+   WHERE size = inv.tidy(p_size) AND pg_catalog.lower(grade) = pg_catalog.lower(inv.tidy(p_grade)) FOR UPDATE;
+  v_listed := FOUND AND NOT was.removed;
+  IF v_listed AND p_version IS NULL AND was.grade <> inv.tidy(p_grade) THEN
+    RAISE EXCEPTION '% % is already on the list as % %.', inv.tidy(p_size), inv.tidy(p_grade), was.size, was.grade
+      USING ERRCODE = 'IV400';
+  END IF;
+  IF v_listed IS DISTINCT FROM (p_version IS NOT NULL) OR (v_listed AND p_version IS DISTINCT FROM was.version) THEN
     RAISE EXCEPTION 'Someone else changed % % since you opened this screen.', p_size, p_grade
-      USING ERRCODE = 'IV409', DETAIL = coalesce(inv.lumber_lengths_json(was)::text, 'null');
+      USING ERRCODE = 'IV409', DETAIL = CASE WHEN v_listed THEN inv.lumber_lengths_json(was)::text ELSE 'null' END;
   END IF;
   IF was.size IS NULL THEN
-    SELECT * INTO l FROM inv.lumber_purchasable_lengths
-     WHERE size = inv.tidy(p_size) AND pg_catalog.lower(grade) = pg_catalog.lower(inv.tidy(p_grade));
-    IF FOUND THEN
-      RAISE EXCEPTION '% % is already on the list as % %.', inv.tidy(p_size), inv.tidy(p_grade), l.size, l.grade
-        USING ERRCODE = 'IV400';
-    END IF;
     BEGIN
       INSERT INTO inv.lumber_purchasable_lengths (size, grade, lengths)
       VALUES (inv.tidy(p_size), inv.tidy(p_grade), v_lengths) RETURNING * INTO l;
@@ -909,16 +924,17 @@ BEGIN
         USING ERRCODE = 'IV409';
     END;
   ELSE
-    UPDATE inv.lumber_purchasable_lengths SET lengths = v_lengths
+    UPDATE inv.lumber_purchasable_lengths SET lengths = v_lengths, removed = false
      WHERE size = was.size AND grade = was.grade RETURNING * INTO l;
   END IF;
   RETURN inv.finish_action(a.log_id, NULL,
-                           CASE WHEN was.size IS NOT NULL THEN inv.lumber_lengths_json(was) END,
+                           CASE WHEN v_listed THEN inv.lumber_lengths_json(was) END,
                            inv.lumber_lengths_json(l));
 END
 $$;
 
--- Planner → Lumber: removes a size and grade added by mistake. Only a group
+-- Planner → Lumber: removes a size and grade added by mistake, by marking its
+-- row removed. Only a group
 -- that is not bought (no length switched on) and that no redirect names, from
 -- it or to it, so a buy list never loses a group it uses.
 CREATE FUNCTION inv.remove_lumber_group(
@@ -936,7 +952,7 @@ BEGIN
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
   SELECT * INTO was FROM inv.lumber_purchasable_lengths
    WHERE size = inv.tidy(p_size) AND grade = inv.tidy(p_grade) FOR UPDATE;
-  IF NOT FOUND OR was.version IS DISTINCT FROM p_version THEN
+  IF NOT FOUND OR was.removed OR was.version IS DISTINCT FROM p_version THEN
     RAISE EXCEPTION 'Someone else changed % % since you opened this screen.', p_size, p_grade
       USING ERRCODE = 'IV409', DETAIL = coalesce(inv.lumber_lengths_json(was)::text, 'null');
   END IF;
@@ -950,7 +966,7 @@ BEGIN
     RAISE EXCEPTION 'A redirect names % %. Clear it before you remove it.', was.size, was.grade
       USING ERRCODE = 'IV422';
   END IF;
-  DELETE FROM inv.lumber_purchasable_lengths WHERE size = was.size AND grade = was.grade;
+  UPDATE inv.lumber_purchasable_lengths SET removed = true WHERE size = was.size AND grade = was.grade;
   RETURN inv.finish_action(a.log_id, NULL, inv.lumber_lengths_json(was), NULL);
 END
 $$;

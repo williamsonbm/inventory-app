@@ -415,13 +415,34 @@ test('a lumber group is removed only when no length is switched on and no redire
   await refused(remove('2x6', 'Foo', 1), 'IV422', 'a group a redirect names in other capitals');
 
   await remove('2x4', '1650', 1);
-  const left = await as(db, APP, async (app) =>
-    (await app.query("SELECT 1 FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '1650'")).rows);
-  assert.deepEqual(left, [], 'removed');
+  // Nothing is deleted (docs/database-design.md): the row is marked removed.
+  const row = async () => as(db, APP, async (app) => (await app.query(
+    "SELECT lengths, removed, version FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '1650'")).rows);
+  assert.deepEqual(await row(), [{ lengths: [], removed: true, version: 2 }]);
   const last = (await logRows(db)).at(-1);
   assert.equal(last.action, 'remove lumber group');
   assert.deepEqual(last.old_value, { size: '2x4', grade: '1650', lengths: [], version: 1 });
   assert.equal(last.new_value, null);
+  await refused(remove('2x4', '1650', 2), 'IV409', 'a group already removed');
+  await refused(lengths('2x4', '1650', 2, [8]), 'IV409', 'a removed group, saved from a screen that still lists it');
+});
+
+test('a group removed and added again keeps counting versions, so an old screen is refused', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const lengths = (version, list) =>
+    call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '1650', version, list);
+  await lengths(null, []);                      // version 1
+  const read = await lengths(1, [8]);           // version 2: screen X reads it here
+  await lengths(2, []);                         // version 3
+  await call(db, 'remove_lumber_group', ann.id, crypto.randomUUID(), '2x4', '1650', 3);  // version 4
+  const again = await lengths(null, []);        // added again: version 5
+  assert.deepEqual(again, { size: '2x4', grade: '1650', lengths: [], version: 5 });
+  await lengths(5, [10]);                       // another person: version 6
+  await refused(lengths(read.version, [8, 12]), 'IV409', "screen X's old version");
+  const err = await refused(call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '1650', null, [8]),
+    'IV409', 'adding a group someone else added again');
+  assert.match(err.message, /Someone else changed 2x4 1650/);
 });
 
 // The sizes the yard handles (owner, 2026-10-02). Frozen here, not read from
@@ -452,6 +473,13 @@ test('lumber comes only in 2x4, 2x6, 2x8, 2x10 and 2x12, as an item or a buying 
     assert.equal(err.message, 'Lumber comes in 2x4, 2x6, 2x8, 2x10 and 2x12.', label);
   }
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  // A grade typed in other capitals takes the spelling the buying options use.
+  const dss = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x6', grade: 'dss', length_ft: 8 });
+  assert.equal(dss.grade, 'DSS');
+  const odd = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x6', grade: 'Sel Str', length_ft: 8 });
+  assert.equal(odd.grade, 'Sel Str', 'a grade nothing spells yet stays as typed');
+  const odd2 = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x6', grade: 'sel str', length_ft: 10 });
+  assert.equal(odd2.grade, 'Sel Str', 'an item already spells it');
   // An LVL depth is not a lumber size, and stays free.
   await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 26 });
 });

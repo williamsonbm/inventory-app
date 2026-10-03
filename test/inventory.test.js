@@ -152,6 +152,13 @@ test('the Planner adds a lumber size and grade with no lengths, and its lengths 
   assert.equal(on.status, 200, on.body.error);
   options = await read(ctx, '/api/lumber/menu');
   assert.deepEqual(options.menu['2x4|SS'], [16]);
+
+  // Removed, it leaves the panel; its row stays in the database, marked removed.
+  await change(ctx, '/api/lumber/lengths', { size: '2x4', grade: 'SS', version: 2, lengths: [] });
+  const removed = await change(ctx, '/api/lumber/remove', { size: '2x4', grade: 'SS', version: 3 });
+  assert.equal(removed.status, 200, removed.body.error);
+  options = await read(ctx, '/api/lumber/menu');
+  assert.equal(options.versions.lengths['2x4|SS'], undefined, 'no row in the panel');
 });
 
 test('a lumber plan with every length switched off is refused, never planned with the default lengths', async () => {

@@ -80,7 +80,7 @@ const CATALOG_CHANGES = {
 // row's version, keyed the same way, so the page can say which it read (S41).
 async function readLumberOptions(database) {
   const [lengths, redirects] = await Promise.all([
-    database.read('SELECT size, grade, lengths, version FROM inv.lumber_purchasable_lengths'),
+    database.read('SELECT size, grade, lengths, version FROM inv.lumber_purchasable_lengths WHERE NOT removed'),
     database.read('SELECT size, from_grade, to_grade, version FROM inv.lumber_grade_redirects'),
   ]);
   const options = { menu: {}, redirects: {}, versions: { lengths: {}, redirects: {} } };
