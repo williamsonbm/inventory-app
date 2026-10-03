@@ -1,0 +1,409 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Overview · Inventory</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  overview.html — Inventory → Overview (#81 part 1): the item catalog, one
+  family at a time or All, picked in the same family bar as the Planner's
+  (owner, 2026-10-02). A row opens a panel below itself, where its stocking
+  status, threshold and note are edited (owner, 2026-10-01). On hand,
+  Incoming and Reorder arrive with part 2. Inventory has no task row while
+  the Overview is its only task; Receive, Count and Month-end join the
+  family bar on its right when they arrive (owner, 2026-10-02).
+
+  Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
+  repo has no DOM harness. Every route it calls is tested in
+  test/inventory.test.js. The layout, filters, sorting and the family
+  bar's saved choice are checked by hand (#81, Testing Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">RTW Inventory Tracker</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory" class="here" aria-current="page">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
+  <div class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="message" role="status"></div>
+
+  <div class="row" style="align-items:flex-end">
+    <label class="field">Search <input id="search" type="search" autocomplete="off" placeholder="Name or note…"></label>
+    <div class="field">Show <span id="show-status" class="pills"></span></div>
+    <label style="padding-bottom:6px"><input type="checkbox" id="show-retired"> Show retired</label>
+    <button type="button" id="add-open" style="margin-left:auto" disabled>+ Add item</button>
+  </div>
+
+  <form id="add" class="row" style="align-items:flex-end;margin-top:10px" hidden>
+    <span class="field" id="add-title"></span>
+    <span id="add-fields" style="display:contents"></span>
+    <button>Add</button>
+    <button type="button" class="ghost" id="add-cancel">Cancel</button>
+  </form>
+
+  <div id="tabs" class="pills" style="margin:12px 0" hidden></div>
+
+  <div class="tw"><table class="one-line catalog">
+    <colgroup id="cols"></colgroup>
+    <thead><tr id="head"></tr></thead>
+    <tbody id="rows"></tbody>
+  </table></div>
+  <p class="sub" id="count"></p>
+  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item.</p>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+(async () => {
+  const { esc } = PlannerUI;
+  const { send, say, itemLabel } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  const me = await AppHeader.me;
+  if (!me) return;
+
+  const STATUSES = ['Stocked', 'Non-Stock', 'Special Order'];
+  // What each identity field is called on screen, per family where it differs.
+  const FIELD_LABELS = { sku: 'SKU', product: 'Product', size: 'Size', grade: 'Grade', length_ft: 'Length (ft)' };
+  const fieldLabel = (family, field) => ((VIEWS[family] || {}).labels || {})[field] || FIELD_LABELS[field];
+  const TAB_KEY = 'inventory.tab.';   // + family: the size or depth tab last open
+
+  let families = [];
+  let items = [];
+  let gradeOrder = [];
+  let current = null;     // the family the family bar shows, or 'all'
+  const shown = new Set(STATUSES);
+  let sort = null;        // { col, dir } a person chose; null is the family's own order
+  let tab = null;         // the open size (lumber) or depth (LVL) tab
+  let open = null;        // the id of the item whose row is open
+  let renaming = false;   // the open row shows the rename fields
+
+  const familyName = (code) => (families.find((f) => f.code === code) || { name: code }).name;
+
+  // Text with numbers in it compared as numbers, so 2x6 comes before 2x10
+  // and 9-1/2 before 11-7/8.
+  const byText = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+  // A lumber grade's place in the engine's strength order, weakest first;
+  // a grade the engine does not know goes last.
+  const gradeRank = (g) => { const r = gradeOrder.indexOf(g); return r === -1 ? gradeOrder.length : r; };
+
+  // The columns of a closed row, each with its width, its header, how its
+  // cell reads and how it sorts. Lumber and LVL tabs pick the size or depth,
+  // so neither repeats it in a column. What a person changes is in the row's
+  // panel (panel, below), not in the columns.
+  const COL = {
+    family: { head: 'Family', width: 14, sort: (i) => families.findIndex((f) => f.code === i.family), cell: (i) => esc(familyName(i.family)) },
+    item: { head: 'Item', width: 40, sort: (i) => itemLabel(i), cell: (i) => esc(itemLabel(i)), name: true },
+    sku: { head: 'SKU', width: 40, sort: (i) => i.sku, cell: (i) => esc(i.sku), name: true },
+    product: { head: 'Product', width: 36, sort: (i) => i.product, cell: (i) => esc(i.product), name: true },
+    grade: { head: 'Grade', width: 20, sort: (i) => gradeRank(i.grade), cell: (i) => esc(i.grade), name: true },
+    length: { head: 'Length', width: 16, sort: (i) => i.length_ft, cell: (i) => i.length_ft + '′', name: true },
+    stocking: { head: 'Stocking', width: 20, sort: (i) => i.stocking, cell: (i) => esc(i.stocking) },
+    // Under All, an LVL row says where its threshold is instead of "not set".
+    threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold,
+      cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
+    // A marker only: the note itself shows when the row is open.
+    note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
+  };
+  // Per family: its columns, its tab field (if any), and its own order when
+  // nobody has clicked a header. Lumber: weakest grade first, then shortest.
+  // LVL calls its size the depth, in inches (″), and its thresholds are per
+  // depth (Settings → LVL thresholds), so LVL rows have no Threshold column.
+  const VIEWS = {
+    plates: { cols: ['sku', 'stocking', 'threshold', 'note'], order: ['sku'] },
+    hangers: { cols: ['sku', 'stocking', 'threshold', 'note'], order: ['sku'] },
+    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'note'], order: ['grade', 'length'] },
+    lvl: {
+      tab: 'size', cols: ['product', 'length', 'stocking', 'note'], order: ['product', 'length'],
+      labels: { size: 'Depth' }, tabUnit: '″', perDepth: true,
+    },
+  };
+  // A search looks across every size or depth, so the rows then name their
+  // item in full instead of leaving the size to the tab.
+  // A family with no view of its own (EWP, once step 5 names its items) lists
+  // its items by name. All lists every family's items by family, then name.
+  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'note'], order: ['item'] };
+  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'note'], order: ['family', 'item'] };
+  const view = () => {
+    if (current === 'all') return ALL;
+    const v = VIEWS[current] || PLAIN;
+    if (!v.tab || !el('search').value.trim()) return v;
+    return { cols: ['item'].concat(v.cols.filter((c) => !COL[c].name)), order: ['item'] };
+  };
+
+  async function load() {
+    const body = await fetch('/api/items').then((r) => r.json()).catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
+    if (!body.ok) return say(body.error, 'bad');
+    ({ families, items, gradeOrder } = body);
+    paintStatus();
+    AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+      if (f === current) return;
+      current = f;
+      sort = null;
+      tab = null;
+      open = null;
+      renaming = false;
+      el('add').hidden = true;
+      // "+ Add item" adds to the family shown, so All has none to add to.
+      el('add-open').disabled = f === 'all';
+      el('add-open').title = f === 'all' ? 'Pick a family to add an item.' : '';
+      paint();
+    });
+  }
+
+  function paintStatus() {
+    el('show-status').innerHTML = STATUSES.map((s) =>
+      '<button type="button" data-status="' + esc(s) + '" aria-pressed="' + shown.has(s) + '">' + esc(s) + '</button>').join('');
+  }
+
+  // The size or depth tabs, for lumber and LVL: one per value the family's
+  // items have, in numeric order, so a size whose items are all retired has
+  // a tab only while retired items are shown. The tab last open on this
+  // computer opens again.
+  function paintTabs() {
+    const v = view();
+    el('tabs').hidden = !v.tab;
+    if (!v.tab) { tab = null; return; }
+    const retired = el('show-retired').checked;
+    const values = [...new Set(items.filter((i) => i.family === current && (retired || i.active)).map((i) => i[v.tab]))].sort(byText);
+    if (!values.includes(tab)) {
+      let saved = null;
+      try { saved = localStorage.getItem(TAB_KEY + current); } catch { /* storage blocked */ }
+      tab = values.includes(saved) ? saved : values[0] ?? null;
+    }
+    const tabLabel = (t) => t + (VIEWS[current].tabUnit || '');
+    el('tabs').innerHTML = values.map((t) =>
+      '<button type="button" data-tab="' + esc(t) + '" aria-pressed="' + (t === tab) + '">' + esc(tabLabel(t)) + '</button>').join('');
+  }
+
+  function visible() {
+    const v = view();
+    const words = el('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+    const retired = el('show-retired').checked;
+    // The person's choice first, then the family's own order, then the name.
+    const keys = (sort ? [sort] : []).concat(v.order.map((col) => ({ col, dir: 1 })), [{ col: 'item', dir: 1 }]);
+    return items
+      .filter((i) => (current === 'all' || i.family === current) && shown.has(i.stocking) && (retired || i.active))
+      .filter((i) => !v.tab || i[v.tab] === tab)
+      .filter((i) => {
+        const text = (itemLabel(i) + ' ' + (i.note || '')).toLowerCase();
+        return words.every((w) => text.includes(w));
+      })
+      .sort((a, b) => {
+        for (const { col, dir } of keys) {
+          const [x, y] = [COL[col].sort(a), COL[col].sort(b)];
+          if (x === y) continue;
+          if (x == null) return 1;   // blanks last, whichever way
+          if (y == null) return -1;
+          return (typeof x === 'number' ? x - y : byText(x, y)) * dir;
+        }
+        return 0;
+      });
+  }
+
+  // The open row's panel: everything a person changes about an item, or the
+  // rename fields when an admin is renaming it.
+  function panel(i) {
+    if (renaming) {
+      return '<form class="row" style="align-items:flex-end" data-rename><span class="field">Rename <b>' + esc(itemLabel(i)) + '</b></span>' +
+        identityInputs(i.family, i) +
+        '<button>Save name</button><button type="button" class="ghost" data-do="rename-cancel">Cancel</button></form>';
+    }
+    const stocking = '<label class="field">Stocking <select data-field="stocking">' +
+      STATUSES.map((s) => '<option' + (s === i.stocking ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select></label>';
+    const threshold = (VIEWS[i.family] || {}).perDepth
+      ? '<span class="field">Threshold <span class="sub" style="padding:7px 0">per depth, in Settings → LVL thresholds</span></span>'
+      : '<label class="field">Threshold <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '"></label>';
+    const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" value="' + esc(i.note || '') + '"></label>';
+    const actions = (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
+      '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>';
+    return '<div class="row" style="align-items:flex-end">' + stocking + threshold + note + '<span>' + actions + '</span></div>';
+  }
+
+  function paint() {
+    const typing = AppHeader.typingIn(el('rows'));
+    paintTabs();
+    const cols = view().cols.map((c) => [c, COL[c]]);
+    const first = cols.find(([, c]) => c.name)[1];
+    el('cols').innerHTML = cols.map(([, c]) => '<col style="width:' + c.width + '%">').join('');
+    el('head').innerHTML = cols.map(([key, c]) =>
+      '<th' + (c.sort ? ' data-sort="' + key + '"' : '') + '>' + esc(c.head) +
+      (sort && sort.col === key ? (sort.dir > 0 ? ' ▲' : ' ▼') : '') + '</th>').join('');
+    const rows = visible();
+    el('rows').innerHTML = rows.map((i) =>
+      '<tr class="item' + (i.id === open ? ' open' : '') + (i.active ? '' : ' sub') + '" data-id="' + i.id + '" tabindex="0" aria-expanded="' + (i.id === open) + '">' +
+      cols.map(([, c]) => '<td' + (c.name ? ' class="name"' : '') + '>' + c.cell(i) + (c === first && !i.active ? ' (retired)' : '') + '</td>').join('') +
+      '</tr>' +
+      (i.id === open ? '<tr class="detail" data-id="' + i.id + '"><td colspan="' + cols.length + '">' + panel(i) + '</td></tr>' : '')).join('');
+    el('count').textContent = current === 'all'
+      ? rows.length + ' of ' + items.length + ' items shown.'
+      : rows.length + ' of ' + items.filter((i) => i.family === current).length + ' ' + familyName(current) + ' items shown.';
+    typing.restore();
+  }
+
+  // Runs one change. On a stale save, the refusal carries the current item,
+  // and the table shows it, so the other person's change is visible, never lost.
+  async function save(route, body, done) {
+    say('');
+    try {
+      const { item } = await send(route, body);
+      items = items.some((i) => i.id === item.id) ? items.map((i) => (i.id === item.id ? item : i)) : items.concat(item);
+      say(done(item), 'ok');
+    } catch (err) {
+      if (err.current) items = items.map((i) => (i.id === err.current.id ? err.current : i));
+      say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done) : null);
+    }
+    paint();
+  }
+  const itemOf = (target) => items.find((i) => String(i.id) === target.closest('tr').dataset.id);
+
+  el('rows').addEventListener('change', (e) => {
+    const field = e.target.dataset.field;
+    if (!field) return;
+    // A number box reports text it cannot read as blank, which would clear the saved value.
+    if (e.target.validity && e.target.validity.badInput) return say('Type a whole number, or leave it blank.', 'bad');
+    const item = itemOf(e.target);
+    const raw = e.target.value.trim();
+    const value = field === 'threshold' ? (raw === '' ? null : Number(raw)) : field === 'note' ? (raw || null) : raw;
+    save('/api/items/edit', { key: crypto.randomUUID(), id: item.id, version: item.version, changes: { [field]: value } },
+      (i) => itemLabel(i) + ': saved.');
+  });
+
+  // A click on a closed row opens it, and on an open row closes it; a click
+  // on a button in the panel acts.
+  el('rows').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr');
+    if (!tr) return;
+    const what = e.target.dataset && e.target.dataset.do;
+    if (what === 'rename' || what === 'rename-cancel') { renaming = what === 'rename'; return paint(); }
+    if (what === 'retire' || what === 'unretire') {
+      const item = itemOf(e.target);
+      return save(what === 'retire' ? '/api/items/retire' : '/api/items/unretire', { key: crypto.randomUUID(), id: item.id, version: item.version },
+        (i) => itemLabel(i) + (i.active ? ' is in use again.' : ' was retired. Its history stays.'));
+    }
+    if (tr.classList.contains('item')) toggle(Number(tr.dataset.id));
+  });
+  function toggle(id) {
+    open = open === id ? null : id;
+    renaming = false;
+    paint();
+  }
+
+  // From the keyboard: Enter or Space on a focused row opens or closes it.
+  el('rows').addEventListener('keydown', (e) => {
+    if ((e.key !== 'Enter' && e.key !== ' ') || !e.target.matches('tr.item')) return;
+    e.preventDefault();
+    const id = Number(e.target.dataset.id);
+    toggle(id);
+    const row = el('rows').querySelector('tr.item[data-id="' + id + '"]');
+    if (row) row.focus();
+  });
+
+  el('rows').addEventListener('submit', (e) => {
+    if (!e.target.matches('[data-rename]')) return;
+    e.preventDefault();
+    // The item as it is now: a save while the row was open changed its version.
+    const item = items.find((i) => i.id === open);
+    const was = itemLabel(item);
+    save('/api/items/rename', { key: crypto.randomUUID(), id: item.id, version: item.version, identity: identityFrom(e.target) }, (i) => {
+      renaming = false;
+      return was + ' is now ' + itemLabel(i) + '.';
+    });
+  });
+
+  el('head').addEventListener('click', (e) => {
+    const col = e.target.dataset && e.target.dataset.sort;
+    if (!col) return;
+    sort = { col, dir: sort && sort.col === col ? -sort.dir : 1 };
+    paint();
+  });
+  el('tabs').addEventListener('click', (e) => {
+    const t = e.target.dataset && e.target.dataset.tab;
+    if (t === undefined) return;
+    tab = t;
+    try { localStorage.setItem(TAB_KEY + current, t); } catch { /* storage blocked: this visit only */ }
+    paint();
+  });
+  el('show-status').addEventListener('click', (e) => {
+    const s = e.target.dataset && e.target.dataset.status;
+    if (!s) return;
+    if (shown.has(s)) shown.delete(s); else shown.add(s);
+    paintStatus();
+    paint();
+  });
+  el('search').addEventListener('input', paint);
+  el('show-retired').addEventListener('change', paint);
+
+  // The name fields of a family, as inputs, filled from `item` when given.
+  // A field with fixed choices (lumber sizes) is picked from them, never typed.
+  function identityInputs(fam, item) {
+    const f = families.find((x) => x.code === fam);
+    const value = (field) => (item ? item[field] : '');
+    const box = (field) => (f.choices && f.choices[field]
+      ? '<select data-identity="' + field + '" required>' + f.choices[field].map((s) =>
+        '<option' + (s === value(field) ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select>'
+      : '<input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : '') +
+        ' required autocomplete="off" value="' + esc(value(field)) + '">');
+    return f.identity.map((field) => '<label class="field">' + esc(fieldLabel(fam, field)) + ' ' + box(field) + '</label>').join(' ');
+  }
+  function identityFrom(container) {
+    const identity = {};
+    for (const input of container.querySelectorAll('[data-identity]')) {
+      identity[input.dataset.identity] = input.dataset.identity === 'length_ft' ? Number(input.value) : input.value;
+    }
+    return identity;
+  }
+
+  // "+ Add item" adds to the open family, with that family's name fields.
+  el('add-open').addEventListener('click', () => {
+    el('add-title').textContent = 'Add to ' + familyName(current) + ':';
+    el('add-fields').innerHTML = identityInputs(current);
+    el('add').hidden = false;
+  });
+  el('add-cancel').addEventListener('click', () => { el('add').hidden = true; });
+  el('add').addEventListener('submit', (e) => {
+    e.preventDefault();
+    save('/api/items/add', { key: crypto.randomUUID(), family: current, identity: identityFrom(el('add-fields')) }, (i) => {
+      el('add').hidden = true;
+      // Show the new item open: no search text, Special Order shown, its size or depth tab.
+      el('search').value = '';
+      shown.add(i.stocking);
+      paintStatus();
+      const tabField = VIEWS[i.family] && VIEWS[i.family].tab;
+      if (tabField) {
+        tab = i[tabField];
+        try { localStorage.setItem(TAB_KEY + i.family, tab); } catch { /* storage blocked: this visit only */ }
+      }
+      open = i.id;
+      renaming = false;
+      return itemLabel(i) + ' was added as Special Order with no threshold. Its row is open below.';
+    });
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

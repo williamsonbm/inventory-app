@@ -1,12 +1,15 @@
 // app-header.js — the header every signed-in page shares (#77): the theme
 // switch, the signed-in person's name, and Sign out. Also `send`, the one way
-// a page posts a change.
+// a page posts a change, `say`, its message area, `itemLabel`,
+// `familyBar`, the family filter the Planner and Inventory share, and
+// `typingIn`, which keeps a box's typing through a repaint.
 //
 // Glue, NOT UNIT-TESTED: it needs a browser, and this repo has no DOM harness.
 // The routes it calls are tested in test/sign-in.test.js and
 // test/users.test.js; the header is checked by hand (#77, Testing Decisions).
 //
-// Expects #theme-btn, #user-name and #sign-out in the page. The theme itself
+// Expects #theme-btn, #user-name and #sign-out in the page, #message
+// where it calls `say`, and #family-filter where it calls `familyBar`. The theme itself
 // is set before first paint by a small inline script in each page's <head>.
 window.AppHeader = (() => {
   const el = (id) => document.getElementById(id);
@@ -80,6 +83,33 @@ window.AppHeader = (() => {
     return reply;
   }
 
+  // Shows one message in #message, or clears it when `text` is empty. A save
+  // that was not confirmed passes `retry`, which keeps its body, retry key
+  // included, so "Try again" sends the very same request and acts once.
+  function say(text, kind, retry) {
+    const box = el('message');
+    box.replaceChildren();
+    if (!text) return;
+    const note = document.createElement('div');
+    note.className = 'note ' + (kind || '');
+    note.textContent = text;
+    if (retry) {
+      const again = document.createElement('button');
+      Object.assign(again, { type: 'button', className: 'ghost', textContent: 'Try again' });
+      again.addEventListener('click', retry);
+      note.append(' ', again);
+    }
+    box.append(note);
+  }
+
+  // An item as people name it: "LUS28", "2x4 #2 16′",
+  // "2.1 RigidLam LVL 1-3/4 x 11-7/8 26′". The same words as inv.item_label.
+  function itemLabel(i) {
+    if (i.sku) return i.sku;
+    if (i.product) return `${i.product} x ${i.size} ${i.length_ft}′`;
+    return `${i.size} ${i.grade} ${i.length_ft}′`;
+  }
+
   // A time as the office clock shows it: Eastern Time with daylight saving (Q17).
   // The same zone as OFFICE_TIME_ZONE in src/settings/activity.js, which picks the days.
   const officeTime = new Intl.DateTimeFormat('en-US', {
@@ -87,5 +117,64 @@ window.AppHeader = (() => {
   });
   const showTime = (iso) => (iso ? officeTime.format(new Date(iso)) : '—');
 
-  return { me, send, showTime };
+  // The family bar under the modes, one for the Planner and Inventory so the
+  // two match (owner, 2026-10-02): `families` ({ code, label }) in screen
+  // order, then All at the far right (owner, 2026-09-25). `pick(code)` shows
+  // a family, or 'all'. The choice is kept in this browser (spec #72) under
+  // one app-wide key, so it follows the person from one mode to the other.
+  // `first` is a family the address names, shown for this visit only.
+  // Deliberately, only a click saves the choice, not opening the page: an
+  // old family address arrives as /?family=<family>, and saving it on
+  // arrival would let an old bookmark silently replace the saved choice,
+  // so every later visit would open on that family with no hint why.
+  const FAMILY_KEY = 'app.family';
+  function familyBar(families, pick, first) {
+    const bar = el('family-filter');
+    const choices = families.concat({ code: 'all', label: 'All' });
+    bar.replaceChildren(...choices.map(({ code, label }) => {
+      const b = document.createElement('button');
+      Object.assign(b, { type: 'button', textContent: label });
+      b.dataset.family = code;
+      return b;
+    }));
+    const show = (code) => {
+      for (const b of bar.children) b.setAttribute('aria-pressed', String(b.dataset.family === code));
+      pick(code);
+    };
+    bar.addEventListener('click', (e) => {
+      const b = e.target.closest('button[data-family]');
+      if (!b) return;
+      show(b.dataset.family);
+      try { localStorage.setItem(FAMILY_KEY, b.dataset.family); } catch { /* storage blocked: this visit only */ }
+    });
+    let saved = null;
+    try { saved = localStorage.getItem(FAMILY_KEY); } catch { /* storage blocked */ }
+    show([first, saved].find((f) => choices.some((c) => c.code === f)) || 'all');
+  }
+
+  // A repaint rebuilds every row, so text a person is typing in one box while
+  // another save comes back would be lost. typingIn(container), called before
+  // the repaint, notes the focused box: its text, if not saved yet, and its
+  // cursor. restore(), after the repaint, finds the same box (the same data-
+  // attributes, in the row with the same data-id) and puts them back.
+  function typingIn(container) {
+    const box = document.activeElement;
+    if (!box || box.tagName !== 'INPUT' || !container.contains(box)) return { restore() {} };
+    const mark = (n) => JSON.stringify([{ ...n.dataset }, (n.closest('[data-id]') || { dataset: {} }).dataset.id]);
+    const which = mark(box);
+    const typed = box.value !== box.defaultValue ? box.value : null;
+    let cursor = null;
+    try { cursor = [box.selectionStart, box.selectionEnd]; } catch { /* a number box has no cursor position */ }
+    return {
+      restore() {
+        const again = [...container.querySelectorAll('input')].find((n) => mark(n) === which);
+        if (!again) return;
+        if (typed !== null) again.value = typed;
+        again.focus();
+        try { if (cursor && cursor[0] !== null) again.setSelectionRange(cursor[0], cursor[1]); } catch { /* number box */ }
+      },
+    };
+  }
+
+  return { me, send, say, itemLabel, showTime, familyBar, typingIn };
 })();

@@ -1,4 +1,4 @@
-// Settings → Activity log (#77): who did what and when, newest first, a page
+// The Activity Log (#77; its own mode since #81 part 1): who did what and when, newest first, a page
 // at a time. Filters by person, by date range and by action; the family
 // filter joins in step 3.
 //
@@ -11,6 +11,8 @@
 // would also read "yesterday", and would read 06/07/2026 by the connection's
 // DateStyle setting, which a shared pooler connection does not promise.
 // A person or page of the wrong type is refused by Postgres (answered 400).
+const { itemLabel } = require('../inventory/catalog.js');
+
 const PAGE_SIZE = 50;
 const OFFICE_TIME_ZONE = 'America/New_York';  // the page shows times in the same zone (app-header.js)
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -24,11 +26,14 @@ async function readActivity(database, { person, action, from, to, before }) {
   // The list of actions (for the page's filter) does not depend on the
   // entries, so the two reads run side by side.
   const [rows, actionRows] = await Promise.all([database.read(`
-    SELECT l.id, l.at, who.name AS who, l.action, target.name AS target,
-           l.old_value AS was, l.new_value AS now
+    SELECT l.id, l.at, who.name AS who, l.action, l.target_table, target.name AS target,
+           pg_catalog.to_jsonb(item) AS item, l.old_value AS was, l.new_value AS now
       FROM inv.activity_log l
       JOIN inv.users who ON who.id = l.actor_id
       LEFT JOIN inv.users target ON l.target_table = 'users' AND target.id = l.target_id
+      LEFT JOIN inv.items item ON (l.target_table = 'items' AND item.id = l.target_id)
+        OR (l.target_table = 'pack_sizes'
+            AND item.id = (COALESCE(l.new_value, l.old_value) ->> 'item_id')::bigint)
      WHERE ($1::bigint IS NULL OR l.actor_id = $1)
        AND ($2::text IS NULL OR l.action = $2)
        AND ($3::date IS NULL OR l.at >= ($3::date)::timestamp AT TIME ZONE $6)
@@ -43,7 +48,56 @@ async function readActivity(database, { person, action, from, to, before }) {
   const page = rows.slice(0, PAGE_SIZE);
   const nextBefore = rows.length > PAGE_SIZE ? page.at(-1).id : null;
   const actions = actionRows.map((r) => r.name);
-  return { entries: page.map(({ id, ...entry }) => entry), before: nextBefore, actions };
+  const entries = page.map(({ id, target_table: table, item, target, was, now, ...entry }) => ({
+    ...entry,
+    target: target ?? targetName(table, item, now || was),
+    change: describeChange(entry.action, table, was, now),
+  }));
+  return { entries, before: nextBefore, actions };
 }
 
-module.exports = { readActivity };
+// What a change touched, in the words its screen uses, for a row that is not
+// about a person, by the table it changed. `row` is the change's saved value
+// (now, or was when there is no now); `item` is the item a change to an item
+// or a pack size is about.
+const TARGET_NAMES = {
+  items: (item) => (item ? itemLabel(item) : 'the catalog'),  // the import touches many items
+  pack_sizes: (item, row) => `${itemLabel(item)} ${row.kind}`,
+  suppliers: (_item, row) => row.name,
+  reasons: (_item, row) => row.text,
+  lvl_depth_thresholds: (_item, row) => `LVL ${row.depth}″`,
+  lumber_purchasable_lengths: (_item, row) => `${row.size} ${row.grade}`,
+  lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
+};
+const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
+
+// What an addition added, beyond the name the row already shows, by the
+// table it went into. The catalog import's row holds its own report.
+const ADDED = {
+  users: (row) => `${row.name}, ${row.email}`,
+  items: (row) => (row.added
+    ? `${row.added.items} items, ${row.added.pack_sizes} pack sizes and ${row.added.lvl_depth_thresholds} LVL depth thresholds; `
+      + `${row.skipped.items} items were there already`
+    : `${row.stocking}, ${row.threshold === null ? 'no threshold' : `threshold ${row.threshold}`}`),
+  pack_sizes: (row) => `${row.pieces} pieces`,
+  lvl_depth_thresholds: (row) => (row.threshold_lf === null ? 'no threshold' : `${row.threshold_lf} linear feet`),
+  lumber_purchasable_lengths: (row) => (row.lengths.length ? row.lengths.map((l) => `${l}′`).join(', ') : 'no lengths'),
+  lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
+};
+
+// What a change did, in words, for the "Was → now" column: an addition (no
+// was) says what was added; a removal (no now) says so; any other change
+// lists each field that differs, was → now. A password action shows nothing:
+// the log keeps no password.
+function describeChange(action, table, was, now) {
+  if (action.includes('password')) return '';
+  if (!now) return 'removed';
+  if (!was) {
+    const added = ADDED[table]?.(now);
+    return added ? `added: ${added}` : 'added';
+  }
+  return Object.keys(now).filter((k) => k !== 'version' && JSON.stringify(was[k]) !== JSON.stringify(now[k]))
+    .map((k) => `${k}: ${was[k]} → ${now[k]}`).join('; ');
+}
+
+module.exports = { readActivity, describeChange };

@@ -3,9 +3,13 @@
    =============================================================
    Served at /lumber-section.js by src/planner/server.js and loaded by
    planner.html, which runs the plan and hands the response to render(). Moved
-   from the old lumber.html (spec #72, step 1); the buy list and the editable
-   purchasable lengths and grade redirects are unchanged. Those buying options
-   stay stored per computer until spec #72 step 3 moves them to Settings.
+   from the old lumber.html (spec #72, step 1); the buy list is unchanged. The
+   buying options (purchasable lengths and grade redirects) are shared by
+   every computer and logged (#81 part 1, S37): they are read from
+   /api/lumber/menu, each change is saved at once, and every lumber plan runs
+   with the shared options (src/app.js). Their editor is the "Stock lengths
+   we buy" panel here, next to the buy list it changes (owner, 2026-10-01; a
+   departure from #81 story 25, which put it in Settings).
 
    Registers window.PlannerSections.lumber.
 
@@ -22,7 +26,6 @@
   // Candidate lengths the menu editor offers as chips for every group. A group's
   // own lengths render "on"; the rest render "off" and can be toggled in.
   const CANDIDATE_LENGTHS = [6, 7, 8, 10, 12, 14, 16, 18, 20, 22, 24];
-  const STORE_KEY = 'lumberMenu.v1';
 
   // row.fullyRedirected, row.ownLf, and row.redirect/.redirectedIn are all
   // computed and rounded once server-side (planLumber.js) — read directly
@@ -45,158 +48,184 @@
     return `${fmt(need)} <span class="sub">(${parts})</span>`;
   }
 
-  // ── Editable stock-length menu ─────────────────────────────────────────────
-  let defaultMenu = {};   // from /api/lumber/menu
-  let menu = {};          // effective (default overlaid with the user's edits)
-
-  // Grade redirects ("send 2x6 #2's demand to 2x6 DSS instead") live in this
-  // same panel, next to the lengths they depend on (a target must be carried
-  // — have lengths — to be offered). Persisted (lumberRedirects.v1) and
-  // reconciled against the current menu on load, so reloading the page keeps
-  // them; "Reset to default" clears them.
-  let activeRedirects = {};   // "size|fromGrade" -> toGrade
+  // ── The shared buying options ──────────────────────────────────────────────
+  // menu: "size|grade" → stock lengths; activeRedirects: "size|fromGrade" →
+  // toGrade; versions: each row's version, keyed the same way, so a save says
+  // which version it read and a stale one is refused (S41). All from
+  // /api/lumber/menu, which reads the database.
+  let menu = {};
+  let activeRedirects = {};
+  let versions = { lengths: {}, redirects: {} };
 
   // The SAME strength ranking planLumber.js enforces server-side — fetched
-  // from /api/lumber/menu (see below) rather than a second hardcoded copy,
-  // so the picker's options can't drift out of sync with what the server
-  // will actually accept. The server still re-validates whatever's picked
-  // regardless, so a request sent before this loads just gets dropped with
-  // a warning rather than silently applied.
-  let gradeOrder = [];   // from /api/lumber/menu
+  // from /api/lumber/menu rather than a second hardcoded copy, so the picker's
+  // options can't drift out of sync with what the server will actually
+  // accept. The server still re-validates whatever's picked, so a pick it
+  // refuses is dropped from the plan with a warning.
+  let gradeOrder = [];
+  // The only sizes lumber comes in (inv.lumber_sizes), for the add form.
+  let lumberSizes = [];
   function validRedirectTargets(size, grade) {
     const gi = gradeOrder.indexOf(grade);
     if (gi === -1) return [];
     return gradeOrder.filter((g, i) => i > gi && menu[`${size}|${g}`] && menu[`${size}|${g}`].length);
   }
 
-  // A small localStorage-backed store: load parses (swallowing a corrupt or
-  // missing value down to {}), save swallows a write failure (private-mode
-  // Safari) rather than surface it. The menu and the redirects are both this
-  // exact shape, one JSON blob under one key, so they share the one factory.
-  function makeStore(key) {
-    return {
-      load: () => { try { return JSON.parse(localStorage.getItem(key) || 'null') || {}; } catch { return {}; } },
-      save: (value) => { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode: keep in memory */ } },
-    };
-  }
-  const menuStore = makeStore(STORE_KEY);
-  function loadStoredMenu() { return menuStore.load(); }
-  function saveMenu() { menuStore.save(menu); }
-
-  // Grade redirects persist alongside the menu (keyed the same way). On load
-  // they're reconciled against the current menu so a stored redirect to a grade
-  // you no longer carry is quietly dropped rather than applied to a plan.
-  const REDIR_KEY = 'lumberRedirects.v1';
-  const redirectStore = makeStore(REDIR_KEY);
-  function loadStoredRedirects() { return redirectStore.load(); }
-  function saveRedirects() { redirectStore.save(activeRedirects); }
-  function reconcileRedirects(saved) {
-    const out = {};
-    for (const key of Object.keys(saved || {})) {
-      const [size, from] = key.split('|');
-      if (validRedirectTargets(size, from).includes(saved[key])) out[key] = saved[key];
-    }
-    return out;
-  }
-
   // The "Redirect to" picker for one menu row — only rendered when there's a
-  // stronger, carried grade to send this one to. Applies on your next
-  // "Work out what to buy", same as a length-chip edit, and is saved the same way.
+  // stronger grade we buy to send this one to, or a redirect saved already.
+  // Saved at once, and applies
+  // on the next "Work out what to buy", on every computer.
   function redirectSelectHtml(key) {
     const [size, grade] = key.split('|');
-    const targets = validRedirectTargets(size, grade);
-    if (!targets.length) return '';
     const current = activeRedirects[key] || '';
+    // The saved target stays a choice even when it has no lengths switched on
+    // now, so the redirect can still be cleared, and the group then removed.
+    const valid = validRedirectTargets(size, grade);
+    const targets = current && !valid.includes(current) ? valid.concat(current) : valid;
+    if (!targets.length) return '';
     const opts = ['<option value="">— no redirect —</option>']
       .concat(targets.map((g) => `<option value="${esc(g)}"${g === current ? ' selected' : ''}>${esc(g)}</option>`))
       .join('');
     return `<span class="redirect-lbl">Redirect to</span><select class="redirect-sel" data-key="${esc(key)}" title="Send ${esc(key.replace('|', ' '))}'s demand to a stronger carried grade instead">${opts}</select>`;
   }
 
+  // A group can be removed when nothing uses it: no length switched on and
+  // no redirect from it or to it (the database checks this again).
+  function removable(key) {
+    const [size, grade] = key.split('|');
+    return !(menu[key] || []).length && !activeRedirects[key] &&
+      !Object.entries(activeRedirects).some(([k, to]) => k.split('|')[0] === size && to === grade);
+  }
+
+  // Every size and grade the database lists, a group with no lengths
+  // included, so a group switched off can be switched on again.
   function paintMenu() {
-    const mount = el('menu-mount');
-    const keys = Object.keys(menu).sort();
-    mount.innerHTML = keys.map((key) => {
+    const keys = Object.keys(versions.lengths).sort();
+    el('menu-mount').innerHTML = keys.map((key) => {
       const label = key.replace('|', ' ');
-      const set = new Set(menu[key].map(Number));
+      const set = new Set((menu[key] || []).map(Number));
       const chips = CANDIDATE_LENGTHS.map((L) =>
         `<span class="len-chip ${set.has(L) ? 'on' : ''}" data-key="${esc(key)}" data-len="${L}">${L}′</span>`,
       ).join('');
-      return `<div class="menu-row"><span class="lbl">${esc(label)}</span>${chips}${redirectSelectHtml(key)}</div>`;
+      const remove = removable(key)
+        ? `<button type="button" class="ghost menu-remove" data-key="${esc(key)}" style="padding:2px 10px;font-size:12.5px">Remove</button>` : '';
+      return `<div class="menu-row"><span class="lbl">${esc(label)}</span>${chips}${redirectSelectHtml(key)}${remove}</div>`;
     }).join('');
+    // The grades the engine ranks, so it can redirect them; Other takes any grade.
+    const pick = el('menu-add-grade');
+    if (!pick.options.length) {
+      pick.innerHTML = gradeOrder.map((g) => `<option>${esc(g)}</option>`).join('') + '<option value="">Other…</option>';
+      el('menu-add-size').innerHTML = lumberSizes.map((s) => `<option>${esc(s)}</option>`).join('');
+    }
   }
 
-  // Redirect picks persist (lumberRedirects.v1) and are reconciled on load, but
-  // like the length chips they don't repaint or re-plan on change — they apply
-  // on your next "Work out what to buy". A full paintMenu() here would blow
-  // away whatever the user just picked on every unrelated chip click elsewhere.
-  //
-  // One handler, wired to BOTH the Stock-lengths panel's rows and the results
-  // area's "Not carried" rows (render, below) — the same redirectSelectHtml
+  // The panel opens to show a message: a redirect picked in the results
+  // saves through it, and a refusal hidden in a folded panel goes unseen.
+  function sayMenu(text) {
+    el('menu-message').innerHTML = text ? `<div class="note bad">${esc(text)}</div>` : '';
+    if (text) el('menu-sec').open = true;
+  }
+
+  async function loadOptions() {
+    const d = await fetch('/api/lumber/menu').then((r) => r.json()).catch(() => null);
+    if (!d || !d.ok) return sayMenu('The buying options did not load. Reload the page to try again.');
+    ({ menu, redirects: activeRedirects, versions, gradeOrder, lumberSizes } = d);
+    paintMenu();
+  }
+
+  // Saves one change. On any refusal (someone else changed it first, or the
+  // save was not confirmed) the panel says so and reloads what is saved, so
+  // it never shows a choice the database does not hold. The editor takes no
+  // clicks until the reload: a second click sent before it would carry the
+  // old version and be refused as someone else's change.
+  async function saveOption(route, body) {
+    sayMenu('');
+    el('menu-mount').inert = true;
+    try {
+      await AppHeader.send(route, { key: crypto.randomUUID(), ...body });
+    } catch (err) {
+      sayMenu(err.message);
+    }
+    await loadOptions();
+    el('menu-mount').inert = false;
+  }
+
+  // One handler, wired to BOTH the Stock-lengths panel's rows and the
+  // results area's "Not carried" rows (render, below) — the same redirectSelectHtml
   // markup shows up in both places, so one listener body covers it rather than
   // two copies that could drift.
   function onRedirectChange(e) {
     const sel = e.target.closest('.redirect-sel');
     if (!sel) return;
-    if (sel.value) activeRedirects[sel.dataset.key] = sel.value;
-    else delete activeRedirects[sel.dataset.key];
-    saveRedirects();
+    const key = sel.dataset.key;
+    const [size, fromGrade] = key.split('|');
+    saveOption('/api/lumber/redirect', {
+      size, from_grade: fromGrade, version: versions.redirects[key] ?? null, to_grade: sel.value || null,
+    });
   }
 
-  // Resolves once the menu is loaded (or its fetch has failed), so the first
-  // plan never goes out before the menu and redirects it depends on.
-  let menuLoaded = null;
-
   // Builds the editor into the section's tools slot, wires it, and starts the
-  // menu load. Called once by planner.html.
+  // options load. Called once by planner.html.
   function mount({ out, tools }) {
     tools.innerHTML = `
       <details class="sec" id="menu-sec">
-        <summary>Stock lengths we buy (editable)</summary>
-        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade — those edits are remembered on this computer. Where we buy a stronger grade, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of #2); redirects apply the next time you click Work out what to buy and are remembered here too, until you reset or clear them.</p>
+        <summary>Stock lengths we buy (shared)</summary>
+        <p class="sub" style="margin:8px 0 0">Click a length to toggle whether it's a buyable stock length for that size &amp; grade. Where we buy a stronger grade, a Redirect picker sends that grade's whole demand there instead (e.g. buy DSS instead of <code>#2</code>). Each change is saved at once for every computer, and the Activity Log shows who made it.</p>
+        <form class="row" id="menu-add" style="margin-top:8px">
+          <label class="field">Size <select id="menu-add-size"></select></label>
+          <label class="field">Grade <select id="menu-add-grade"></select></label>
+          <label class="field" id="menu-add-other-field" hidden>Other grade <input id="menu-add-other" autocomplete="off" style="width:7em"></label>
+          <button>Add size and grade</button>
+        </form>
+        <div id="menu-message" role="status"></div>
         <div class="menu-wrap" id="menu-mount"></div>
-        <div class="row" style="margin-top:10px">
-          <button class="ghost" id="btn-menu-reset" style="padding:4px 12px;font-size:12.5px">Reset to default</button>
-        </div>
       </details>`;
 
+    el('menu-add-grade').addEventListener('change', () => {
+      const other = el('menu-add-grade').value === '';
+      el('menu-add-other-field').hidden = !other;
+      el('menu-add-other').required = other;
+    });
+
+    // A new size and grade starts with no lengths; its row then takes clicks
+    // like any other. A grade already known, typed in other capitals, takes
+    // its known spelling ("dss" is DSS), as the database would refuse a
+    // second group that differs only in capitals.
+    el('menu-add').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const known = (typed, list) => list.find((x) => x.toLowerCase() === typed.toLowerCase()) || typed;
+      const size = el('menu-add-size').value;
+      const grade = known(el('menu-add-grade').value || el('menu-add-other').value.trim(),
+        gradeOrder.concat(Object.keys(versions.lengths).map((k) => k.split('|')[1])));
+      if (grade.includes('|')) return sayMenu('A grade cannot hold "|".');
+      if (`${size}|${grade}` in versions.lengths) return sayMenu(`${size} ${grade} is already on the list.`);
+      await saveOption('/api/lumber/lengths', { size, grade, version: null, lengths: [] });
+      if (`${size}|${grade}` in versions.lengths) el('menu-add-other').value = '';  // kept for a retry when refused
+    });
+
     el('menu-mount').addEventListener('click', (e) => {
+      const remove = e.target.closest('.menu-remove');
+      if (remove) {
+        const [size, grade] = remove.dataset.key.split('|');
+        saveOption('/api/lumber/remove', { size, grade, version: versions.lengths[remove.dataset.key] });
+        return;
+      }
       const chip = e.target.closest('.len-chip');
       if (!chip) return;
       const key = chip.dataset.key;
-      const L = Number(chip.dataset.len);
+      const [size, grade] = key.split('|');
       const set = new Set((menu[key] || []).map(Number));
+      const L = Number(chip.dataset.len);
       if (set.has(L)) set.delete(L); else set.add(L);
-      menu[key] = [...set].sort((a, b) => a - b);
-      chip.classList.toggle('on');
-      saveMenu();
+      saveOption('/api/lumber/lengths', { size, grade, version: versions.lengths[key], lengths: [...set] });
     });
     el('menu-mount').addEventListener('change', onRedirectChange);
     out.addEventListener('change', onRedirectChange);
 
-    el('btn-menu-reset').addEventListener('click', () => {
-      menu = JSON.parse(JSON.stringify(defaultMenu));
-      activeRedirects = {};
-      saveMenu();
-      saveRedirects();   // clears the stored redirects too
-      paintMenu();
-    });
-
-    // Fetch the default seed once, overlay any stored edits, and paint the
-    // editor. Reconciling redirects and painting must happen on the failure
-    // path too: the plan still works there, because the server falls back to
-    // its default menu.
-    function finishMenuLoad() {
-      activeRedirects = reconcileRedirects(loadStoredRedirects());
-      paintMenu();
-    }
-    menuLoaded = fetch('/api/lumber/menu').then((r) => r.json()).then((d) => {
-      defaultMenu = (d && d.menu) || {};
-      gradeOrder = (d && d.gradeOrder) || [];
-      const stored = loadStoredMenu();
-      menu = Object.keys(stored).length ? stored : JSON.parse(JSON.stringify(defaultMenu));
-      finishMenuLoad();
-    }).catch(() => finishMenuLoad());
+    // The options used to live in this browser under these two keys; the
+    // database holds them now, so the old copies are removed.
+    try { localStorage.removeItem('lumberMenu.v1'); localStorage.removeItem('lumberRedirects.v1'); } catch { /* storage blocked */ }
+    loadOptions();
   }
 
   // Cut instruction for one purchase draw, derived from the draw record only.
@@ -432,7 +461,7 @@
         const why = row.fullyRedirected
           ? `Redirected to ${esc(row.redirect.toLabel)} — see that row for the order and cut plan.`
           : !row.inMenu
-            ? `${esc(row.label)} isn’t in the Stock lengths we buy panel — add it there, then click Work out what to buy again to get a board count.`
+            ? `We buy no lengths of ${esc(row.label)} — switch some on in the Stock lengths we buy panel (add it there if it is not listed; the sizes we buy are ${esc(lumberSizes.join(', '))}), then click Work out what to buy again to get a board count.`
             : `Nothing to buy for ${esc(row.label)} — on-hand covers it.`;
         orderSide = `<h4 style="color:var(--muted)">${why}</h4>`;
       } else {
@@ -542,21 +571,6 @@
              (head.includes('available') || head.includes('qty') || head.includes('on_hand'));
     },
     mount,
-    // The lumber route alone takes page-editable options. Waits for the menu,
-    // so a plan never goes out with an empty one.
-    async planOptions() {
-      await menuLoaded;
-      return { menu, redirects: activeRedirects };
-    },
     render,
-    // Clear drops the redirect picks AND their stored copy — a save-less reset
-    // used to let the old value silently reappear on the next page load — and
-    // repaints the pickers, which would otherwise still show the old choice
-    // while the next plan ignores it.
-    clear() {
-      activeRedirects = {};
-      saveRedirects();
-      paintMenu();
-    },
   };
 })();

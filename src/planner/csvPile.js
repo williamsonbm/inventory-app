@@ -115,8 +115,8 @@
     // Add already-read {name,text} objects (both intakes read the File first).
     add(fileObjs) { writeFiles(mergeFiles(readFiles(), fileObjs || [], Date.now())); },
     remove(name) { writeFiles(readFiles().filter((f) => f.name !== name)); },
-    // Empties ONLY the pile. Never touches lumberMenu.v1 or any knob key — those
-    // are other localStorage keys this module never writes.
+    // Empties ONLY the pile. Never touches any knob key — those are other
+    // localStorage keys this module never writes.
     clear() { writeFiles([]); },
     // Fired after any add/remove/clear here, and on a cross-tab write below.
     // Returns an unsubscribe.

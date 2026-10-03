@@ -13,10 +13,13 @@ This repo is the neutral ground where that merge happens.
   with a section each for **lumber, plates, hangers, and LVL**. You drop in material-summary
   sheets for a batch of jobs and it shows what to buy. The Planner writes nothing.
 - **Step 2 (#77):** each person signs in with their email address and a password the app keeps
-  itself. **Settings** has **Users** (admins manage the list) and the **Activity log**. The
-  database is Supabase Postgres: a users table and an activity log so far.
-- **Not built yet:** the ledger (counts, receiving, availability, thresholds) and the rest of
-  the UI redesign (#72: the Jobs and Inventory modes).
+  itself. **Settings** has **Users** (admins manage the list). The database is Supabase Postgres.
+- **Step 3, part 1 (#81, in progress):** the item catalog. **Inventory → Overview** lists every
+  item with its stocking status, threshold and note. **Settings** adds **Pack sizes**,
+  **Suppliers**, **Reasons** and **LVL thresholds**, and the Planner's lumber buying options are
+  shared by every computer. The **Activity Log** is its own mode: who changed what, and when.
+- **Not built yet:** the ledger (counts, receiving, on hand) and the rest of the UI redesign
+  (#72: the Jobs mode).
   The **EWP** optimizer page is deliberately excluded from the hosted app (see the Map, below).
 - **Target:** a ground-up rebuild on **Vercel + Supabase**, starting from the planner and adding
   the database family by family.
@@ -37,10 +40,11 @@ Under the `claude-pod` alias both sit at `/workspace/`; elsewhere the path diffe
 | Path | What it holds |
 |---|---|
 | `src/lumber/`, `src/plates/`, `src/hangers/`, `src/lvl/`, `src/ewp/` | Per-family sheet parsers and buy-list planners |
-| `src/app.js` | The whole app: sign-in in front of every route, then Settings and the Planner |
+| `src/app.js` | The whole app: sign-in in front of every route, then Inventory, Settings, the Activity Log and the Planner |
 | `src/planner/` | The Planner's Express app, its page (`planner.html`), one section file per family (`<family>-section.js`), and the shared UI (`planner-ui.js`, `planner.css`) |
-| `src/auth/`, `src/settings/` | Sign-in, passwords and the session cookie; the Users and Activity log pages and routes |
-| `src/db/`, `migrations/` | The database connection, the migration runner, the first-user setup, and the numbered schema files |
+| `src/auth/`, `src/settings/` | Sign-in, passwords and the session cookie; the Users, catalog Settings and Activity Log pages and routes |
+| `src/inventory/` | The item catalog's routes and the Inventory → Overview page |
+| `src/db/`, `migrations/` | The database connection, the migration runner, the first-user setup, the catalog import, and the numbered schema files |
 | `test/` | Node test suites and sheet fixtures |
 | `docs/adr/` | Accepted decisions (start with ADR 0001) |
 | `docs/research/` | Platform, database, and schema assessments — the numbers behind the decisions |
@@ -53,6 +57,7 @@ Under the `claude-pod` alias both sit at `/workspace/`; elsewhere the path diffe
 ```sh
 npm install
 npm start      # the whole app at http://127.0.0.1:3000, on a local practice database (inv_local)
+npm run reset-local  # build inv_local again from the migrations; keeps the people, re-imports the test catalog
 npm test       # node --test; needs a Postgres too (TEST_DATABASE_URL)
 ```
 
@@ -65,8 +70,10 @@ podman run -d --name inv-postgres -p 127.0.0.1:5432:5432 \
 podman start inv-postgres   # after a restart of the computer
 ```
 
-The first `npm start` prints the command that adds you as the first admin. The local database
-is for trying the app by hand; the deployed app uses Supabase (`docs/runbook.md`).
+The first `npm start` prints the command that adds you as the first admin. A restart keeps you
+signed in. A migration file that changed after it was applied needs `npm run reset-local`; it
+keeps the people and their passwords, but every other change in the local database is lost. The
+local database is for trying the app by hand; the deployed app uses Supabase (`docs/runbook.md`).
 
 Node 22.x. Runtime dependencies: Express, `pg` and `@vercel/functions` (#77).
 

@@ -44,7 +44,8 @@
 html{scrollbar-gutter:stable}
 body{background:var(--bg);color:var(--ink);margin:0;
   font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-.wrap{max-width:1040px;margin:0 auto;padding:18px 22px 48px;display:flex;flex-direction:column;gap:14px}
+/* Every page is one width, so switching modes never moves the page (owner, 2026-10-02). */
+.wrap{max-width:1280px;margin:0 auto;padding:18px 22px 48px;display:flex;flex-direction:column;gap:14px}
 .sub{color:var(--muted);margin:0}
 a{color:var(--accent)}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace}
@@ -60,15 +61,25 @@ a{color:var(--accent)}
 .themebtn:hover{background:var(--surface-2)}
 .appbar-user{font-size:14px;color:var(--muted)}
 .appbar-signout{padding:4px 12px;font-size:13px}
-/* Settings (#77): the task row under the modes, and its forms. */
-.appbar-tasks{border-top:0;padding-top:0}
-.appbar-tasks a{font-size:13px}
 .field{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+/* A label beside its box, several to a line: pack sizes in Settings. */
+.field.inline{display:inline-flex;flex-direction:row;align-items:center;gap:6px;margin-right:14px}
+/* Inventory → Overview: size and depth tabs and the status filters as pills,
+   as in the web app's Stock page; a row opens a panel below itself. */
+.pills{display:flex;flex-wrap:wrap;gap:6px}
+.pills button{border:1px solid var(--line-strong);border-radius:999px;background:var(--card);color:var(--ink);
+  font-size:13px;padding:5px 14px}
+.pills button[aria-pressed="true"]{background:var(--accent);color:#fff;border-color:var(--accent)}
+table.catalog tr.item{cursor:pointer}
+table.catalog tr.item:hover td{background:var(--surface-2)}
+table.catalog tr.item:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+table.catalog tr.item td:first-child::before{content:'▸ ';color:var(--muted)}
+table.catalog tr.item.open td:first-child::before{content:'▾ '}
+table.catalog tr.detail td{background:var(--surface-2);white-space:normal;padding:12px 14px}
 .field input,.field select,td input{font:inherit;font-size:14px;padding:6px 9px;border:1px solid var(--line-strong);
   border-radius:6px;background:var(--card);color:var(--ink)}
 td button{padding:3px 10px;font-size:12.5px;margin:0 4px 4px 0}
 /* Settings → Users: one line per person; a narrow window scrolls the table (.tw). */
-.wrap.wide{max-width:1280px}
 table.one-line td{white-space:nowrap}
 /* A form's button lines up with the boxes of its labelled fields, not their middles, and is as tall. */
 form.row{align-items:flex-end}
@@ -81,9 +92,27 @@ form.row > button{padding-top:6px;padding-bottom:6px}
   border-top:1px solid var(--line);background:var(--surface-2)}
 .appbar-filter .label{font-size:12px;color:var(--muted)}
 .seg{display:inline-flex;flex-wrap:wrap;border:1px solid var(--line-strong);border-radius:8px;overflow:hidden}
-.seg button{border:0;border-radius:0;background:var(--card);color:var(--muted);font-size:13px;padding:5px 16px}
-.seg button + button{border-left:1px solid var(--line-strong)}
-.seg button[aria-pressed="true"]{background:var(--accent);color:#fff;font-weight:600}
+.seg button,.seg a{border:0;border-radius:0;background:var(--card);color:var(--muted);padding:5px 16px;
+  text-decoration:none}
+.seg > * + *{border-left:1px solid var(--line-strong)}
+.seg button[aria-pressed="true"],.seg a[aria-current="page"]{background:var(--accent);color:#fff;font-weight:600}
+/* Settings: two groups of tasks side by side, Accounts and Catalog, like the
+   family bar (owner, 2026-10-02). */
+.appbar-filter .seg + .label{margin-left:14px}
+/* Until AppHeader.familyBar fills it, the family bar holds one hidden
+   button, so the bar is its full height from the first paint. Inventory
+   fills it only after two requests; an empty bar was 13px shorter, and the
+   page jumped when the buttons arrived (owner, 2026-10-02). */
+.seg:has(> .placeholder){visibility:hidden}
+/* Every control in a bar has one text size, line and padding, so a family
+   button (in its bordered .seg) and an Activity Log box (with its own
+   border) are one height, and a change of mode never moves the page. */
+.appbar-filter :is(.seg button,.seg a,select,input),.appbar-filter > button{font-size:13px;line-height:19.5px;
+  padding-top:5px;padding-bottom:5px}
+.appbar-filter label.label{display:inline-flex;align-items:center;gap:6px;margin-right:6px}
+.appbar-filter select,.appbar-filter input{font-family:inherit;padding-left:8px;padding-right:8px;
+  border:1px solid var(--line-strong);border-radius:6px;background:var(--card);color:var(--ink)}
+.appbar-filter > button{padding-left:16px;padding-right:16px}
 @media(max-width:760px){
   .appbar{position:static}
   .appbar-primary,.appbar-nav,.appbar-filter{padding-left:14px;padding-right:14px}
@@ -312,3 +341,14 @@ tr.grp.non-stock td:first-child{border-left-color:var(--bad)}
   #lum-grp-table tbody{break-inside:avoid}
   .wrap{max-width:none;padding:0}
 }
+
+/* The hidden attribute always hides, even on an element a rule above gives
+   display:flex (.row): without this, a hidden form.row stays on screen. */
+[hidden]{display:none !important}
+
+/* Inventory and its Settings: cells centered on the row's boxes, and fixed
+   column widths, so the columns stay put when the family filter changes. */
+table.catalog{table-layout:fixed;width:100%}
+table.catalog td{vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+table.catalog td input:not([type="number"]){width:100%;box-sizing:border-box}
+th[data-sort]{cursor:pointer}

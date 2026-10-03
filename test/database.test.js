@@ -20,20 +20,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const { urlFor, connect, freshDatabase, as } = require('./support/database.js');
-
-// The database stores a password hash and never reads it, so any non-empty
-// text stands in for one here. The app's own hashing is in password.test.js.
-const HASH = 'a stand-in for a password hash';
-
-// Adds the first person as the owner and returns them, so a test can act as them.
-async function firstUser(db) {
-  return as(db, null, async (owner) => {
-    const { rows: [{ person }] } = await owner.query(
-      'SELECT inv.add_first_user($1, $2, $3) AS person', [' Ann@Example.com ', ' Ann Lee ', HASH]);
-    return person;
-  });
-}
+const {
+  urlFor, connect, freshDatabase, as, HASH, APP, firstUser, call, logRows, refused,
+} = require('./support/database.js');
 
 test('the owner adds the first person, logged as their own addition', async () => {
   const db = await freshDatabase();
@@ -61,22 +50,6 @@ test('the first-person setup refuses to run once anyone exists', async () => {
   });
 });
 
-const APP = 'inv_app';
-
-// Calls one of the app's functions as the app's login and returns its answer.
-async function call(db, fn, ...args) {
-  return as(db, APP, async (app) => {
-    const params = args.map((_, i) => `$${i + 1}`).join(', ');
-    const { rows: [{ result }] } = await app.query(`SELECT inv.${fn}(${params}) AS result`, args);
-    return result;
-  });
-}
-
-async function logRows(db) {
-  return as(db, APP, async (app) =>
-    (await app.query('SELECT * FROM inv.activity_log ORDER BY id')).rows);
-}
-
 test('the app adds a person, and one log row says who did it and what changed', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
@@ -91,15 +64,6 @@ test('the app adds a person, and one log row says who did it and what changed', 
   assert.equal(log[1].old_value, null);
   assert.deepEqual(log[1].new_value, bob);
 });
-
-// Asserts that `promise` is refused with the SQLSTATE `code`, and returns the error.
-async function refused(promise, code, label) {
-  const err = await promise.then(
-    () => assert.fail(`${label}: expected a refusal with ${code}, but it succeeded`),
-    (e) => e);
-  assert.equal(err.code, code, `${label}: ${err.message}`);
-  return err;
-}
 
 test('impossible people are refused: blank name, no @, two @, a duplicate in other capitals', async () => {
   const db = await freshDatabase();
@@ -300,11 +264,12 @@ test('no login can insert, update, delete or empty any table (S62)', async () =>
   }
 });
 
-test('the app runs only its eleven functions; the Planner and backup logins run none', async () => {
+test('the app runs only its granted functions; the Planner and backup logins run none', async () => {
   const db = await freshDatabase();
-  const APP_FUNCTIONS = ['add_user', 'change_password', 'grant_admin', 'reactivate_user',
-    'record_password_check', 'remove_user', 'rename_user', 'revoke_admin', 'set_password',
-    'sign_out', 'tidy'];
+  const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'change_pack_size', 'change_password',
+    'edit_item', 'grant_admin', 'lumber_sizes', 'reactivate_user',
+    'record_password_check', 'remove_lumber_group', 'remove_user', 'rename_item', 'rename_supplier', 'rename_user', 'retire_item', 'retire_reason', 'revoke_admin',
+    'set_grade_redirect', 'set_lumber_lengths', 'set_lvl_depth_threshold', 'set_password', 'sign_out', 'tidy', 'unretire_item', 'unretire_reason'];
   const rows = await as(db, null, async (owner) => (await owner.query(`
     SELECT p.proname AS name,
            pg_catalog.has_function_privilege('inv_app', p.oid, 'EXECUTE') AS app,
