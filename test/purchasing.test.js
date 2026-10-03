@@ -87,6 +87,9 @@ test('impossible POs are refused with a plain message, and none leaves a row', a
     ['an amount of 0', supplier.id, '4503', '2026-10-03', line({ ordered: 0 }), 'IV400', /whole number of pieces above 0/],
     ['an amount that is not whole', supplier.id, '4503', '2026-10-03', line({ ordered: 2.5 }), 'IV400', /whole number of pieces/],
     ['a pack size of 0 (S40)', supplier.id, '4503', '2026-10-03', line({ pack_size: 0 }), 'IV400', /pack size is a whole number/],
+    ['an amount too large to save', supplier.id, '4503', '2026-10-03', line({ ordered: 3e9 }), 'IV400', /whole number of pieces/],
+    ['a pack size too large to save', supplier.id, '4503', '2026-10-03', line({ pack_size: 3e9 }), 'IV400', /pack size is a whole number/],
+    ['an item number too large to be one', supplier.id, '4503', '2026-10-03', line({ item_id: 1e20 }), 'IV400', /Line 1: pick the item/],
   ];
   for (const [label, supplierId, number, date, lines, code, message] of cases) {
     const err = await refused(enter(supplierId, number, date, lines), code, label);
@@ -150,6 +153,9 @@ test('the owner switches a family live, logged with the admin they name; never t
   await refused(as(db, APP, (app) => app.query('SELECT inv.set_family_live($1, $2)', ['ann@example.com', 'hangers'])),
     '42501', 'the app login cannot run it');
 });
+
+// A saved line as an edit lists it, with any fields changed.
+const keep = (line, fields = {}) => ({ id: line.id, item_id: line.item_id, ordered: line.ordered, pack_size: line.pack_size, ...fields });
 
 // A hanger PO of two lines, 100 and 30, entered by Ann.
 async function withPo() {
@@ -223,7 +229,6 @@ test('an edit never removes a line, never changes a closed one, and is refused o
   const [first, second] = po.lines;
   const edit = (version, lines, number = '4501') => call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, version,
     supplier.id, number, '2026-10-03', JSON.stringify(lines));
-  const keep = (line, fields = {}) => ({ id: line.id, item_id: line.item_id, ordered: line.ordered, pack_size: line.pack_size, ...fields });
 
   const before = (await logRows(db)).length;
   assert.match((await refused(edit(1, [keep(first)]), 'IV422', 'a line left out')).message, /LUS28 is left out.*close it/);
@@ -246,15 +251,63 @@ test('an edit never removes a line, never changes a closed one, and is refused o
   assert.deepEqual(JSON.parse(err.detail), edited);
 });
 
+test('a retry of an edit, a close or a re-open with the same key acts once and answers the same PO (S22)', async () => {
+  const { db, ann, supplier, hanger, po, reason } = await withPo();
+  const line = po.lines[1];
+  const twice = async (fn, ...args) => {
+    const key = crypto.randomUUID();
+    const first = await call(db, fn, ann.id, key, ...args);
+    assert.deepEqual(await call(db, fn, ann.id, key, ...args), first, `${fn} answers the same PO`);
+    return first;
+  };
+  const before = (await logRows(db)).length;
+  const edited = await twice('edit_po', po.id, po.version, supplier.id, '4501', '2026-10-03', JSON.stringify([
+    { id: po.lines[0].id, item_id: hanger.id, ordered: 100 }, { id: line.id, item_id: hanger.id, ordered: 30 },
+    { item_id: hanger.id, ordered: 5 }]));
+  assert.equal(edited.lines.length, 3, 'the added line is added once');
+  const closed = await twice('close_po_line', line.id, edited.version, reason.id);
+  const reopened = await twice('reopen_po_line', line.id, closed.version);
+  assert.equal(reopened.version, po.version + 3, 'each change moves the version once');
+  assert.equal((await logRows(db)).length, before + 3, 'each change logs one row');
+  assert.equal((await incoming(db))[hanger.id], 135);
+});
+
 test('an edit refuses a retired item it brings in, but keeps a line whose item was retired since', async () => {
   const { db, ann, supplier, hanger, po } = await withPo();
   const old = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
   await call(db, 'retire_item', ann.id, crypto.randomUUID(), old.id, 1);
   const lines = (extra) => JSON.stringify(po.lines.map((l) => ({ id: l.id, item_id: l.item_id, ordered: l.ordered })).concat(extra));
-  const edit = (version, extra) => call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, version, supplier.id, '4501', '2026-10-03', lines(extra));
+  const edit = (version, extra, date = '2026-10-03') =>
+    call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, version, supplier.id, '4501', date, lines(extra));
   await refused(edit(1, [{ item_id: old.id, ordered: 1 }]), 'IV422', 'a retired item brought in');
 
   await call(db, 'retire_item', ann.id, crypto.randomUUID(), hanger.id, 1);
-  const edited = await edit(1, []);
+  const edited = await edit(1, [], '2026-10-05');
   assert.equal(edited.version, 2, 'lines whose item was retired since still save');
+});
+
+test('an edit that changes nothing is refused, so it leaves no log row and keeps the version', async () => {
+  const { db, ann, supplier, po } = await withPo();
+  const before = (await logRows(db)).length;
+  const err = await refused(call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, po.version, supplier.id, ' 4501 ', '2026-10-03',
+    JSON.stringify(po.lines.map((l) => keep(l)))),
+  'IV422', 'nothing changed');
+  assert.equal(err.message, 'Nothing on PO 4501 changed, so nothing was saved.');
+  assert.equal((await logRows(db)).length, before);
+  const err2 = await refused(call(db, 'reopen_po_line', ann.id, crypto.randomUUID(), po.lines[0].id, po.version + 1),
+    'IV409', 'the version did not move');
+  assert.equal(JSON.parse(err2.detail).version, po.version);
+});
+
+test('an edit may list a closed line unchanged, so its refusals number lines as the Activity Log does', async () => {
+  const { db, ann, supplier, hanger, po, reason } = await withPo();
+  const [first, second] = po.lines;
+  const closed = await call(db, 'close_po_line', ann.id, crypto.randomUUID(), first.id, po.version, reason.id);
+  const edit = (lines) => call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, closed.version, supplier.id, '4501', '2026-10-03',
+    JSON.stringify(lines));
+  const err = await refused(edit([keep(first), keep(second, { ordered: 0 })]), 'IV400', 'line 2 has no amount');
+  assert.match(err.message, /^Line 2: the amount ordered/);
+  const edited = await edit([keep(first), keep(second, { ordered: 40 })]);
+  assert.deepEqual(edited.lines, [closed.lines[0], { ...second, ordered: 40 }], 'the closed line stays closed');
+  assert.equal((await incoming(db))[hanger.id], 40);
 });

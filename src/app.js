@@ -255,7 +255,12 @@ function appError(err, req, res, next) {
     if (err.code === 'IV409' && err.detail) body.current = JSON.parse(err.detail);
     return res.status(REFUSAL_STATUS[err.code] || 400).json(body);
   }
-  // A value the database could not take (class 22) or a constraint it
+  // A number too large for its column (22003): a person can type one, so it
+  // gets words, in one place for every function, 003's included.
+  if (err.code === '22003') {
+    return res.status(400).json({ ok: false, error: 'That number is too large. Check what you typed.' });
+  }
+  // Any other value the database could not take (class 22) or a constraint it
   // refused (class 23): the page sent something it never should. Nothing saved.
   if (/^2[23]/.test(err.code || '')) {
     return res.status(400).json({ ok: false, error: 'The request was refused.' });

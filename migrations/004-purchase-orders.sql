@@ -258,13 +258,16 @@ BEGIN
 END
 $$;
 
--- Whether a JSON value is a whole number above 0.
+-- Whether a JSON value is a whole number above 0 that an integer column
+-- holds (at most 2,147,483,647), so a mistyped huge number gets the plain
+-- refusal, not Postgres's "out of range". Ids are checked with it too; none
+-- comes near that.
 CREATE FUNCTION inv.is_count(p jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT coalesce(pg_catalog.jsonb_typeof(p) = 'number'
-                  AND p::numeric = pg_catalog.trunc(p::numeric) AND p::numeric > 0, false)
+                  AND p::numeric = pg_catalog.trunc(p::numeric) AND p::numeric BETWEEN 1 AND 2147483647, false)
 $$;
 
 -- A PO's supplier, number and date as a person gives them, checked and
@@ -390,9 +393,10 @@ $$;
 -- Inventory → Receive → a PO → Edit: fixes its supplier, number and date,
 -- and its open lines' item, amount and pack size, and adds lines (owner,
 -- 2026-10-03). p_lines lists every open line, by id, plus any new line
--- without one. A line is never removed: one not wanted is closed with a
--- reason (inv.close_po_line), and a closed line is re-opened before it is
--- changed. Receiving adds its own limits on a line with receipts: its item
+-- without one; a closed line may be listed too, unchanged. A line is never
+-- removed: one not wanted is closed with a reason (inv.close_po_line), and a
+-- closed line is re-opened before it is changed. A save that changes nothing
+-- is refused. Receiving adds its own limits on a line with receipts: its item
 -- stays, and its amount never goes below what arrived.
 CREATE FUNCTION inv.edit_po(
   p_actor bigint, p_key uuid, p_id bigint, p_version integer,
@@ -404,6 +408,7 @@ AS $$
 DECLARE
   a record;
   was jsonb;
+  now jsonb;
   po inv.purchase_orders;
   old inv.po_lines;
   l inv.po_lines;
@@ -419,7 +424,7 @@ BEGIN
   was := inv.po_at_version(p_id, p_version);
   po := inv.checked_po(p_supplier_id, p_number, p_po_date);
   IF pg_catalog.jsonb_typeof(p_lines) IS DISTINCT FROM 'array' THEN
-    RAISE EXCEPTION 'An edit lists the PO''s open lines.' USING ERRCODE = 'IV400';
+    RAISE EXCEPTION 'An edit lists the PO''s lines.' USING ERRCODE = 'IV400';
   END IF;
   SELECT i.* INTO v_left_out FROM inv.po_lines x JOIN inv.items i ON i.id = x.item_id
    WHERE x.po_id = p_id AND x.closed_reason_id IS NULL
@@ -449,14 +454,26 @@ BEGIN
     IF old.id = ANY (v_listed) THEN
       RAISE EXCEPTION 'Line % repeats a line already listed.', n USING ERRCODE = 'IV400';
     END IF;
-    IF old.closed_reason_id IS NOT NULL THEN
-      RAISE EXCEPTION 'Line %: that line is closed. Re-open it before you change it.', n USING ERRCODE = 'IV422';
-    END IF;
     v_listed := v_listed || old.id;
     l := inv.checked_po_line(n, r, old.item_id);
+    -- A closed line comes back as it is: the Receive page lists every line,
+    -- so "Line n" here is line n on the page and in the Activity Log.
+    IF old.closed_reason_id IS NOT NULL THEN
+      IF (l.item_id, l.ordered, l.pack_size) IS DISTINCT FROM (old.item_id, old.ordered, old.pack_size) THEN
+        RAISE EXCEPTION 'Line %: that line is closed. Re-open it before you change it.', n USING ERRCODE = 'IV422';
+      END IF;
+      CONTINUE;
+    END IF;
     UPDATE inv.po_lines SET item_id = l.item_id, ordered = l.ordered, pack_size = l.pack_size WHERE id = old.id;
   END LOOP;
-  RETURN inv.finish_action(a.log_id, p_id, was, inv.po_json(p_id));
+  now := inv.po_json(p_id);
+  -- A save that changes nothing is refused, so a PO's log holds only changes
+  -- (story 106) and the version stays where the screen read it. A PO-only
+  -- rule for now: the catalog's edits in 003 still log such a save.
+  IF now - 'version' = was - 'version' THEN
+    RAISE EXCEPTION 'Nothing on PO % changed, so nothing was saved.', po.number USING ERRCODE = 'IV422';
+  END IF;
+  RETURN inv.finish_action(a.log_id, p_id, was, now);
 END
 $$;
 

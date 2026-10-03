@@ -99,6 +99,9 @@ test('Settings lists and changes pack sizes, suppliers, reasons and LVL depth th
 
   const zero = await change(ctx, '/api/pack-sizes/add', { item_id: hanger.id, kind: 'box', pieces: 0 });
   assert.equal(zero.status, 400);
+  // A mistyped huge number gets a plain message, not "The request was refused."
+  const huge = await change(ctx, '/api/pack-sizes/add', { item_id: hanger.id, kind: 'box', pieces: 3e9 });
+  assert.deepEqual([huge.status, huge.body.error], [400, 'That number is too large. Check what you typed.']);
 });
 
 // A made-up material sheet: ten 2x4 #2 at 8′ and three 2x6 #2 at 12′.

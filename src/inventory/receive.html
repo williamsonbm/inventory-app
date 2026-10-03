@@ -143,21 +143,26 @@
 
   // One line of the form, empty or filled from a saved line. A saved line
   // keeps its id, and has no remove button: a line is never deleted, only
-  // closed (owner, 2026-10-03). Its unit follows the item typed in it.
+  // closed (owner, 2026-10-03). A closed line shows, greyed and fixed, so the
+  // form's line 2 is line 2 in the list and the Activity Log. Its unit
+  // follows the item typed in it.
   function addLine(saved) {
     const tr = document.createElement('tr');
     const item = saved && itemById(saved.item_id);
+    const fixed = saved?.closed_reason ? ' disabled' : '';
     if (saved) Object.assign(tr.dataset, { id: saved.id, itemId: saved.item_id });
+    if (fixed) tr.className = 'sub';
     tr.innerHTML = '<td><input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…" value="' +
-        esc(item ? choiceLabel(item) : '') + '"></td>' +
-      '<td><input data-f="ordered" type="number" min="1" step="1" style="width:8em" value="' + (saved ? saved.ordered : '') + '">' +
+        esc(item ? choiceLabel(item) : '') + '"' + fixed + '></td>' +
+      '<td><input data-f="ordered" type="number" min="1" step="1" style="width:8em" value="' + (saved ? saved.ordered : '') + '"' + fixed + '>' +
         ' <span class="sub" data-f="unit">' + (item ? unitOf(item) : '') + '</span></td>' +
-      '<td><input data-f="pack" type="number" min="1" step="1" style="width:7em" value="' + (saved?.pack_size ?? '') + '"></td>' +
-      '<td>' + (saved ? '' : '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>') + '</td>';
+      '<td><input data-f="pack" type="number" min="1" step="1" style="width:7em" value="' + (saved?.pack_size ?? '') + '"' + fixed + '></td>' +
+      '<td>' + (!saved ? '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>'
+        : closedLabel(saved)) + '</td>';
     el('lines').append(tr);
   }
 
-  // The form enters a new PO (po null) or edits `po`, with its open lines.
+  // The form enters a new PO (po null) or edits `po`, with all its lines.
   function showForm(po) {
     editing = po;
     el('form-title').textContent = po ? 'Edit PO ' + po.number + ' from ' + po.supplier : 'Enter a PO';
@@ -167,8 +172,9 @@
     el('number').value = po ? po.number : '';
     el('po-date').value = po ? po.po_date : today();
     el('lines').replaceChildren();
-    if (po) po.lines.filter((l) => !l.closed_reason).forEach(addLine);
+    if (po) po.lines.forEach(addLine);
     addLine();
+    paintPos();
   }
 
   // The item a form line names: one picked from the list, or the item a
@@ -222,7 +228,8 @@
       say(done(po), 'ok');
     } catch (err) {
       if (err.current) pos = pos.map((p) => (p.id === err.current.id ? err.current : p));
-      say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done) : null);
+      const restart = err.current && editing && editing.id === err.current.id ? ' Click Edit to start again from it as it is now.' : '';
+      say(err.message + restart, 'bad', err.unconfirmed ? () => save(route, body, done) : null);
     }
     paintPos();
   }
@@ -253,15 +260,20 @@
               '<td>' + esc(po.supplier) + '</td><td>' + esc(po.po_date) + '</td>') +
           '<td class="name">' + esc(choiceLabel(item)) + '</td>' +
           '<td>' + fmtInt(l.ordered) + ' ' + unitOf(item) + '</td>' +
-          '<td>' + (l.pack_size ?? '—') + '</td><td>' + lineAction(l) + '</td></tr>';
+          '<td>' + (l.pack_size ?? '—') + '</td><td>' + lineAction(po, l) + '</td></tr>';
       }).join('');
     }).join('');
     el('count').textContent = shown + ' PO' + (shown === 1 ? '' : 's') + ' shown.';
   }
+  // Why a line is closed, as the list and the edit form both say it; nothing
+  // for an open line.
+  const closedLabel = (l) => (l.closed_reason ? 'Closed: ' + esc(l.closed_reason) : '');
   // An open line offers Close, which first asks for a reason; a closed line
-  // says why and offers Re-open.
-  function lineAction(l) {
-    if (l.closed_reason) return 'Closed: ' + esc(l.closed_reason) + ' <button type="button" class="ghost" data-do="reopen">Re-open</button>';
+  // says why and offers Re-open. Neither while its PO is open in the form: one
+  // change to a PO at a time, so the form's save never meets its own close.
+  function lineAction(po, l) {
+    if (editing && editing.id === po.id) return closedLabel(l) + ' <span class="sub">Save or cancel the edit first.</span>';
+    if (l.closed_reason) return closedLabel(l) + ' <button type="button" class="ghost" data-do="reopen">Re-open</button>';
     if (l.id !== closing) return '<button type="button" class="ghost" data-do="close">Close…</button>';
     return '<select data-f="reason"><option value="">Reason…</option>' +
       reasons.map((r) => '<option value="' + r.id + '">' + esc(r.text) + '</option>').join('') + '</select> ' +
