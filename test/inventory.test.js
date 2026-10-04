@@ -277,8 +277,8 @@ test('Receive enters a PO, lists it, and the Overview shows its lines as Incomin
   const entered = await change(ctx, '/api/pos/enter', po);
   assert.equal(entered.status, 200, entered.body.error);
   assert.deepEqual(entered.body.po, {
-    id: entered.body.po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03',
-    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], item: 'LUS28', closed_reason: null }],
+    id: entered.body.po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03', status: 'ordered',
+    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], item: 'LUS28', received: 0, closed_reason: null }],
   });
   assert.deepEqual((await read(ctx, '/api/pos')).pos, [entered.body.po]);
 
@@ -334,5 +334,37 @@ test('Receive edits a PO and closes and re-opens a line; the Activity Log says w
     ['re-open PO line', 'PO 4510', 'line 2 re-opened'],
     ['close PO line', 'PO 4510', 'line 2 closed: Cancelled by supplier'],
     ['edit PO', 'PO 4510', 'number: 4501 → 4510; line 1 ordered: 100 → 80; line 2 item: LUS28 → HUS26; line 3 added'],
+  ]);
+});
+
+test('Receive takes a delivery against a PO and one without; Incoming and the Activity Log follow', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const other = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'HUS26' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
+  await goLive(ctx.db, 'hangers');
+  const po = (await change(ctx, '/api/pos/enter', { supplier_id: supplier.id, number: '4501', po_date: '2026-10-03',
+    lines: [{ item_id: hanger.id, ordered: 100 }] })).body.po;
+
+  const received = await change(ctx, '/api/receipts/receive', { po_id: po.id, po_version: po.version, supplier_id: null, bol: 'B-77',
+    lines: [{ po_line_id: po.lines[0].id, item_id: hanger.id, quantity: 120, packs: 2, pack_size: 50, pack_kind: 'carton', loose: 20 },
+      { po_line_id: null, item_id: other.id, quantity: 6 }] });
+  assert.equal(received.status, 200, received.body.error);
+  assert.equal(received.body.receipt.po_number, '4501');
+  const stale = await change(ctx, '/api/receipts/receive', { po_id: po.id, po_version: po.version, supplier_id: null,
+    lines: [{ po_line_id: po.lines[0].id, item_id: hanger.id, quantity: 1 }] });
+  assert.equal(stale.status, 409, 'the same delivery from a second screen is refused');
+  assert.equal(stale.body.current.status, 'finished', 'and the screen gets the PO as it is now');
+  const walkIn = await change(ctx, '/api/receipts/receive', { po_id: null, po_version: null, supplier_id: supplier.id,
+    lines: [{ item_id: other.id, quantity: 4 }] });
+  assert.equal(walkIn.status, 200, walkIn.body.error);
+
+  const { pos } = await read(ctx, '/api/pos');
+  assert.deepEqual(pos[0].lines.map((l) => l.received), [120]);
+  const { entries } = await read(ctx, '/api/activity');
+  assert.deepEqual(entries.slice(0, 2).map((e) => [e.action, e.target, e.change]), [
+    ['receive', 'Simpson, no PO', 'added: 4 HUS26'],
+    ['receive', 'PO 4501', 'added: 120 LUS28 on line 1 (2 cartons of 50 + 20 loose); 6 HUS26 not on the PO; Bill of Lading or tracking number B-77; '
+      + 'carton size on file for LUS28: 50'],
   ]);
 });

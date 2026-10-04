@@ -59,7 +59,8 @@ CREATE TABLE inv.po_lines (
   item_id          bigint NOT NULL REFERENCES inv.items (id),
   ordered          integer NOT NULL CHECK (ordered > 0),
   pack_size        integer CHECK (pack_size > 0),
-  closed_reason_id bigint REFERENCES inv.reasons (id)
+  closed_reason_id bigint REFERENCES inv.reasons (id),
+  UNIQUE (id, item_id)  -- for inv.ledger's foreign key
 );
 
 CREATE INDEX po_lines_po_idx ON inv.po_lines (po_id);
@@ -88,6 +89,90 @@ $$;
 
 CREATE TRIGGER check_family_live BEFORE INSERT OR UPDATE OF item_id ON inv.po_lines
   FOR EACH ROW EXECUTE FUNCTION inv.check_item_family_live();
+
+-- A delivery as entered from its Bill of Lading (S13, S16): against a PO, or
+-- from a supplier without one, never both. Its lines are ledger rows. Who
+-- received it and when come from its activity-log row (target receipts).
+CREATE TABLE inv.receipts (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  po_id       bigint REFERENCES inv.purchase_orders (id),
+  supplier_id bigint REFERENCES inv.suppliers (id),  -- without a PO; with one, the PO's supplier
+  bol         text CHECK (bol = inv.tidy(bol) AND bol <> ''),  -- Bill of Lading or tracking number (story 37)
+  CHECK ((po_id IS NULL) <> (supplier_id IS NULL))
+);
+
+-- One row per change in quantity, in pieces (design table 11). Never updated
+-- or deleted: a mistake is undone by a reversal. A receipt line keeps the
+-- delivery as entered, packs × pack size + loose, which adds up to its
+-- quantity, and its own copy of the pack size and its kind (Q13, story 19).
+-- A line on a PO line has that line's item, by the foreign key (story 36),
+-- which also keeps the item of a PO line with receipts (PO edit rule 4).
+CREATE TABLE inv.ledger (
+  id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  item_id      bigint NOT NULL REFERENCES inv.items (id),
+  quantity     integer NOT NULL CHECK (quantity <> 0),
+  kind         text NOT NULL CHECK (kind IN ('receipt')),
+  effective_at timestamptz NOT NULL,
+  action_id    bigint NOT NULL REFERENCES inv.activity_log (id),
+  receipt_id   bigint REFERENCES inv.receipts (id),
+  po_line_id   bigint,
+  packs        integer CHECK (packs >= 0),
+  pack_size    integer CHECK (pack_size > 0),
+  pack_kind    text,
+  loose        integer CHECK (loose >= 0),
+  FOREIGN KEY (po_line_id, item_id) REFERENCES inv.po_lines (id, item_id),
+  CHECK ((packs IS NULL) = (pack_size IS NULL) AND (packs IS NULL) = (pack_kind IS NULL)),
+  CHECK ((packs IS NULL AND loose IS NULL) OR quantity = coalesce(packs * pack_size, 0) + coalesce(loose, 0)),
+  CHECK (kind <> 'receipt' OR (quantity > 0 AND receipt_id IS NOT NULL)),
+  CHECK (po_line_id IS NULL OR receipt_id IS NOT NULL)
+);
+
+CREATE INDEX ledger_item_idx ON inv.ledger (item_id);
+CREATE INDEX ledger_po_line_idx ON inv.ledger (po_line_id);
+
+CREATE TRIGGER check_family_live BEFORE INSERT ON inv.ledger
+  FOR EACH ROW EXECUTE FUNCTION inv.check_item_family_live();
+
+-- A ledger row's pack kind is one its item's family comes in, whatever
+-- writes the row, as 003's inv.check_pack_size_kind holds for
+-- inv.pack_sizes. inv.checked_receipt_line gives the message with its line
+-- number first; this is the guarantee.
+CREATE FUNCTION inv.check_ledger_pack_kind() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  f inv.families;
+BEGIN
+  SELECT fam.* INTO f FROM inv.items i JOIN inv.families fam ON fam.code = i.family WHERE i.id = NEW.item_id;
+  IF FOUND AND NEW.pack_kind IS NOT NULL AND NOT NEW.pack_kind = ANY (f.pack_kinds) THEN
+    RAISE EXCEPTION 'A pack size for % is a %.', f.name, inv.word_list(f.pack_kinds, 'or') USING ERRCODE = 'IV400';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_pack_kind BEFORE INSERT ON inv.ledger
+  FOR EACH ROW EXECUTE FUNCTION inv.check_ledger_pack_kind();
+
+-- Story 107 (003 left this refusal to part 2): once an item has receipts,
+-- its name stays, so the records keep naming what arrived, whatever writes
+-- the row. Part 3 adds counts to this check.
+CREATE FUNCTION inv.check_item_name_kept() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF (NEW.sku, NEW.product, NEW.size, NEW.grade, NEW.length_ft) IS DISTINCT FROM (OLD.sku, OLD.product, OLD.size, OLD.grade, OLD.length_ft)
+     AND EXISTS (SELECT FROM inv.ledger WHERE item_id = OLD.id) THEN
+    RAISE EXCEPTION '% has receipts, so its name stays.', inv.item_label(OLD) USING ERRCODE = 'IV422';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_name_kept BEFORE UPDATE OF sku, product, size, grade, length_ft ON inv.items
+  FOR EACH ROW EXECUTE FUNCTION inv.check_item_name_kept();
 
 -- Every text a person types has a length limit (owner, 2026-10-03): about
 -- twice the longest real value, or a published limit (a name 70, the UK
@@ -131,22 +216,81 @@ CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.lumber_grade_redirec
   EXECUTE FUNCTION inv.check_lengths('from_grade', '20', 'A grade', 'to_grade', '20', 'A grade');
 CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.purchase_orders FOR EACH ROW
   EXECUTE FUNCTION inv.check_lengths('number', '20', 'A PO number');
+-- The longest real tracking number is 34 characters (2026-10-04).
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.receipts FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('bol', '60', 'A Bill of Lading or tracking number');
+
+-- What has arrived against a PO line, in its family's order unit, as the
+-- line's amount ordered is: for lumber, pieces × length in linear feet
+-- (Q14); else pieces.
+CREATE FUNCTION inv.received(p_line_id bigint) RETURNS integer
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT (coalesce((SELECT pg_catalog.sum(g.quantity) FROM inv.ledger g WHERE g.po_line_id = l.id), 0)
+          * CASE f.order_unit WHEN 'linear feet' THEN i.length_ft ELSE 1 END)::integer
+    FROM inv.po_lines l JOIN inv.items i ON i.id = l.item_id JOIN inv.families f ON f.code = i.family
+   WHERE l.id = p_line_id
+$$;
+
+-- A PO line's number, "Line n" as the Receive page, the refusals and the
+-- Activity Log name it: the nth line of its PO in the order entered,
+-- closed lines included.
+CREATE FUNCTION inv.po_line_number(p_line_id bigint) RETURNS integer
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT (SELECT pg_catalog.count(*)::integer FROM inv.po_lines x WHERE x.po_id = l.po_id AND x.id <= l.id)
+    FROM inv.po_lines l WHERE l.id = p_line_id  -- blank for no line
+$$;
+
+-- PO edit rule 4 (owner, 2026-10-03), whatever writes the row: a line with
+-- receipts keeps its item (inv.ledger's foreign key also holds this), and
+-- its amount never goes below what arrived.
+CREATE FUNCTION inv.check_po_line_received() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_received integer;
+  v_amount text;
+  n integer := inv.po_line_number(OLD.id);
+BEGIN
+  IF NOT EXISTS (SELECT FROM inv.ledger WHERE po_line_id = OLD.id) THEN RETURN NEW; END IF;
+  v_received := inv.received(OLD.id);
+  SELECT v_received || ' ' || f.order_unit INTO v_amount
+    FROM inv.items i JOIN inv.families f ON f.code = i.family WHERE i.id = OLD.item_id;
+  IF NEW.item_id <> OLD.item_id THEN
+    RAISE EXCEPTION 'Line %: % of % have arrived on this line, so its item stays.', n, v_amount,
+      (SELECT inv.item_label(i) FROM inv.items i WHERE i.id = OLD.item_id) USING ERRCODE = 'IV422';
+  END IF;
+  IF NEW.ordered < v_received THEN
+    RAISE EXCEPTION 'Line %: % have arrived on this line, so it orders at least %.', n, v_amount, v_received
+      USING ERRCODE = 'IV422';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_received BEFORE UPDATE OF item_id, ordered ON inv.po_lines
+  FOR EACH ROW EXECUTE FUNCTION inv.check_po_line_received();
 
 -- The figures worked out from the records, never stored (#81, "Calculated
 -- figures live in one place"): one row per item. The Overview reads it now;
 -- the rest of part 2 adds on hand, available and reorder here, and part 4's
 -- Planner reads the same view.
--- incoming (story 32) is in the family's order unit. For each PO line it is
--- open line, ordered − received, never below zero; until receiving is
--- built, each open line counts in full. A closed line counts nothing.
+-- incoming (story 32) is in the family's order unit. For each open PO line
+-- it is ordered − received, never below zero, so an over-delivery (story
+-- 41) takes nothing from another line. A closed line counts nothing.
 CREATE VIEW inv.item_figures AS
-SELECT i.id AS item_id, coalesce(pg_catalog.sum(l.ordered), 0)::integer AS incoming
+SELECT i.id AS item_id,
+       coalesce(pg_catalog.sum(GREATEST(l.ordered - inv.received(l.id), 0)), 0)::integer AS incoming
   FROM inv.items i
   LEFT JOIN inv.po_lines l ON l.item_id = i.id AND l.closed_reason_id IS NULL
  GROUP BY i.id;
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('enter PO', false), ('edit PO', false),
-  ('close PO line', false), ('re-open PO line', false), ('switch family live', true);
+  ('close PO line', false), ('re-open PO line', false), ('switch family live', true), ('receive', false);
 
 -- 001's inv.finish_action, with one change: a change whose record is the
 -- same before and after, the version aside, is refused (owner, 2026-10-03).
@@ -218,20 +362,29 @@ $$;
 
 -- A PO with its supplier's name and its lines, in the shape every function
 -- returns and logs, and the Receive page lists. Each line carries its item's
--- name, so the Activity Log names the item as it was at the time.
+-- name, so the Activity Log names the item as it was at the time, and what
+-- has arrived, in the order unit (inv.received). status is "finished" when
+-- no open line has anything still to arrive, "partial" when something has
+-- arrived and more is to come (story 38), else "ordered".
 CREATE FUNCTION inv.po_json(p_id bigint) RETURNS jsonb
 LANGUAGE sql STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
+  WITH lines AS (
+    SELECT l.*, inv.item_label(i) AS item, r.text AS closed_reason, inv.received(l.id) AS received
+      FROM inv.po_lines l JOIN inv.items i ON i.id = l.item_id
+      LEFT JOIN inv.reasons r ON r.id = l.closed_reason_id
+     WHERE l.po_id = p_id)
   SELECT pg_catalog.jsonb_build_object(
     'id', po.id, 'version', po.version, 'supplier_id', po.supplier_id, 'supplier', s.name,
     'number', po.number, 'po_date', po.po_date,
+    'status', CASE WHEN NOT EXISTS (SELECT FROM lines WHERE closed_reason IS NULL AND received < ordered) THEN 'finished'
+                   WHEN EXISTS (SELECT FROM lines WHERE received > 0) THEN 'partial'
+                   ELSE 'ordered' END,
     'lines', (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
-                'id', l.id, 'item_id', l.item_id, 'item', inv.item_label(i), 'ordered', l.ordered,
-                'pack_size', l.pack_size, 'closed_reason', r.text) ORDER BY l.id), '[]')
-                FROM inv.po_lines l JOIN inv.items i ON i.id = l.item_id
-                LEFT JOIN inv.reasons r ON r.id = l.closed_reason_id
-               WHERE l.po_id = po.id))
+                'id', id, 'item_id', item_id, 'item', item, 'ordered', ordered, 'received', received,
+                'pack_size', pack_size, 'closed_reason', closed_reason) ORDER BY id), '[]')
+                FROM lines))
     FROM inv.purchase_orders po JOIN inv.suppliers s ON s.id = po.supplier_id
    WHERE po.id = p_id
 $$;
@@ -343,6 +496,18 @@ AS $$
   SELECT coalesce(pg_catalog.jsonb_typeof(p) = 'number'
                   AND p::numeric = pg_catalog.trunc(p::numeric) AND p::numeric BETWEEN 1 AND 2147483647, false)
 $$;
+
+-- The same, with 0 allowed: packs and loose pieces on a receipt line.
+CREATE FUNCTION inv.is_whole_zero_or_more(p jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$ SELECT p = '0' OR inv.is_whole_above_zero(p) $$;
+
+-- Whether a request's field holds anything: neither missing nor JSON null.
+CREATE FUNCTION inv.is_given(p jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$ SELECT coalesce(p <> 'null', false) $$;
 
 -- A PO's supplier, number and date as a person gives them, checked and
 -- tidied, as a row not saved yet. Shared by inv.enter_po and inv.edit_po, so
@@ -543,7 +708,185 @@ BEGIN
 END
 $$;
 
+-- A receipt with its PO's number or its supplier, and its lines, in the
+-- shape inv.receive returns and logs. po_line is the line's number on its
+-- PO, "Line n" as the Receive page numbers it; blank for a line not on a PO.
+CREATE FUNCTION inv.receipt_json(p_id bigint) RETURNS jsonb
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT pg_catalog.jsonb_build_object(
+    'id', rc.id, 'po_id', rc.po_id, 'po_number', po.number, 'supplier', s.name, 'bol', rc.bol,
+    'lines', (SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                'id', g.id,
+                'po_line', inv.po_line_number(g.po_line_id),
+                'item_id', g.item_id, 'item', inv.item_label(i), 'quantity', g.quantity, 'packs', g.packs,
+                'pack_size', g.pack_size, 'pack_kind', g.pack_kind, 'loose', g.loose) ORDER BY g.id)
+                FROM inv.ledger g JOIN inv.items i ON i.id = g.item_id
+               WHERE g.receipt_id = rc.id))
+    FROM inv.receipts rc
+    LEFT JOIN inv.purchase_orders po ON po.id = rc.po_id
+    JOIN inv.suppliers s ON s.id = coalesce(rc.supplier_id, po.supplier_id)
+   WHERE rc.id = p_id
+$$;
+
+-- Whether a receipt line has nothing filled in: no pieces, packs or loose.
+CREATE FUNCTION inv.is_blank_receipt_line(r jsonb) RETURNS boolean
+LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT NOT (inv.is_given(r -> 'quantity') OR inv.is_given(r -> 'packs') OR inv.is_given(r -> 'loose'))
+$$;
+
+-- Line n of a receipt as a person gives it ({po_line_id, item_id, quantity,
+-- packs, pack_size, pack_kind, loose}), checked, as a ledger row not saved
+-- yet. p_po_id is the receipt's PO, or null without one.
+CREATE FUNCTION inv.checked_receipt_line(n integer, r jsonb, p_po_id bigint) RETURNS inv.ledger
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  i inv.items;
+  f inv.families;
+  pl inv.po_lines;
+  g inv.ledger;
+BEGIN
+  SELECT * INTO i FROM inv.items
+   WHERE id = CASE WHEN inv.is_whole_above_zero(r -> 'item_id') THEN (r ->> 'item_id')::bigint END;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Line %: pick the item from the catalog.', n USING ERRCODE = 'IV400';
+  END IF;
+  SELECT * INTO f FROM inv.families WHERE code = i.family;
+  IF inv.is_given(r -> 'po_line_id') THEN
+    SELECT * INTO pl FROM inv.po_lines
+     WHERE po_id = p_po_id AND id = CASE WHEN inv.is_whole_above_zero(r -> 'po_line_id') THEN (r ->> 'po_line_id')::bigint END;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'Line %: that line is not on this PO.', n USING ERRCODE = 'IV400';
+    END IF;
+    IF pl.item_id <> i.id THEN
+      RAISE EXCEPTION 'Line %: that PO line orders %, not %.', n,
+        (SELECT inv.item_label(x) FROM inv.items x WHERE x.id = pl.item_id), inv.item_label(i) USING ERRCODE = 'IV400';
+    END IF;
+    IF pl.closed_reason_id IS NOT NULL THEN
+      RAISE EXCEPTION 'Line %: that PO line is closed. Re-open it before you receive against it.', n USING ERRCODE = 'IV422';
+    END IF;
+  -- A PO line whose item was retired since it was ordered still takes its delivery.
+  ELSIF NOT i.active THEN
+    RAISE EXCEPTION 'Line %: % is retired. Un-retire it before you receive it.', n, inv.item_label(i) USING ERRCODE = 'IV422';
+  END IF;
+  IF NOT inv.is_whole_above_zero(r -> 'quantity') THEN
+    RAISE EXCEPTION 'Line %: the pieces received are a whole number above 0.', n USING ERRCODE = 'IV400';
+  END IF;
+  g.item_id := i.id;
+  g.po_line_id := pl.id;
+  g.quantity := (r ->> 'quantity')::integer;
+  -- How the delivery came, if the person gives it: packs × pack size + loose.
+  IF inv.is_given(r -> 'packs') <> inv.is_given(r -> 'pack_size') THEN
+    RAISE EXCEPTION 'Line %: give both the packs and the pack size, or neither.', n USING ERRCODE = 'IV400';
+  END IF;
+  IF inv.is_given(r -> 'pack_size') THEN
+    IF NOT inv.is_whole_above_zero(r -> 'pack_size') THEN
+      RAISE EXCEPTION 'Line %: a pack size is a whole number of pieces above 0.', n USING ERRCODE = 'IV400';
+    END IF;
+    IF NOT inv.is_whole_zero_or_more(r -> 'packs') THEN
+      RAISE EXCEPTION 'Line %: packs are a whole number, 0 or more.', n USING ERRCODE = 'IV400';
+    END IF;
+    g.packs := (r ->> 'packs')::integer;
+    g.pack_size := (r ->> 'pack_size')::integer;
+    g.pack_kind := r ->> 'pack_kind';
+    IF NOT coalesce(g.pack_kind = ANY (f.pack_kinds), false) THEN
+      RAISE EXCEPTION 'Line %: a pack size for % is a %.', n, f.name, inv.word_list(f.pack_kinds, 'or') USING ERRCODE = 'IV400';
+    END IF;
+  END IF;
+  IF inv.is_given(r -> 'loose') THEN
+    IF NOT inv.is_whole_zero_or_more(r -> 'loose') THEN
+      RAISE EXCEPTION 'Line %: loose pieces are a whole number, 0 or more.', n USING ERRCODE = 'IV400';
+    END IF;
+    g.loose := (r ->> 'loose')::integer;
+  END IF;
+  -- In numeric, so packs × pack size too large for an integer is a mismatch, not an error.
+  IF (g.packs IS NOT NULL OR g.loose IS NOT NULL)
+     AND coalesce(g.packs::numeric * g.pack_size, 0) + coalesce(g.loose, 0) <> g.quantity THEN
+    RAISE EXCEPTION 'Line %: % is %, not the % pieces received.', n,
+      pg_catalog.concat_ws(' + ', g.packs || ' × ' || g.pack_size, g.loose || ' loose'),
+      coalesce(g.packs::numeric * g.pack_size, 0) + coalesce(g.loose, 0), g.quantity USING ERRCODE = 'IV400';
+  END IF;
+  RETURN g;
+END
+$$;
+
+-- Inventory → Receive → Receive (stories 33–41): a delivery against a PO
+-- (p_po_id and the version the screen read; refused when stale, so one
+-- delivery is not entered twice from two screens) or without one
+-- (p_supplier_id). One save: a refused line leaves nothing saved (S21).
+-- The moment it takes effect is the save's; part 3's "before or after the
+-- count?" question changes that near a count.
+--   p_lines  [{po_line_id, item_id, quantity, packs, pack_size, pack_kind, loose}];
+--            quantity in pieces; po_line_id blank for a line not on the PO.
+CREATE FUNCTION inv.receive(
+  p_actor bigint, p_key uuid, p_po_id bigint, p_po_version integer, p_supplier_id bigint, p_bol text, p_lines jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  v_receipt bigint;
+  v_added jsonb := '[]';
+  g inv.ledger;
+  r jsonb;
+  n integer;
+BEGIN
+  a := inv.claim_action(p_actor, p_key, 'receive', 'receipts', NULL,
+                        pg_catalog.jsonb_build_object('po_id', p_po_id, 'po_version', p_po_version,
+                                                      'supplier_id', p_supplier_id, 'bol', p_bol, 'lines', p_lines));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  IF p_po_id IS NOT NULL AND p_supplier_id IS NOT NULL THEN
+    RAISE EXCEPTION 'A receipt against a PO takes its PO''s supplier.' USING ERRCODE = 'IV400';
+  ELSIF p_po_id IS NOT NULL THEN
+    PERFORM inv.po_at_version(p_po_id, p_po_version);
+  ELSIF NOT EXISTS (SELECT FROM inv.suppliers WHERE id = p_supplier_id) THEN
+    RAISE EXCEPTION 'Pick the supplier from the list.' USING ERRCODE = 'IV400';
+  END IF;
+  IF pg_catalog.jsonb_typeof(p_lines) IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'A receipt lists its lines.' USING ERRCODE = 'IV400';
+  END IF;
+  -- A line with no pieces, packs or loose filled in is a PO line nothing
+  -- arrived on this time. It is skipped, but still counted, so "Line n" is
+  -- the nth row on the Receive page, which lists every open PO line.
+  IF NOT EXISTS (SELECT FROM pg_catalog.jsonb_array_elements(p_lines) e WHERE NOT inv.is_blank_receipt_line(e)) THEN
+    RAISE EXCEPTION 'Nothing to receive. Fill in the pieces that arrived.' USING ERRCODE = 'IV400';
+  END IF;
+  INSERT INTO inv.receipts (po_id, supplier_id, bol)
+  VALUES (p_po_id, p_supplier_id, nullif(inv.tidy(p_bol), '')) RETURNING id INTO v_receipt;
+  FOR r, n IN SELECT e, e_n::integer FROM pg_catalog.jsonb_array_elements(p_lines) WITH ORDINALITY AS x(e, e_n) LOOP
+    CONTINUE WHEN inv.is_blank_receipt_line(r);
+    g := inv.checked_receipt_line(n, r, p_po_id);
+    INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, receipt_id, po_line_id,
+                            packs, pack_size, pack_kind, loose)
+    VALUES (g.item_id, g.quantity, 'receipt', pg_catalog.now(), a.log_id, v_receipt, g.po_line_id,
+            g.packs, g.pack_size, g.pack_kind, g.loose);
+    -- Story 19 = B (owner, 2026-10-03): a size typed for a kind the item has
+    -- no size of becomes its size on file, logged with this receipt. One it
+    -- has already stays; only Settings → Pack sizes changes that.
+    IF g.pack_size IS NOT NULL THEN
+      INSERT INTO inv.pack_sizes (item_id, kind, pieces) VALUES (g.item_id, g.pack_kind, g.pack_size)
+      ON CONFLICT (item_id, kind) DO NOTHING;
+      IF FOUND THEN
+        v_added := v_added || pg_catalog.jsonb_build_object(
+          'item', (SELECT inv.item_label(i) FROM inv.items i WHERE i.id = g.item_id), 'kind', g.pack_kind, 'pieces', g.pack_size);
+      END IF;
+    END IF;
+  END LOOP;
+  RETURN inv.finish_action(a.log_id, v_receipt, NULL,
+    inv.receipt_json(v_receipt) || pg_catalog.jsonb_build_object('pack_sizes_added', v_added));
+END
+$$;
+
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA inv FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION inv.receive(bigint, uuid, bigint, integer, bigint, text, jsonb) TO inv_app;
+-- inv.po_json and inv.item_figures work out what arrived with inv.received.
+GRANT EXECUTE ON FUNCTION inv.received(bigint) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.enter_po(bigint, uuid, bigint, text, text, jsonb) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.edit_po(bigint, uuid, bigint, integer, bigint, text, text, jsonb) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.close_po_line(bigint, uuid, bigint, integer, bigint) TO inv_app;

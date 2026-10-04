@@ -69,6 +69,7 @@ const TARGET_NAMES = {
   lumber_purchasable_lengths: (_item, row) => `${row.size} ${row.grade}`,
   lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
   purchase_orders: (_item, row) => `PO ${row.number}`,
+  receipts: (_item, row) => (row.po_number ? `PO ${row.po_number}` : `${row.supplier}, no PO`),
   families: (_item, row) => row.name,
 };
 const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
@@ -86,7 +87,24 @@ const ADDED = {
   lumber_purchasable_lengths: (row) => (row.lengths.length ? row.lengths.map((l) => `${l}′`).join(', ') : 'no lengths'),
   lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
   purchase_orders: (row) => `${row.supplier}, dated ${row.po_date}, ${row.lines.length} line${row.lines.length === 1 ? '' : 's'}`,
+  receipts: describeReceipt,
 };
+
+// What a receipt brought, line by line, with the PO line each went on and
+// how it came, then its Bill of Lading and any pack size it put on file
+// (story 19).
+function describeReceipt(row) {
+  const plural = (kind, n) => (n === 1 ? kind : kind === 'box' ? 'boxes' : `${kind}s`);
+  const lines = row.lines.map((l) => {
+    const where = l.po_line ? ` on line ${l.po_line}` : row.po_id ? ' not on the PO' : '';
+    const how = [l.packs !== null && `${l.packs} ${plural(l.pack_kind, l.packs)} of ${l.pack_size}`,
+      l.loose !== null && `${l.loose} loose`].filter(Boolean).join(' + ');
+    return `${l.quantity} ${l.item}${where}${how ? ` (${how})` : ''}`;
+  });
+  if (row.bol) lines.push(`Bill of Lading or tracking number ${row.bol}`);
+  for (const p of row.pack_sizes_added) lines.push(`${p.kind} size on file for ${p.item}: ${p.pieces}`);
+  return lines.join('; ');
+}
 
 // What a change to a PO did, by its supplier, number and date, then line by
 // line, numbered as the Receive page numbers them (lines in the order

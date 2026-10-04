@@ -33,10 +33,10 @@ test('a PO for a live family shows its lines as incoming, and one log row record
   const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, ' 4501 ', '2026-10-03',
     JSON.stringify([{ item_id: hanger.id, ordered: 100, pack_size: 50 }, { item_id: hanger.id, ordered: 30, pack_size: null }]));
   assert.deepEqual(po, {
-    id: po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03',
+    id: po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03', status: 'ordered',
     lines: [
-      { id: po.lines[0].id, item_id: hanger.id, item: 'LUS28', ordered: 100, pack_size: 50, closed_reason: null },
-      { id: po.lines[1].id, item_id: hanger.id, item: 'LUS28', ordered: 30, pack_size: null, closed_reason: null },
+      { id: po.lines[0].id, item_id: hanger.id, item: 'LUS28', ordered: 100, received: 0, pack_size: 50, closed_reason: null },
+      { id: po.lines[1].id, item_id: hanger.id, item: 'LUS28', ordered: 30, received: 0, pack_size: null, closed_reason: null },
     ],
   });
   assert.equal((await incoming(db))[hanger.id], 130);
@@ -215,7 +215,7 @@ test('an edit fixes the PO\'s header and lines and adds a line, logged was → n
     lines: [
       { ...first, ordered: 80, pack_size: 40 },
       { ...second, item_id: other.id, item: 'HUS26' },
-      { id: edited.lines[2].id, item_id: hanger.id, item: 'LUS28', ordered: 5, pack_size: null, closed_reason: null },
+      { id: edited.lines[2].id, item_id: hanger.id, item: 'LUS28', ordered: 5, received: 0, pack_size: null, closed_reason: null },
     ],
   });
   assert.deepEqual(await incoming(db), { [hanger.id]: 85, [other.id]: 30 });
@@ -310,4 +310,226 @@ test('an edit may list a closed line unchanged, so its refusals number lines as 
   const edited = await edit([keep(first), keep(second, { ordered: 40 })]);
   assert.deepEqual(edited.lines, [closed.lines[0], { ...second, ordered: 40 }], 'the closed line stays closed');
   assert.equal((await incoming(db))[hanger.id], 40);
+});
+
+// ---- Receiving (stories 33–41) ----
+
+// One receipt line as the Receive page sends it, with any fields given.
+const got = (line, fields = {}) => ({ po_line_id: line.id, item_id: line.item_id, quantity: null, packs: null,
+  pack_size: null, pack_kind: null, loose: null, ...fields });
+
+// Receives `lines` against `po` as Ann, with the version the screen read.
+function receive(ctx, po, lines, { version = po.version, bol = null, key = crypto.randomUUID() } = {}) {
+  return call(ctx.db, 'receive', ctx.ann.id, key, po.id, version, null, bol, JSON.stringify(lines));
+}
+
+async function pos(db) {
+  return as(db, APP, async (app) => (await app.query('SELECT inv.po_json(id) AS po FROM inv.purchase_orders ORDER BY id')).rows
+    .map((r) => r.po));
+}
+
+test('a partial delivery against a PO leaves the rest incoming and marks the PO partial, logged once (S14, story 38)', async () => {
+  const ctx = await withPo();
+  const { db, hanger, po } = ctx;
+  const receipt = await receive(ctx, po, [got(po.lines[0], { quantity: 40 })], { bol: ' BOL 77 ' });
+  assert.deepEqual(receipt, {
+    id: receipt.id, po_id: po.id, po_number: '4501', supplier: 'Simpson', bol: 'BOL 77',
+    lines: [{ id: receipt.lines[0].id, po_line: 1, item_id: hanger.id, item: 'LUS28', quantity: 40,
+      packs: null, pack_size: null, pack_kind: null, loose: null }],
+    pack_sizes_added: [],
+  });
+  assert.equal((await incoming(db))[hanger.id], 60 + 30);
+  const [now] = await pos(db);
+  assert.equal(now.version, po.version + 1, 'a receipt moves its PO on, so a second screen cannot receive it again unseen');
+  assert.equal(now.status, 'partial');
+  assert.deepEqual(now.lines.map((l) => l.received), [40, 0]);
+
+  const log = (await logRows(db)).at(-1);
+  assert.equal(log.action, 'receive');
+  assert.equal(log.target_table, 'receipts');
+  assert.equal(Number(log.target_id), receipt.id);
+  assert.deepEqual(log.new_value, receipt);
+});
+
+test('impossible receipts are refused with a plain message, and none leaves a row (stories 35, 36)', async () => {
+  const ctx = await withPo();
+  const { db, ann, supplier, hanger, po, reason } = ctx;
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  const retired = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HU210' });
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), retired.id, 1);
+  const elsewhere = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4502', '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 1 }]));
+  const closed = await call(db, 'close_po_line', ann.id, crypto.randomUUID(), po.lines[1].id, po.version, reason.id);
+  const [first, second] = closed.lines;
+  const loose = (fields) => ({ po_line_id: null, item_id: hanger.id, quantity: 10, ...fields });
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['no lines', [], 'IV400', /^Nothing to receive/],
+    ['an item that is not its PO line\'s (story 36)', [got(first, { item_id: other.id, quantity: 5 })], 'IV400',
+      /^Line 1: that PO line orders LUS28, not HUS26\.$/],
+    ['a closed PO line', [got(first, { quantity: 5 }), got(second, { quantity: 5 })], 'IV422', /^Line 2: that PO line is closed\. Re-open it/],
+    ['another PO\'s line', [got(elsewhere.lines[0], { quantity: 5 })], 'IV400', /^Line 1: that line is not on this PO/],
+    ['a retired item not on the PO', [loose({ item_id: retired.id })], 'IV422', /^Line 1: HU210 is retired/],
+    ['an item not in the catalog', [loose({ item_id: 999999 })], 'IV400', /^Line 1: pick the item/],
+    ['loose pieces but no total', [got(first, { loose: 5 })], 'IV400', /^Line 1: the pieces received are a whole number above 0/],
+    ['pieces that are not whole', [got(first, { quantity: 2.5 })], 'IV400', /^Line 1: the pieces received/],
+    ['packs without a pack size', [got(first, { quantity: 50, packs: 1 })], 'IV400', /^Line 1: give both the packs and the pack size/],
+    ['a pack size without packs', [got(first, { quantity: 50, pack_size: 50, pack_kind: 'carton' })], 'IV400', /^Line 1: give both/],
+    ['a pack size of 0', [got(first, { quantity: 0, packs: 1, pack_size: 0, pack_kind: 'carton' })], 'IV400', /^Line 1: the pieces received/],
+    ['a pack size of 0 with pieces', [got(first, { quantity: 5, packs: 1, pack_size: 0, pack_kind: 'carton' })], 'IV400', /^Line 1: a pack size is a whole number/],
+    ['negative loose pieces', [got(first, { quantity: 5, loose: -1 })], 'IV400', /^Line 1: loose pieces are a whole number, 0 or more/],
+    ['a kind the family does not come in', [got(first, { quantity: 50, packs: 1, pack_size: 50, pack_kind: 'box' })], 'IV400',
+      /^Line 1: a pack size for Hangers is a carton\.$/],
+    ['packs × size + loose that does not add up (story 35)', [got(first, { quantity: 150, packs: 3, pack_size: 50, loose: 4, pack_kind: 'carton' })],
+      'IV400', /^Line 1: 3 × 50 \+ 4 loose is 154, not the 150 pieces received\.$/],
+  ];
+  for (const [label, lines, code, message] of cases) {
+    const err = await refused(receive(ctx, closed, lines), code, label);
+    assert.match(err.message, message, label);
+  }
+  await refused(receive(ctx, closed, [got(first, { quantity: 5 })], { version: po.version }), 'IV409', 'a stale screen');
+  const bothOrNeither = (poId, supplierId) => call(db, 'receive', ann.id, crypto.randomUUID(), poId, closed.version, supplierId, null,
+    JSON.stringify([loose({})]));
+  assert.match((await refused(bothOrNeither(null, null), 'IV400', 'no PO and no supplier')).message, /Pick the supplier/);
+  assert.match((await refused(bothOrNeither(po.id, supplier.id), 'IV400', 'a PO and a supplier')).message, /takes its PO's supplier/);
+  assert.match((await refused(receive(ctx, closed, [got(first, { quantity: 5 })], { bol: 'x'.repeat(61) }), 'IV400', 'a long BOL')).message,
+    /at most 60 characters/);
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  assert.equal((await incoming(db))[hanger.id], 100 + 1, 'no refusal receives anything');
+});
+
+test('a delivery may bring more than ordered and items not on the PO, and a receipt needs no PO (stories 40, 41)', async () => {
+  const ctx = await withPo();
+  const { db, ann, supplier, hanger, po } = ctx;
+  const extra = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  const receipt = await receive(ctx, po, [
+    got(po.lines[0], { quantity: 120, packs: 2, pack_size: 50, pack_kind: 'carton', loose: 20 }),
+    got(po.lines[1], { quantity: 30 }),
+    { po_line_id: null, item_id: extra.id, quantity: 6 },
+  ]);
+  assert.deepEqual(receipt.lines.map((l) => [l.po_line, l.item, l.quantity, l.packs, l.pack_size, l.pack_kind, l.loose]), [
+    [1, 'LUS28', 120, 2, 50, 'carton', 20], [2, 'LUS28', 30, null, null, null, null], [null, 'HUS26', 6, null, null, null, null]]);
+  const [now] = await pos(db);
+  assert.equal(now.status, 'finished', 'nothing is left to arrive');
+  assert.deepEqual(now.lines.map((l) => l.received), [120, 30]);
+  assert.deepEqual(await incoming(db), { [hanger.id]: 0, [extra.id]: 0 }, 'the 20 over on line 1 is not negative incoming');
+
+  const walkIn = await call(db, 'receive', ann.id, crypto.randomUUID(), null, null, supplier.id, null,
+    JSON.stringify([{ item_id: extra.id, quantity: 4 }]));
+  assert.deepEqual([walkIn.po_id, walkIn.po_number, walkIn.supplier, walkIn.lines[0].po_line], [null, null, 'Simpson', null]);
+});
+
+test('a pack size typed on a receipt line becomes the size on file only if the item has none of that kind (story 19 = B)', async () => {
+  const ctx = await withPo();
+  const { db, hanger, po } = ctx;
+  const sizes = async () => as(db, APP, async (app) => (await app.query(
+    'SELECT item_id::int, kind, pieces FROM inv.pack_sizes ORDER BY id')).rows);
+  const carton = (quantity, pieces) => got(po.lines[0], { quantity, packs: 1, pack_size: pieces, pack_kind: 'carton' });
+
+  const first = await receive(ctx, po, [carton(50, 50), carton(25, 25)]);
+  assert.deepEqual(first.pack_sizes_added, [{ item: 'LUS28', kind: 'carton', pieces: 50 }]);
+  assert.deepEqual(await sizes(), [{ item_id: hanger.id, kind: 'carton', pieces: 50 }],
+    'the first size typed is kept; the second stays on its own line');
+
+  const [now] = await pos(db);
+  const second = await receive(ctx, now, [carton(10, 10)]);
+  assert.deepEqual(second.pack_sizes_added, []);
+  assert.deepEqual((await sizes()).map((s) => s.pieces), [50], 'a different size on the spot changes nothing on file');
+  assert.equal(second.lines[0].pack_size, 10, 'the line keeps its own copy');
+  assert.equal((await logRows(db)).filter((l) => l.action === 'add pack size').length, 0, 'logged with the receipt, not apart');
+});
+
+test('a retry of a receipt with the same key receives once and answers the same receipt (S22)', async () => {
+  const ctx = await withPo();
+  const key = crypto.randomUUID();
+  const first = await receive(ctx, ctx.po, [got(ctx.po.lines[0], { quantity: 40 })], { key });
+  assert.deepEqual(await receive(ctx, ctx.po, [got(ctx.po.lines[0], { quantity: 40 })], { key }), first);
+  assert.equal((await incoming(ctx.db))[ctx.hanger.id], 90);
+});
+
+test('a receipt for a family not live in Inventory is refused, whatever writes it (story 57)', async () => {
+  const { db, ann, supplier } = await withHanger();
+  const plate = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'plates', { sku: 'MT20 3x4' });
+  const err = await refused(call(db, 'receive', ann.id, crypto.randomUUID(), null, null, supplier.id, null,
+    JSON.stringify([{ item_id: plate.id, quantity: 5 }])), 'IV422', 'plates are off');
+  assert.equal(err.message, 'The Plates family is not live in Inventory yet, so it takes no POs, receipts or counts.');
+  await as(db, null, async (owner) => {
+    const { rows: [{ id }] } = await owner.query('INSERT INTO inv.receipts (supplier_id) VALUES ($1) RETURNING id', [supplier.id]);
+    const { rows: [{ log }] } = await owner.query('SELECT max(id) AS log FROM inv.activity_log');
+    await refused(owner.query(`INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, receipt_id)
+      VALUES ($1, 5, 'receipt', now(), $2, $3)`, [plate.id, log, id]), 'IV422', 'a direct insert for plates');
+  });
+});
+
+test('lumber is received in pieces and counts against its PO line in linear feet (Q14)', async () => {
+  const ctx = await withHanger();
+  const { db, ann, supplier } = ctx;
+  await goLive(db, 'lumber');
+  const board = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 16 });
+  const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4505', '2026-10-03',
+    JSON.stringify([{ item_id: board.id, ordered: 1280 }]));
+  await receive(ctx, po, [got(po.lines[0], { quantity: 40, packs: 1, pack_size: 40, pack_kind: 'pack' })]);
+  const [now] = await pos(db);
+  assert.equal(now.lines[0].received, 640, '40 boards × 16′');
+  assert.equal((await incoming(db))[board.id], 640);
+});
+
+test('a PO line with receipts keeps its item, and its amount never goes below what arrived (PO edit rule 4)', async () => {
+  const ctx = await withPo();
+  const { db, ann, supplier, hanger, po, reason } = ctx;
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  await receive(ctx, po, [got(po.lines[0], { quantity: 40 })]);
+  let [now] = await pos(db);
+  const edit = (lines) => call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, now.version, supplier.id, '4501', '2026-10-03',
+    JSON.stringify(lines));
+  const [first, second] = now.lines;
+
+  const err = await refused(edit([keep(first, { item_id: other.id }), keep(second)]), 'IV422', 'a new item on a line with receipts');
+  assert.equal(err.message, 'Line 1: 40 pieces of LUS28 have arrived on this line, so its item stays.');
+  const low = await refused(edit([keep(first, { ordered: 39 }), keep(second)]), 'IV422', 'below what arrived');
+  assert.equal(low.message, 'Line 1: 40 pieces have arrived on this line, so it orders at least 40.');
+
+  const edited = await edit([keep(first, { ordered: 40 }), keep(second, { item_id: other.id })]);
+  assert.deepEqual(edited.lines.map((l) => [l.item, l.ordered, l.received]), [['LUS28', 40, 40], ['HUS26', 30, 0]],
+    'down to what arrived, and a line with nothing received may change its item');
+  [now] = await pos(db);
+  await call(db, 'close_po_line', ann.id, crypto.randomUUID(), first.id, now.version, reason.id);
+  assert.deepEqual(await incoming(db), { [hanger.id]: 0, [other.id]: 30 });
+
+  // The guarantee: even the owner cannot move a line with receipts to another item or below what arrived.
+  await as(db, null, async (owner) => {
+    await refused(owner.query('UPDATE inv.po_lines SET item_id = $1 WHERE id = $2', [other.id, first.id]), 'IV422', 'a direct item change');
+    await refused(owner.query('UPDATE inv.po_lines SET ordered = 1 WHERE id = $1', [first.id]), 'IV422', 'a direct amount change');
+  });
+});
+
+test('an item with receipts can no longer be renamed (story 107)', async () => {
+  const ctx = await withPo();
+  const { db, ann, hanger, po } = ctx;
+  const renamed = await call(db, 'rename_item', ann.id, crypto.randomUUID(), hanger.id, 1, { sku: 'LUS28Z' });
+  await receive(ctx, po, [got(po.lines[0], { quantity: 1 })]);
+  const err = await refused(call(db, 'rename_item', ann.id, crypto.randomUUID(), hanger.id, renamed.version, { sku: 'LUS28' }),
+    'IV422', 'renamed after a receipt');
+  assert.equal(err.message, 'LUS28Z has receipts, so its name stays.');
+  await as(db, null, async (owner) => {
+    await refused(owner.query("UPDATE inv.items SET sku = 'LUS28' WHERE id = $1", [hanger.id]), 'IV422', 'a direct rename');
+    await owner.query("UPDATE inv.items SET note = 'Kept dry' WHERE id = $1", [hanger.id]);
+    const { rows: [line] } = await owner.query('SELECT * FROM inv.ledger');
+    await refused(owner.query(`INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, receipt_id, packs, pack_size, pack_kind)
+      VALUES ($1, 5, 'receipt', now(), $2, $3, 1, 5, 'box')`, [hanger.id, line.action_id, line.receipt_id]), 'IV400', 'a hanger in boxes');
+  });
+});
+
+test('a receipt line with nothing filled in is skipped but still counted, so "Line n" is the nth row on the form', async () => {
+  const ctx = await withPo();
+  const { db, po } = ctx;
+  const [first, second] = po.lines;
+  const err = await refused(receive(ctx, po, [got(first), got(second, { quantity: 0 })]), 'IV400', 'row 2 has 0 pieces');
+  assert.match(err.message, /^Line 2: /);
+  const receipt = await receive(ctx, po, [got(first), got(second, { quantity: 30 })]);
+  assert.deepEqual(receipt.lines.map((l) => [l.po_line, l.quantity]), [[2, 30]]);
+  const [now] = await pos(db);
+  const none = await refused(receive(ctx, now, [got(first), got(second)]), 'IV400', 'nothing filled in');
+  assert.equal(none.message, 'Nothing to receive. Fill in the pieces that arrived.');
 });

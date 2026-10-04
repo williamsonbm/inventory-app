@@ -79,6 +79,11 @@ const CATALOG_CHANGES = {
   '/api/pos/edit': {
     fn: 'edit_po', args: (b) => [b.id, b.version, b.supplier_id, b.number, b.po_date, JSON.stringify(b.lines)], as: 'po',
   },
+  // A delivery against a PO (po_id and the version the screen read) or
+  // without one (supplier_id).
+  '/api/receipts/receive': {
+    fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines)], as: 'receipt',
+  },
   '/api/pos/close-line': { fn: 'close_po_line', args: (b) => [b.id, b.po_version, b.reason_id], as: 'po' },
   '/api/pos/reopen-line': { fn: 'reopen_po_line', args: (b) => [b.id, b.po_version], as: 'po' },
   '/api/lumber/redirect': {
