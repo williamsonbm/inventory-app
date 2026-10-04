@@ -89,6 +89,7 @@
       <button id="save">Save PO</button>
       <button type="button" class="ghost" id="cancel-edit" hidden>Cancel</button>
     </div>
+    <p class="sub" id="edit-note" hidden>A saved line is not removed here: cancel, then use Close… on the line.</p>
   </form>
 
   <datalist id="item-choices"></datalist>  <!-- the item lists of both forms -->
@@ -224,6 +225,7 @@
     el('form-title').textContent = po ? 'Edit PO ' + po.number + ' from ' + po.supplier : 'Enter a PO';
     el('save').textContent = po ? 'Save changes' : 'Save PO';
     el('cancel-edit').hidden = !po;
+    el('edit-note').hidden = !po;
     el('supplier').value = po ? po.supplier_id : '';
     el('number').value = po ? po.number : '';
     el('po-date').value = po ? po.po_date : today();
@@ -267,6 +269,10 @@
       for (const [n, tr] of [...el('lines').children].entries()) {
         const value = (f) => tr.querySelector('[data-f="' + f + '"]').value.trim();
         const number = (f) => (value(f) === '' ? null : Number(value(f)));
+        // A saved line is closed, never removed (PO edit rules, #81).
+        if (tr.dataset.id && !value('item')) {
+          throw new Error('Line ' + (n + 1) + ' is saved on this PO, so it is not removed here. Cancel, then use Close… on the line.');
+        }
         const item = lineItem(tr, value('item'));
         if (!item) throw new Error(pickRefusal(n + 1));
         lines.push({ id: tr.dataset.id ? Number(tr.dataset.id) : null, item_id: item.id,
