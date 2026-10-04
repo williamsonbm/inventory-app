@@ -226,7 +226,7 @@ test('reasons: the five the app relies on are there from the start; others are a
   assert.ok(listed.every((r) => r.active && r.built_in), 'the five start active and built in');
 
   const miscount = await call(db, 'add_reason', ann.id, crypto.randomUUID(), ' Miscounted ');
-  assert.deepEqual(miscount, { id: miscount.id, text: 'Miscounted', active: true, built_in: false, version: 1 });
+  assert.deepEqual(miscount, { id: miscount.id, text: 'Miscounted', active: true, built_in: false, entry: null, version: 1 });
   const retired = await call(db, 'retire_reason', ann.id, crypto.randomUUID(), miscount.id, 1);
   assert.deepEqual(retired, { ...miscount, active: false, version: 2 });
   assert.deepEqual((await call(db, 'unretire_reason', ann.id, crypto.randomUUID(), miscount.id, 2)),

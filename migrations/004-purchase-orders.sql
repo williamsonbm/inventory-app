@@ -27,6 +27,31 @@ ALTER TABLE inv.families ADD COLUMN order_unit text NOT NULL DEFAULT 'pieces'
 UPDATE inv.families SET order_unit = 'linear feet' WHERE code = 'lumber';
 ALTER TABLE inv.families ALTER COLUMN order_unit DROP DEFAULT;
 
+-- Whether a family's material comes back from a job site (design Q11):
+-- hangers, LVL and EWP do; plates and lumber are used up. Until step 4 adds
+-- the return entry, a return is a correction "Returned from job site" (Q7),
+-- and inv.correct refuses it for a family that is not returnable.
+ALTER TABLE inv.families ADD COLUMN returnable boolean NOT NULL DEFAULT false;
+UPDATE inv.families SET returnable = true WHERE code IN ('hangers', 'lvl', 'ewp');
+
+-- The one entry a reason is kept for, or none when any entry may use it
+-- (owner, Q31): a trim writes "Weathered – trimmed" itself (story 47), and
+-- only part 4's import writes "Opening balance (web app)". inv.checked_reason
+-- refuses such a reason anywhere else, and the pages leave it off their lists.
+ALTER TABLE inv.reasons ADD COLUMN entry text CHECK (entry IN ('trim', 'import'));
+UPDATE inv.reasons SET entry = 'trim' WHERE built_in AND text = 'Weathered – trimmed';
+UPDATE inv.reasons SET entry = 'import' WHERE built_in AND text = 'Opening balance (web app)';
+
+-- 003's inv.reason_json, with the entry, so a saved reason has the shape
+-- the reasons list has.
+CREATE OR REPLACE FUNCTION inv.reason_json(r inv.reasons) RETURNS jsonb
+LANGUAGE sql IMMUTABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT pg_catalog.jsonb_build_object(
+    'id', r.id, 'text', r.text, 'active', r.active, 'built_in', r.built_in, 'entry', r.entry, 'version', r.version)
+$$;
+
 -- A PO as entered when the office orders (S12). Who entered it and when come
 -- from its activity-log row (target purchase_orders, target_id its id).
 CREATE TABLE inv.purchase_orders (
@@ -80,7 +105,7 @@ DECLARE
 BEGIN
   SELECT fam.* INTO f FROM inv.items i JOIN inv.families fam ON fam.code = i.family WHERE i.id = NEW.item_id;
   IF FOUND AND NOT f.live THEN
-    RAISE EXCEPTION 'The % family is not live in Inventory yet, so it takes no POs, receipts or counts.', f.name
+    RAISE EXCEPTION 'The % family is not live in Inventory yet, so it takes no POs, receipts, corrections or counts.', f.name
       USING ERRCODE = 'IV422';
   END IF;
   RETURN NEW;
@@ -111,7 +136,7 @@ CREATE TABLE inv.ledger (
   id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   item_id      bigint NOT NULL REFERENCES inv.items (id),
   quantity     integer NOT NULL CHECK (quantity <> 0),
-  kind         text NOT NULL CHECK (kind IN ('receipt')),
+  kind         text NOT NULL CHECK (kind IN ('receipt', 'correction')),
   effective_at timestamptz NOT NULL,
   action_id    bigint NOT NULL REFERENCES inv.activity_log (id),
   receipt_id   bigint REFERENCES inv.receipts (id),
@@ -120,11 +145,14 @@ CREATE TABLE inv.ledger (
   pack_size    integer CHECK (pack_size > 0),
   pack_kind    text,
   loose        integer CHECK (loose >= 0),
+  reason_id    bigint REFERENCES inv.reasons (id),
+  note         text CHECK (note = inv.tidy(note) AND note <> ''),
   FOREIGN KEY (po_line_id, item_id) REFERENCES inv.po_lines (id, item_id),
   CHECK ((packs IS NULL) = (pack_size IS NULL) AND (packs IS NULL) = (pack_kind IS NULL)),
   CHECK ((packs IS NULL AND loose IS NULL) OR quantity = coalesce(packs * pack_size, 0) + coalesce(loose, 0)),
   CHECK (kind <> 'receipt' OR (quantity > 0 AND receipt_id IS NOT NULL)),
-  CHECK (po_line_id IS NULL OR receipt_id IS NOT NULL)
+  CHECK (po_line_id IS NULL OR receipt_id IS NOT NULL),
+  CHECK ((kind = 'correction') = (reason_id IS NOT NULL))
 );
 
 CREATE INDEX ledger_item_idx ON inv.ledger (item_id);
@@ -219,6 +247,8 @@ CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.purchase_orders FOR 
 -- The longest real tracking number is 34 characters (2026-10-04).
 CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.receipts FOR EACH ROW
   EXECUTE FUNCTION inv.check_lengths('bol', '60', 'A Bill of Lading or tracking number');
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.ledger FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('note', '200', 'A note');
 
 -- What has arrived against a PO line, in its family's order unit, as the
 -- line's amount ordered is: for lumber, pieces × length in linear feet
@@ -282,15 +312,20 @@ CREATE TRIGGER check_received BEFORE UPDATE OF item_id, ordered ON inv.po_lines
 -- incoming (story 32) is in the family's order unit. For each open PO line
 -- it is ordered − received, never below zero, so an over-delivery (story
 -- 41) takes nothing from another line. A closed line counts nothing.
+-- on_hand is in pieces: every ledger row of the item. Until part 3 adds
+-- counts, the ledger is all there is; part 3 starts it from the latest
+-- approved count instead.
 CREATE VIEW inv.item_figures AS
 SELECT i.id AS item_id,
-       coalesce(pg_catalog.sum(GREATEST(l.ordered - inv.received(l.id), 0)), 0)::integer AS incoming
+       coalesce(pg_catalog.sum(GREATEST(l.ordered - inv.received(l.id), 0)), 0)::integer AS incoming,
+       coalesce((SELECT pg_catalog.sum(g.quantity) FROM inv.ledger g WHERE g.item_id = i.id), 0)::integer AS on_hand
   FROM inv.items i
   LEFT JOIN inv.po_lines l ON l.item_id = i.id AND l.closed_reason_id IS NULL
  GROUP BY i.id;
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('enter PO', false), ('edit PO', false),
-  ('close PO line', false), ('re-open PO line', false), ('switch family live', true), ('receive', false);
+  ('close PO line', false), ('re-open PO line', false), ('switch family live', true), ('receive', false),
+  ('correct', false);
 
 -- 001's inv.finish_action, with one change: a change whose record is the
 -- same before and after, the version aside, is refused (owner, 2026-10-03).
@@ -431,6 +466,31 @@ BEGIN
 END
 $$;
 
+-- The reason picked for `what` ("A correction"), which must be on the list,
+-- in use (Settings → Reasons retires one) and not kept for another entry.
+CREATE FUNCTION inv.checked_reason(p_id bigint, what text) RETURNS inv.reasons
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  r inv.reasons;
+BEGIN
+  SELECT * INTO r FROM inv.reasons WHERE id = p_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION '% needs a reason from the list.', what USING ERRCODE = 'IV400';
+  END IF;
+  IF NOT r.active THEN
+    RAISE EXCEPTION '"%" is retired. Pick a reason in use.', r.text USING ERRCODE = 'IV400';
+  END IF;
+  IF r.entry = 'trim' THEN
+    RAISE EXCEPTION '"%" is for a trim. Use Trim on the LVL item.', r.text USING ERRCODE = 'IV422';
+  ELSIF r.entry = 'import' THEN
+    RAISE EXCEPTION '"%" is for the cutover import only.', r.text USING ERRCODE = 'IV422';
+  END IF;
+  RETURN r;
+END
+$$;
+
 -- Inventory → Receive → a PO line → Close: the line no longer counts as
 -- incoming (S15, story 39). The reason is picked from Settings → Reasons.
 CREATE FUNCTION inv.close_po_line(p_actor bigint, p_key uuid, p_line_id bigint, p_po_version integer, p_reason_id bigint)
@@ -451,13 +511,7 @@ BEGIN
   IF (x.line).closed_reason_id IS NOT NULL THEN
     RAISE EXCEPTION 'That line is already closed.' USING ERRCODE = 'IV422';
   END IF;
-  SELECT * INTO r FROM inv.reasons WHERE id = p_reason_id;
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Closing a line needs a reason from the list.' USING ERRCODE = 'IV400';
-  END IF;
-  IF NOT r.active THEN
-    RAISE EXCEPTION '"%" is retired. Pick a reason in use.', r.text USING ERRCODE = 'IV400';
-  END IF;
+  r := inv.checked_reason(p_reason_id, 'Closing a line');
   UPDATE inv.po_lines SET closed_reason_id = r.id WHERE id = p_line_id;
   RETURN inv.finish_action(a.log_id, (x.line).po_id, x.was, inv.po_json((x.line).po_id));
 END
@@ -883,7 +937,64 @@ BEGIN
 END
 $$;
 
+-- One correction as the app shows it, and as its log row records it.
+CREATE FUNCTION inv.correction_json(p_id bigint) RETURNS jsonb
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT pg_catalog.jsonb_build_object('id', g.id, 'item_id', g.item_id, 'item', inv.item_label(i),
+           'quantity', g.quantity, 'reason', r.text, 'note', g.note)
+    FROM inv.ledger g JOIN inv.items i ON i.id = g.item_id JOIN inv.reasons r ON r.id = g.reason_id
+   WHERE g.id = p_id
+$$;
+
+-- Inventory → Overview → an item → Correct on hand: changes its on hand by
+-- p_quantity pieces, + or −, with a reason (S46, story 44). The moment it
+-- takes effect is the save's; part 3's "before or after the count?" question
+-- changes that near a count.
+CREATE FUNCTION inv.correct(
+  p_actor bigint, p_key uuid, p_item_id bigint, p_quantity numeric, p_reason_id bigint, p_note text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  v_id bigint;
+  f inv.families;
+  r inv.reasons;
+  v_note text := nullif(inv.tidy(p_note), '');
+BEGIN
+  a := inv.claim_action(p_actor, p_key, 'correct', 'ledger', NULL,
+                        pg_catalog.jsonb_build_object('item_id', p_item_id, 'quantity', p_quantity,
+                                                      'reason_id', p_reason_id, 'note', p_note));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  SELECT fam.* INTO f FROM inv.items i JOIN inv.families fam ON fam.code = i.family WHERE i.id = p_item_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Pick the item from the catalog.' USING ERRCODE = 'IV400';
+  END IF;
+  IF p_quantity IS NULL OR p_quantity = 0 OR p_quantity <> pg_catalog.trunc(p_quantity) THEN
+    RAISE EXCEPTION 'Type the change in pieces: a whole number other than 0, such as 12 or -3.' USING ERRCODE = 'IV400';
+  END IF;
+  r := inv.checked_reason(p_reason_id, 'A correction');
+  IF r.text = 'Damaged – scrapped' AND p_quantity > 0 THEN
+    RAISE EXCEPTION '"%" takes pieces away: type a number below 0.', r.text USING ERRCODE = 'IV400';
+  ELSIF r.text = 'Returned from job site' AND p_quantity < 0 THEN
+    RAISE EXCEPTION '"%" adds pieces: type a number above 0.', r.text USING ERRCODE = 'IV400';
+  ELSIF r.text = 'Returned from job site' AND v_note IS NULL THEN
+    RAISE EXCEPTION 'Type the job number in the note, so the return can be traced.' USING ERRCODE = 'IV400';
+  ELSIF r.text = 'Returned from job site' AND NOT f.returnable THEN
+    RAISE EXCEPTION '% does not come back from a job site: it is used up on the job.', f.name USING ERRCODE = 'IV422';
+  END IF;
+  INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, reason_id, note)
+  VALUES (p_item_id, p_quantity, 'correction', pg_catalog.now(), a.log_id, r.id, v_note)
+  RETURNING id INTO v_id;
+  RETURN inv.finish_action(a.log_id, v_id, NULL, inv.correction_json(v_id));
+END
+$$;
+
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA inv FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION inv.correct(bigint, uuid, bigint, numeric, bigint, text) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.receive(bigint, uuid, bigint, integer, bigint, text, jsonb) TO inv_app;
 -- inv.po_json and inv.item_figures work out what arrived with inv.received.
 GRANT EXECUTE ON FUNCTION inv.received(bigint) TO inv_app;

@@ -44,7 +44,7 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   assert.equal(back.body.item.active, true);
 
   const { families, items } = await read(ctx, '/api/items');
-  assert.deepEqual(items, [{ ...back.body.item, incoming: 0 }], 'a list row also carries the item\'s figures');
+  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0 }], 'a list row also carries the item\'s figures');
   // EWP stays out of Inventory until step 5, so the family bar leaves it out.
   // The Planner's order, so the two family bars match (owner, 2026-10-02).
   // pack_kinds: what Settings → Pack sizes offers for each family's items.
@@ -271,7 +271,7 @@ test('Receive enters a PO, lists it, and the Overview shows its lines as Incomin
   // Story 57: until the owner switches hangers live, the database refuses the PO.
   const off = await change(ctx, '/api/pos/enter', po);
   assert.equal(off.status, 422);
-  assert.equal(off.body.error, 'The Hangers family is not live in Inventory yet, so it takes no POs, receipts or counts.');
+  assert.equal(off.body.error, 'The Hangers family is not live in Inventory yet, so it takes no POs, receipts, corrections or counts.');
 
   await goLive(ctx.db, 'hangers');
   const entered = await change(ctx, '/api/pos/enter', po);
@@ -366,5 +366,33 @@ test('Receive takes a delivery against a PO and one without; Incoming and the Ac
     ['receive', 'Simpson, no PO', 'added: 4 HUS26'],
     ['receive', 'PO 4501', 'added: 120 LUS28 on line 1 (2 cartons of 50 + 20 loose); 6 HUS26 not on the PO; Bill of Lading or tracking number B-77; '
       + 'carton size on file for LUS28: 50'],
+  ]);
+});
+
+test('Correct on hand changes an item\'s on hand with a reason; the Overview and the Activity Log follow (stories 44–46)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  await goLive(ctx.db, 'hangers');
+  const { reasons } = await read(ctx, '/api/reasons');
+  const reason = (text) => reasons.find((r) => r.text === text).id;
+  assert.deepEqual(reasons.filter((r) => r.entry).map((r) => [r.text, r.entry]).sort(),
+    [['Opening balance (web app)', 'import'], ['Weathered – trimmed', 'trim']], 'the page hides reasons kept for another entry (Q31)');
+
+  const returned = await change(ctx, '/api/items/correct',
+    { item_id: hanger.id, quantity: 6, reason_id: reason('Returned from job site'), note: 'Job 1234' });
+  assert.equal(returned.status, 200, returned.body.error);
+  const scrapped = await change(ctx, '/api/items/correct',
+    { item_id: hanger.id, quantity: -2, reason_id: reason('Damaged – scrapped'), note: null });
+  assert.equal(scrapped.status, 200, scrapped.body.error);
+  assert.equal(scrapped.body.correction.quantity, -2);
+  const refusedOne = await change(ctx, '/api/items/correct', { item_id: hanger.id, quantity: 3, reason_id: null, note: null });
+  assert.deepEqual([refusedOne.status, refusedOne.body.error], [400, 'A correction needs a reason from the list.']);
+
+  const { items } = await read(ctx, '/api/items');
+  assert.equal(items.find((i) => i.id === hanger.id).on_hand, 4);
+  const { entries } = await read(ctx, '/api/activity');
+  assert.deepEqual(entries.slice(0, 2).map((e) => [e.action, e.target, e.change]), [
+    ['correct', 'LUS28', 'added: on hand −2, Damaged – scrapped'],
+    ['correct', 'LUS28', 'added: on hand +6, Returned from job site; note: Job 1234'],
   ]);
 });

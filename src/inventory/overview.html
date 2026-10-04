@@ -24,7 +24,8 @@
   (owner, 2026-10-02). A row opens a panel below itself, where its stocking
   status, threshold and note are edited (owner, 2026-10-01). Incoming
   (story 32) comes from inv.item_figures; On hand and Reorder join it in a
-  later in part 2. The tasks sit in the grey bar, right of Family
+  later in part 2. "Correct on hand…" in the panel changes an item's on hand
+  with a reason (stories 44–46). The tasks sit in the grey bar, right of Family
   (#81, entry 7); Count and Month-end join them with part 3.
 
   Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
@@ -100,10 +101,12 @@
   let sort = null;        // { col, dir } a person chose; null is the family's own order
   let tab = null;         // the open size (lumber) or depth (LVL) tab
   let open = null;        // the id of the item whose row is open
-  let renaming = false;   // the open row shows the rename fields
+  let mode = null;        // what the open row's panel shows instead: 'rename' or 'correct'
+  let reasons = [];       // the reasons in use and not kept for another entry, for Correct on hand
 
-  const familyName = (code) => (families.find((f) => f.code === code) || { name: code }).name;
-  const orderUnit = (code) => (families.find((f) => f.code === code) || {}).order_unit;
+  const family = (code) => families.find((f) => f.code === code) || { name: code };
+  const familyName = (code) => family(code).name;
+  const orderUnit = (code) => family(code).order_unit;
 
   // Text with numbers in it compared as numbers, so 2x6 comes before 2x10
   // and 9-1/2 before 11-7/8.
@@ -162,10 +165,13 @@
     return { cols: ['item'].concat(v.cols.filter((c) => !COL[c].name)), order: ['item'] };
   };
 
+  const fetchItems = () => fetch('/api/items').then((r) => r.json())
+    .catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
   async function load() {
-    const body = await fetch('/api/items').then((r) => r.json()).catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
+    const [body, reasonList] = await Promise.all([fetchItems(), fetch('/api/reasons').then((r) => r.json()).catch(() => ({ ok: false }))]);
     if (!body.ok) return say(body.error, 'bad');
     ({ families, items, gradeOrder } = body);
+    reasons = reasonList.ok ? reasonList.reasons.filter((r) => r.active && !r.entry) : [];
     paintStatus();
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
       if (f === current) return;
@@ -173,7 +179,7 @@
       sort = null;
       tab = null;
       open = null;
-      renaming = false;
+      mode = null;
       el('add').hidden = true;
       // "+ Add item" adds to the family shown, so All has none to add to.
       el('add-open').disabled = f === 'all';
@@ -233,9 +239,10 @@
   }
 
   // The open row's panel: everything a person changes about an item, or the
-  // rename fields when an admin is renaming it.
+  // rename fields when an admin is renaming it, or the Correct on hand form.
   function panel(i) {
-    if (renaming) {
+    if (mode === 'correct') return correctForm(i);
+    if (mode === 'rename') {
       return '<form class="row" style="align-items:flex-end" data-rename><span class="field">Rename <b>' + esc(itemLabel(i)) + '</b></span>' +
         identityInputs(i.family, i) +
         '<button>Save name</button><button type="button" class="ghost" data-do="rename-cancel">Cancel</button></form>';
@@ -247,9 +254,32 @@
       : '<label class="field">Threshold <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '"></label>';
     const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" maxlength="200" value="' + esc(i.note || '') + '"></label>';
     const actions = (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
-      '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>';
+      '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>' +
+      (family(i.family).live ? '<button type="button" class="ghost" data-do="correct">Correct on hand…</button>' : '');
     return '<div class="row" style="align-items:flex-end">' + stocking + threshold + note + '<span>' + actions + '</span></div>';
   }
+
+  // Correct on hand: the change in pieces, + or −, with a reason, and what on
+  // hand becomes.
+  function correctForm(i) {
+    return '<form class="row" style="align-items:flex-end" data-correct><span class="field">Correct on hand of <b>' + esc(itemLabel(i)) + '</b>' +
+      '<span class="sub" data-f="after" style="padding:7px 0">' + fmtInt(i.on_hand) + ' now</span></span>' +
+      '<label class="field">Change, in pieces <input data-f="quantity" type="number" step="1" required style="width:7em" placeholder="12 or -3"></label>' +
+      '<label class="field">Reason <select data-f="reason" required><option value="">Reason…</option>' +
+      reasons.map((r) => '<option value="' + r.id + '">' + esc(r.text) + '</option>').join('') +
+      '</select></label>' +
+      '<label class="field" style="flex:1;min-width:16em">Note (job number for a return) <input data-f="note" maxlength="200" autocomplete="off"></label>' +
+      '<button>Save correction</button><button type="button" class="ghost" data-do="correct-cancel">Cancel</button></form>';
+  }
+  // "40 now → 37" as the change is typed.
+  el('rows').addEventListener('input', (e) => {
+    const form = e.target.closest('[data-correct]');
+    if (!form) return;
+    const item = items.find((i) => i.id === open);
+    const change = Number(form.querySelector('[data-f="quantity"]').value);
+    form.querySelector('[data-f="after"]').textContent = fmtInt(item.on_hand) + ' now' +
+      (Number.isInteger(change) && change ? ' → ' + fmtInt(item.on_hand + change) : '');
+  });
 
   function paint() {
     const typing = AppHeader.typingIn(el('rows'));
@@ -274,17 +304,21 @@
 
   // Runs one change. On a stale save, the refusal carries the current item,
   // and the table shows it, so the other person's change is visible, never lost.
-  async function save(route, body, done) {
+  // `apply` takes the reply into the table and gives `done` what it saved;
+  // by default the reply is the changed item.
+  async function save(route, body, done, apply = putItem) {
     say('');
     try {
-      const { item } = await send(route, body);
-      items = items.some((i) => i.id === item.id) ? items.map((i) => (i.id === item.id ? item : i)) : items.concat(item);
-      say(done(item), 'ok');
+      say(done(await apply(await send(route, body))), 'ok');
     } catch (err) {
       if (err.current) items = items.map((i) => (i.id === err.current.id ? err.current : i));
-      say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done) : null);
+      say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done, apply) : null);
     }
     paint();
+  }
+  function putItem({ item }) {
+    items = items.some((i) => i.id === item.id) ? items.map((i) => (i.id === item.id ? item : i)) : items.concat(item);
+    return item;
   }
   const itemOf = (target) => items.find((i) => String(i.id) === target.closest('tr').dataset.id);
 
@@ -306,7 +340,10 @@
     const tr = e.target.closest('tr');
     if (!tr) return;
     const what = e.target.dataset && e.target.dataset.do;
-    if (what === 'rename' || what === 'rename-cancel') { renaming = what === 'rename'; return paint(); }
+    if (['rename', 'correct', 'rename-cancel', 'correct-cancel'].includes(what)) {
+      mode = what.endsWith('-cancel') ? null : what;
+      return paint();
+    }
     if (what === 'retire' || what === 'unretire') {
       const item = itemOf(e.target);
       return save(what === 'retire' ? '/api/items/retire' : '/api/items/unretire', { key: crypto.randomUUID(), id: item.id, version: item.version },
@@ -316,7 +353,7 @@
   });
   function toggle(id) {
     open = open === id ? null : id;
-    renaming = false;
+    mode = null;
     paint();
   }
 
@@ -331,16 +368,34 @@
   });
 
   el('rows').addEventListener('submit', (e) => {
+    if (e.target.matches('[data-correct]')) return correct(e);
     if (!e.target.matches('[data-rename]')) return;
     e.preventDefault();
     // The item as it is now: a save while the row was open changed its version.
     const item = items.find((i) => i.id === open);
     const was = itemLabel(item);
     save('/api/items/rename', { key: crypto.randomUUID(), id: item.id, version: item.version, identity: identityFrom(e.target) }, (i) => {
-      renaming = false;
+      mode = null;
       return was + ' is now ' + itemLabel(i) + '.';
     });
   });
+
+  // Saves a correction, then reads the catalog again, so on hand is the
+  // database's figure, never one added up here (a retry must not add twice).
+  function correct(e) {
+    e.preventDefault();
+    const f = (name) => e.target.querySelector('[data-f="' + name + '"]');
+    save('/api/items/correct', { key: crypto.randomUUID(), item_id: open, quantity: Number(f('quantity').value),
+      reason_id: Number(f('reason').value) || null, note: f('note').value.trim() || null },
+    (c) => c.item + ': on hand ' + (c.quantity > 0 ? '+' : '−') + fmtInt(Math.abs(c.quantity)) + ', ' + c.reason + '.' +
+      (c.reloaded ? '' : ' Reload the page to see the new on hand.'),
+    async ({ correction }) => {
+      mode = null;
+      const reload = await fetchItems();
+      if (reload.ok) items = reload.items;
+      return { ...correction, reloaded: reload.ok };
+    });
+  }
 
   el('head').addEventListener('click', (e) => {
     const col = e.target.dataset && e.target.dataset.sort;
@@ -408,7 +463,7 @@
         try { localStorage.setItem(TAB_KEY + i.family, tab); } catch { /* storage blocked: this visit only */ }
       }
       open = i.id;
-      renaming = false;
+      mode = null;
       return itemLabel(i) + ' was added as Special Order with no threshold. Its row is open below.';
     });
   });

@@ -41,7 +41,7 @@ async function listCatalog(database) {
        ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`),
     database.read(`
       SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
-             i.active, i.version, f.incoming
+             i.active, i.version, f.incoming, f.on_hand
         FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
        ORDER BY i.family, i.sku, i.product, i.size, i.grade, i.length_ft`),
   ]);
@@ -83,6 +83,10 @@ const CATALOG_CHANGES = {
   // without one (supplier_id).
   '/api/receipts/receive': {
     fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines)], as: 'receipt',
+  },
+  // Inventory → Overview → an item → Correct on hand: a change in pieces, + or −.
+  '/api/items/correct': {
+    fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note], as: 'correction',
   },
   '/api/pos/close-line': { fn: 'close_po_line', args: (b) => [b.id, b.po_version, b.reason_id], as: 'po' },
   '/api/pos/reopen-line': { fn: 'reopen_po_line', args: (b) => [b.id, b.po_version], as: 'po' },
@@ -129,7 +133,7 @@ const SETTINGS_LISTS = {
   },
   '/api/reasons': {
     as: 'reasons',
-    sql: 'SELECT id::int, text, active, built_in, version FROM inv.reasons ORDER BY active DESC, pg_catalog.lower(text)',
+    sql: 'SELECT id::int, text, active, built_in, entry, version FROM inv.reasons ORDER BY active DESC, pg_catalog.lower(text)',
   },
   // Every depth an LVL item has, with its threshold if one was ever saved;
   // a depth never saved has no version yet.

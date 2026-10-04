@@ -70,6 +70,7 @@ const TARGET_NAMES = {
   lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
   purchase_orders: (_item, row) => `PO ${row.number}`,
   receipts: (_item, row) => (row.po_number ? `PO ${row.po_number}` : `${row.supplier}, no PO`),
+  ledger: (_item, row) => row.item,
   families: (_item, row) => row.name,
 };
 const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
@@ -88,6 +89,8 @@ const ADDED = {
   lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
   purchase_orders: (row) => `${row.supplier}, dated ${row.po_date}, ${row.lines.length} line${row.lines.length === 1 ? '' : 's'}`,
   receipts: describeReceipt,
+  ledger: (row) => `on hand ${row.quantity > 0 ? '+' : '−'}${Math.abs(row.quantity)}, ${row.reason}`
+    + (row.note ? `; note: ${row.note}` : ''),
 };
 
 // What a receipt brought, line by line, with the PO line each went on and

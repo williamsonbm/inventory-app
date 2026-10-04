@@ -173,7 +173,8 @@
     const got = await refresh(['/api/suppliers', '/api/reasons']);
     if (!got) return;
     const [suppliers, reasonList] = got;
-    reasons = reasonList.reasons.filter((r) => r.active);
+    // Reasons in use, less those kept for another entry (a trim, the import).
+    reasons = reasonList.reasons.filter((r) => r.active && !r.entry);
     const supplierChoices = '<option value="">Pick one…</option>' +
       suppliers.suppliers.map((s) => '<option value="' + s.id + '">' + esc(s.name) + '</option>').join('');
     el('supplier').innerHTML = supplierChoices;

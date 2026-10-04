@@ -54,7 +54,7 @@ test('a PO line for a family not live in Inventory is refused, whatever writes i
   const before = (await logRows(db)).length;
   const err = await refused(call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4502', '2026-10-03',
     JSON.stringify([{ item_id: hanger.id, ordered: 10 }, { item_id: plate.id, ordered: 5 }])), 'IV422', 'plates are off');
-  assert.equal(err.message, 'The Plates family is not live in Inventory yet, so it takes no POs, receipts or counts.');
+  assert.equal(err.message, 'The Plates family is not live in Inventory yet, so it takes no POs, receipts, corrections or counts.');
   assert.equal((await logRows(db)).length, before, 'nothing saved: no log row');
   assert.deepEqual(await incoming(db), { [hanger.id]: 0, [plate.id]: 0 }, 'nothing saved: no line counts as incoming');
 
@@ -453,7 +453,7 @@ test('a receipt for a family not live in Inventory is refused, whatever writes i
   const plate = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'plates', { sku: 'MT20 3x4' });
   const err = await refused(call(db, 'receive', ann.id, crypto.randomUUID(), null, null, supplier.id, null,
     JSON.stringify([{ item_id: plate.id, quantity: 5 }])), 'IV422', 'plates are off');
-  assert.equal(err.message, 'The Plates family is not live in Inventory yet, so it takes no POs, receipts or counts.');
+  assert.equal(err.message, 'The Plates family is not live in Inventory yet, so it takes no POs, receipts, corrections or counts.');
   await as(db, null, async (owner) => {
     const { rows: [{ id }] } = await owner.query('INSERT INTO inv.receipts (supplier_id) VALUES ($1) RETURNING id', [supplier.id]);
     const { rows: [{ log }] } = await owner.query('SELECT max(id) AS log FROM inv.activity_log');
