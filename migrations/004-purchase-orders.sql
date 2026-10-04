@@ -85,6 +85,49 @@ $$;
 CREATE TRIGGER check_family_live BEFORE INSERT OR UPDATE OF item_id ON inv.po_lines
   FOR EACH ROW EXECUTE FUNCTION inv.check_item_family_live();
 
+-- Every text a person types has a length limit (owner, 2026-10-03): about
+-- twice the longest real value, or a published limit (a name 70, the UK
+-- government full-name standard; an email 254, RFC 5321). A trigger, so it
+-- holds whatever writes the row, 001-003's functions and imports included.
+-- Its arguments are triples: column, limit, the words for the refusal. On an
+-- update a column is checked only if it changed, so a longer value saved
+-- before this migration never blocks another change to its row.
+CREATE FUNCTION inv.check_lengths() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_new jsonb := pg_catalog.to_jsonb(NEW);
+  v_old jsonb := CASE WHEN TG_OP = 'UPDATE' THEN pg_catalog.to_jsonb(OLD) END;
+  i integer := 0;
+BEGIN
+  WHILE i < TG_NARGS LOOP
+    IF pg_catalog.char_length(v_new ->> TG_ARGV[i]) > TG_ARGV[i + 1]::integer
+       AND (v_old ->> TG_ARGV[i]) IS DISTINCT FROM (v_new ->> TG_ARGV[i]) THEN
+      RAISE EXCEPTION '% has at most % characters.', TG_ARGV[i + 2], TG_ARGV[i + 1] USING ERRCODE = 'IV400';
+    END IF;
+    i := i + 3;
+  END LOOP;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.users FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('email', '254', 'An email address', 'name', '70', 'A name');
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.items FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('sku', '30', 'A SKU', 'product', '60', 'An LVL product',
+    'size', '10', 'An LVL depth', 'grade', '20', 'A grade', 'note', '200', 'A note');
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.suppliers FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('name', '60', 'A supplier name');
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.reasons FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('text', '60', 'A reason');
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.lumber_purchasable_lengths FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('grade', '20', 'A grade');
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.lumber_grade_redirects FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('from_grade', '20', 'A grade', 'to_grade', '20', 'A grade');
+CREATE TRIGGER check_lengths BEFORE INSERT OR UPDATE ON inv.purchase_orders FOR EACH ROW
+  EXECUTE FUNCTION inv.check_lengths('number', '20', 'A PO number');
+
 -- The figures worked out from the records, never stored (#81, "Calculated
 -- figures live in one place"): one row per item. The Overview reads it now;
 -- the rest of part 2 adds on hand, available and reorder here, and part 4's

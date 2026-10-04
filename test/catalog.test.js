@@ -584,3 +584,44 @@ test('a save that changes nothing is refused on every edit, so it leaves no log 
   }
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
 });
+
+test('every text a person types has a length limit, refused with a plain message (owner, 2026-10-03)', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const supplier = await call(db, 'add_supplier', ann.id, crypto.randomUUID(), 'Simpson');
+  const hanger = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LUS28' });
+  await as(db, null, (owner) => owner.query("SELECT inv.set_family_live('ann@example.com', 'hangers')"));
+  const x = (n) => 'x'.repeat(n);
+  const key = () => crypto.randomUUID();
+  const po = (number) => call(db, 'enter_po', ann.id, key(), supplier.id, number, '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 1 }]));
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['add_user', [`${x(243)}@example.com`, 'Bob Ray', HASH], 'An email address has at most 254 characters.'],
+    ['add_user', ['bob@example.com', x(71), HASH], 'A name has at most 70 characters.'],
+    ['add_item', ['hangers', { sku: x(31) }], 'A SKU has at most 30 characters.'],
+    ['add_item', ['lvl', { product: x(61), size: '14', length_ft: 48 }], 'An LVL product has at most 60 characters.'],
+    ['add_item', ['lvl', { product: '2.1 RigidLam LVL 1-3/4', size: x(11), length_ft: 48 }], 'An LVL depth has at most 10 characters.'],
+    ['add_item', ['lumber', { size: '2x4', grade: x(21), length_ft: 8 }], 'A grade has at most 20 characters.'],
+    ['edit_item', [hanger.id, 1, { note: x(201) }], 'A note has at most 200 characters.'],
+    ['add_supplier', [x(61)], 'A supplier name has at most 60 characters.'],
+    ['add_reason', [x(61)], 'A reason has at most 60 characters.'],
+    ['set_lumber_lengths', ['2x4', x(21), null, [8]], 'A grade has at most 20 characters.'],
+    ['set_grade_redirect', ['2x4', '#2', null, x(21)], 'A grade has at most 20 characters.'],
+  ];
+  for (const [fn, args, message] of cases) {
+    const err = await refused(call(db, fn, ann.id, key(), ...args), 'IV400', message);
+    assert.equal(err.message, message);
+  }
+  assert.equal((await refused(po(x(21)), 'IV400', 'a PO number of 21')).message, 'A PO number has at most 20 characters.');
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  assert.equal((await po(x(20))).number, x(20), 'a PO number of exactly 20 saves');
+
+  // A longer note saved before the limits existed never blocks another change.
+  await as(db, null, (owner) => owner.query(`ALTER TABLE inv.items DISABLE TRIGGER check_lengths;
+    UPDATE inv.items SET note = repeat('x', 250) WHERE id = ${hanger.id};
+    ALTER TABLE inv.items ENABLE TRIGGER check_lengths;`));
+  const retired = await call(db, 'retire_item', ann.id, key(), hanger.id, 2);
+  assert.equal(retired.note.length, 250);
+});

@@ -58,7 +58,7 @@
     <h2 style="margin:8px 0" id="form-title">Enter a PO</h2>
     <div class="row" style="align-items:flex-end">
       <label class="field">Supplier <select id="supplier" required></select></label>
-      <label class="field">PO number <input id="number" required autocomplete="off"></label>
+      <label class="field">PO number <input id="number" required autocomplete="off" maxlength="20"></label>
       <label class="field">PO date <input id="po-date" type="date" required></label>
     </div>
     <div class="tw" style="margin-top:10px"><table class="one-line">
@@ -87,7 +87,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, itemLabel, today } = AppHeader;
+  const { send, say, itemLabel, today, unitShort } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -101,7 +101,7 @@
   let closing = null;   // the id of the line whose Close asks for a reason
 
   const family = (code) => families.find((f) => f.code === code);
-  const unitOf = (item) => (family(item.family).order_unit === 'linear feet' ? 'LF' : 'pieces');
+  const unitOf = (item) => unitShort(family(item.family).order_unit);
   // An item as the item box offers it: under All, its family first, so a
   // plate and a hanger with the same SKU stay two choices. Either form is
   // read back, so a line typed before the family bar changed still matches.

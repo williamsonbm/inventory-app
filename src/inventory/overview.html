@@ -81,7 +81,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, itemLabel } = AppHeader;
+  const { send, say, itemLabel, unitShort } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -127,10 +127,12 @@
     // Under All, an LVL row says where its threshold is instead of "not set".
     threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold,
       cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
-    // What open POs still bring, in the family's order unit: linear feet
-    // for lumber (Q14), pieces otherwise. None shows blank, not 0.
-    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => (i.incoming
-      ? fmtInt(i.incoming) + (orderUnit(i.family) === 'linear feet' ? ' LF' : '') : '') },
+    // What open POs still bring, in the family's order unit: "1,280 LF" for
+    // lumber (Q14); pieces go unlabeled (owner, 2026-10-03). None shows blank, not 0.
+    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => {
+      const unit = unitShort(orderUnit(i.family));
+      return i.incoming ? fmtInt(i.incoming) + (unit === 'pieces' ? '' : ' ' + unit) : '';
+    } },
     // A marker only: the note itself shows when the row is open.
     note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
   };
@@ -243,7 +245,7 @@
     const threshold = (VIEWS[i.family] || {}).perDepth
       ? '<span class="field">Threshold <span class="sub" style="padding:7px 0">per depth, in Settings → LVL thresholds</span></span>'
       : '<label class="field">Threshold <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '"></label>';
-    const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" value="' + esc(i.note || '') + '"></label>';
+    const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" maxlength="200" value="' + esc(i.note || '') + '"></label>';
     const actions = (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
       '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>';
     return '<div class="row" style="align-items:flex-end">' + stocking + threshold + note + '<span>' + actions + '</span></div>';
@@ -365,13 +367,15 @@
 
   // The name fields of a family, as inputs, filled from `item` when given.
   // A field with fixed choices (lumber sizes) is picked from them, never typed.
+  // The longest each typed name field may be, as the database refuses (migration 004).
+  const MAX_LENGTH = { sku: 30, product: 60, size: 10, grade: 20 };
   function identityInputs(fam, item) {
     const f = families.find((x) => x.code === fam);
     const value = (field) => (item ? item[field] : '');
     const box = (field) => (f.choices && f.choices[field]
       ? '<select data-identity="' + field + '" required>' + f.choices[field].map((s) =>
         '<option' + (s === value(field) ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select>'
-      : '<input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : '') +
+      : '<input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : ' maxlength="' + MAX_LENGTH[field] + '"') +
         ' required autocomplete="off" value="' + esc(value(field)) + '">');
     return f.identity.map((field) => '<label class="field">' + esc(fieldLabel(fam, field)) + ' ' + box(field) + '</label>').join(' ');
   }
