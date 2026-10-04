@@ -1,12 +1,16 @@
 -- Step 3, part 2 (#81): POs and receiving. All of part 2 goes in this one
 -- file, built over several sessions and applied once part 2 is complete
 -- (owner, 2026-10-03). It holds POs, the Incoming figure, and the switch
--- that makes a family live in Inventory.
+-- that makes a family live in Inventory. Two changes reach every table:
+-- inv.finish_action refuses a save that changes nothing, and inv.check_lengths
+-- limits every text a person types.
 -- Source: docs/database-design.md, "Step 3 — inventory", tables 3, 8 and 9,
 -- and "How the numbers are calculated"; #81, "Live in Inventory".
--- Follows migration 001: every change is a SECURITY DEFINER function that
--- starts with inv.claim_action and ends with inv.finish_action; every name is
--- fully qualified; every refusal carries an IV code (listed in 001).
+-- Follows migration 001: every change starts with inv.claim_action and ends
+-- with inv.finish_action. Each change the app makes is a SECURITY DEFINER
+-- function; the owner's command inv.set_family_live is not, because only the
+-- owner's login runs it (as 003's inv.import_catalog). Every name is fully
+-- qualified; every refusal carries an IV code (listed in 001).
 
 -- Whether a family is live in Inventory (#81, "Live in Inventory: the
 -- cutover switch"). Off for every family: the database refuses every PO line
@@ -332,7 +336,7 @@ $$;
 -- holds (at most 2,147,483,647), so a mistyped huge number gets the plain
 -- refusal, not Postgres's "out of range". Ids are checked with it too; none
 -- comes near that.
-CREATE FUNCTION inv.is_count(p jsonb) RETURNS boolean
+CREATE FUNCTION inv.is_whole_above_zero(p jsonb) RETURNS boolean
 LANGUAGE sql IMMUTABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
@@ -399,7 +403,7 @@ DECLARE
   l inv.po_lines;
 BEGIN
   SELECT * INTO i FROM inv.items
-   WHERE id = CASE WHEN inv.is_count(r -> 'item_id') THEN (r ->> 'item_id')::bigint END;
+   WHERE id = CASE WHEN inv.is_whole_above_zero(r -> 'item_id') THEN (r ->> 'item_id')::bigint END;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Line %: pick the item from the catalog.', n USING ERRCODE = 'IV400';
   END IF;
@@ -407,11 +411,11 @@ BEGIN
     RAISE EXCEPTION 'Line %: % is retired. Un-retire it before you order it.', n, inv.item_label(i)
       USING ERRCODE = 'IV422';
   END IF;
-  IF NOT inv.is_count(r -> 'ordered') THEN
+  IF NOT inv.is_whole_above_zero(r -> 'ordered') THEN
     RAISE EXCEPTION 'Line %: the amount ordered is a whole number of % above 0.', n,
       (SELECT order_unit FROM inv.families WHERE code = i.family) USING ERRCODE = 'IV400';
   END IF;
-  IF coalesce(r -> 'pack_size', 'null') <> 'null' AND NOT inv.is_count(r -> 'pack_size') THEN
+  IF coalesce(r -> 'pack_size', 'null') <> 'null' AND NOT inv.is_whole_above_zero(r -> 'pack_size') THEN
     RAISE EXCEPTION 'Line %: a pack size is a whole number of pieces above 0, or blank.', n USING ERRCODE = 'IV400';
   END IF;
   l.item_id := i.id;
@@ -516,7 +520,7 @@ BEGIN
       CONTINUE;
     END IF;
     SELECT * INTO old FROM inv.po_lines
-     WHERE po_id = p_id AND id = CASE WHEN inv.is_count(r -> 'id') THEN (r ->> 'id')::bigint END;
+     WHERE po_id = p_id AND id = CASE WHEN inv.is_whole_above_zero(r -> 'id') THEN (r ->> 'id')::bigint END;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'Line %: that line is not on this PO.', n USING ERRCODE = 'IV400';
     END IF;

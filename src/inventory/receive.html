@@ -200,17 +200,24 @@
 
   // Reads the form into the request. An item typed but not picked from the
   // list stops here with the line's number; every other rule is the
-  // database's, which answers in the same words.
+  // database's, which answers in the same words. An empty new line is taken
+  // off the form first, so "Line n" is the nth row on screen, here and in the
+  // database's answer; one empty line goes back at the end for typing.
   function request() {
+    const empty = (tr) => !tr.dataset.id && [...tr.querySelectorAll('input')].every((i) => !i.value.trim());
+    [...el('lines').children].filter(empty).forEach((tr) => tr.remove());
     const lines = [];
-    for (const [n, tr] of [...el('lines').children].entries()) {
-      const value = (f) => tr.querySelector('[data-f="' + f + '"]').value.trim();
-      const number = (f) => (value(f) === '' ? null : Number(value(f)));
-      if (!tr.dataset.id && !value('item') && !value('ordered') && !value('pack')) continue;   // an empty new line is left out
-      const item = lineItem(tr, value('item'));
-      if (!item) throw new Error('Line ' + (n + 1) + ': pick the item from the list.');
-      lines.push({ id: tr.dataset.id ? Number(tr.dataset.id) : null, item_id: item.id,
-        ordered: number('ordered'), pack_size: number('pack') });
+    try {
+      for (const [n, tr] of [...el('lines').children].entries()) {
+        const value = (f) => tr.querySelector('[data-f="' + f + '"]').value.trim();
+        const number = (f) => (value(f) === '' ? null : Number(value(f)));
+        const item = lineItem(tr, value('item'));
+        if (!item) throw new Error('Line ' + (n + 1) + ': pick the item from the list.');
+        lines.push({ id: tr.dataset.id ? Number(tr.dataset.id) : null, item_id: item.id,
+          ordered: number('ordered'), pack_size: number('pack') });
+      }
+    } finally {
+      addLine();
     }
     const po = { key: crypto.randomUUID(), supplier_id: Number(el('supplier').value) || null,
       number: el('number').value, po_date: el('po-date').value, lines };
