@@ -182,6 +182,9 @@ th{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;letter-spa
 th.n,td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
 tr.jobs td{background:var(--surface-2);padding:12px 14px}
+/* Inventory → Receive: a PO's header row, and its lines indented under it. */
+tr.po-head td{background:var(--surface-2);font-weight:600}
+tr.po-line td:first-child{padding-left:28px}
 
 /* Sortable column headers (Plates buy list). */
 th.sortable{cursor:pointer;user-select:none;transition:color .15s}

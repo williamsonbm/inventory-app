@@ -99,7 +99,7 @@
     <button type="button" class="ghost" id="receive-no-po">Receive without a PO…</button>
   </div>
   <div class="tw"><table class="one-line">
-    <thead><tr><th>PO</th><th>Supplier</th><th>Date</th><th>Status</th><th>Item</th><th>Ordered</th><th>Received</th><th>Pack size</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th style="width:40%">Item</th><th>Ordered</th><th>Received</th><th>Pack size</th><th></th></tr></thead>
     <tbody id="pos"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
@@ -307,29 +307,32 @@
     }).finally(() => { el('save').disabled = false; });
   });
 
-  // One row per line, newest PO first; a PO's own cells and its Edit and
-  // Receive buttons show on its first line. The family bar shows only that
-  // family's lines. A finished PO shows only with "Show finished" ticked.
+  // Newest PO first: one shaded header row per PO (number, supplier, date,
+  // status, Edit and Receive), then its lines, each numbered by its place on
+  // the PO, closed lines counted, as refusals and the receive form number
+  // them. The family bar shows only that family's lines, under their PO's
+  // header. A finished PO shows only with "Show finished" ticked.
   const STATUS = { ordered: 'Ordered', partial: 'Partial', finished: 'Finished' };
   function paintPos() {
     let shown = 0;
     const showFinished = el('show-finished').checked;
     el('pos').innerHTML = pos.filter((po) => showFinished || po.status !== 'finished').map((po) => {
       const lines = po.lines.filter((l) => current === 'all' || itemById(l.item_id).family === current);
-      shown += lines.length ? 1 : 0;
+      if (!lines.length) return '';
+      shown++;
       const canReceive = po.lines.some((l) => !l.closed_reason) && !busy(po);
-      return lines.map((l, n) => {
-        const item = itemById(l.item_id);
-        return '<tr' + (l.closed_reason ? ' class="sub"' : '') + ' data-po="' + po.id + '" data-line="' + l.id + '">' +
-          (n ? '<td></td><td></td><td></td><td></td>'
-            : '<td>' + esc(po.number) + ' <button type="button" class="ghost" data-do="edit">Edit</button>' +
-                (canReceive ? ' <button type="button" class="ghost" data-do="receive">Receive</button>' : '') + '</td>' +
-              '<td>' + esc(po.supplier) + '</td><td>' + esc(po.po_date) + '</td><td>' + STATUS[po.status] + '</td>') +
-          '<td class="name">' + esc(choiceLabel(item)) + '</td>' +
-          '<td>' + amount(l.ordered, item) + '</td>' +
-          '<td>' + amount(l.received, item) + '</td>' +
-          '<td>' + (l.pack_size ?? '—') + '</td><td>' + lineAction(po, l) + '</td></tr>';
-      }).join('');
+      return '<tr class="po-head" data-po="' + po.id + '"><td colspan="5">PO ' + esc(po.number) + ' · ' +
+          esc(po.supplier) + ' · ' + esc(po.po_date) + ' · ' + STATUS[po.status] + '</td>' +
+          '<td><button type="button" class="ghost" data-do="edit">Edit</button>' +
+          (canReceive ? ' <button type="button" class="ghost" data-do="receive">Receive</button>' : '') + '</td></tr>' +
+        lines.map((l) => {
+          const item = itemById(l.item_id);
+          return '<tr class="po-line' + (l.closed_reason ? ' sub' : '') + '" data-po="' + po.id + '" data-line="' + l.id + '">' +
+            '<td>' + (po.lines.indexOf(l) + 1) + '</td><td class="name">' + esc(choiceLabel(item)) + '</td>' +
+            '<td>' + amount(l.ordered, item) + '</td>' +
+            '<td>' + amount(l.received, item) + '</td>' +
+            '<td>' + (l.pack_size ?? '—') + '</td><td>' + lineAction(po, l) + '</td></tr>';
+        }).join('');
     }).join('');
     el('count').textContent = shown + ' PO' + (shown === 1 ? '' : 's') + ' shown.';
   }
