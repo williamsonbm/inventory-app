@@ -56,6 +56,7 @@
 
   <div class="row" style="align-items:flex-end">
     <label class="field">Search <input id="search" type="search" autocomplete="off" placeholder="Name or note…"></label>
+    <div class="field">Reorder <span id="show-reorder" class="pills"></span></div>
     <div class="field">Show <span id="show-status" class="pills"></span></div>
     <label style="padding-bottom:6px"><input type="checkbox" id="show-retired"> Show retired</label>
     <button type="button" id="add-open" style="margin-left:auto" disabled>+ Add item</button>
@@ -69,6 +70,7 @@
   </form>
 
   <div id="tabs" class="pills" style="margin:12px 0" hidden></div>
+  <p id="depth" hidden></p>
 
   <div class="tw"><table class="one-line catalog">
     <colgroup id="cols"></colgroup>
@@ -76,7 +78,7 @@
     <tbody id="rows"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
-  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Incoming is what open POs still bring. Both are in linear feet (LF) for lumber, pieces for the rest.</p>
+  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Incoming is what open POs still bring. Threshold, On Hand and Incoming are in linear feet (LF) for lumber, pieces for the rest. Reorder is Short below zero, Low at or below the threshold, otherwise OK; LVL is Low by its depth's linear feet, shown above its lengths.</p>
 </div>
 
 <script src="/app-header.js"></script>
@@ -94,10 +96,18 @@
   const FIELD_LABELS = { sku: 'SKU', product: 'Product', size: 'Size', grade: 'Grade', length_ft: 'Length (ft)' };
   const fieldLabel = (family, field) => ((VIEWS[family] || {}).labels || {})[field] || FIELD_LABELS[field];
   const TAB_KEY = 'inventory.tab.';   // + family: the size or depth tab last open
+  const REORDER_KEY = 'inventory.reorder';   // 'all' when All was picked last
+  // Short first, then Low, then OK (story 52).
+  const REORDER_RANK = { Short: 0, Low: 1, OK: 2 };
 
   let families = [];
   let items = [];
   let gradeOrder = [];
+  let lvlDepths = [];
+  // The Overview opens on Short and Low items (story 53); All shows every
+  // item. The choice last made on this computer opens again (Q61).
+  let reorderOnly = true;
+  try { reorderOnly = localStorage.getItem(REORDER_KEY) !== 'all'; } catch { /* storage blocked */ }
   let current = null;     // the family the family bar shows, or 'all'
   const shown = new Set(STATUSES);
   let sort = null;        // { col, dir } a person chose; null is the family's own order
@@ -130,6 +140,17 @@
   };
   // on_hand comes in pieces; lumber's order unit is linear feet.
   const onHand = (i) => inOrderUnit(i.on_hand, i, orderUnit(i.family));
+  // The threshold is kept in pieces; it shows in the order unit beside On
+  // Hand, so a lumber row reads "640 LF | 1,280 LF" (Q60).
+  const thresholdShown = (i) => (i.threshold == null ? null : inOrderUnit(i.threshold, i, orderUnit(i.family)));
+  // The line above an LVL depth's lengths shows that depth's Reorder (Q58),
+  // so its length rows show only their own Short. Not while a search lists
+  // every depth together, nor under All.
+  // Short in red, Low in amber, OK in grey (story 52); `what` names the short
+  // amount or lengths.
+  const reorderChip = (r, what = '') => (r === 'Short' ? '<span class="chip neg">Short' + what + '</span>'
+    : r === 'Low' ? '<span class="chip warn">Low</span>' : '<span class="sub">OK</span>');
+  const depthLine = () => current !== 'all' && (VIEWS[current] || {}).perDepth && !el('search').value.trim();
 
   // The columns of a closed row, each with its width, its header, how its
   // cell reads and how it sorts. Lumber and LVL tabs pick the size or depth,
@@ -144,8 +165,8 @@
     length: { head: 'Length', width: 16, sort: (i) => i.length_ft, cell: (i) => i.length_ft + '′', name: true },
     stocking: { head: 'Stocking', width: 20, sort: (i) => i.stocking, cell: (i) => esc(i.stocking) },
     // Under All, an LVL row says where its threshold is instead of "not set".
-    threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold,
-      cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
+    threshold: { head: 'Threshold', width: 14, sort: thresholdShown,
+      cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (thresholdShown(i) == null ? '—' : inUnit(i, thresholdShown(i)))) },
     // What is here, in the same unit as Incoming so the two read side by
     // side: 80 pieces of 16′ lumber is "1,280 LF" (owner, Q49). None shows 0
     // (Q50); below zero, a shipment entered before its receipt, is red (S67).
@@ -157,6 +178,11 @@
     // What open POs still bring, in the family's order unit: "1,280 LF" for
     // lumber (Q14). None shows blank, not 0.
     incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => (i.incoming ? inUnit(i, i.incoming) : '') },
+    // An LVL length that is short names how many pieces (Q58: "Short (−6)").
+    reorder: { head: 'Reorder', width: 14, sort: (i) => REORDER_RANK[i.reorder], cell: (i) => {
+      if (i.reorder === 'Short') return reorderChip('Short', (VIEWS[i.family] || {}).perDepth ? ' (' + signed(i.on_hand) + ')' : '');
+      return depthLine() ? '' : reorderChip(i.reorder);
+    } },
     // A marker only: the note itself shows when the row is open.
     note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
   };
@@ -165,11 +191,11 @@
   // LVL calls its size the depth, in inches (″), and its thresholds are per
   // depth (Settings → LVL thresholds), so LVL rows have no Threshold column.
   const VIEWS = {
-    plates: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['sku'] },
-    hangers: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['sku'] },
-    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['grade', 'length'] },
+    plates: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['sku'] },
+    hangers: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['sku'] },
+    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['grade', 'length'] },
     lvl: {
-      tab: 'size', cols: ['product', 'length', 'stocking', 'onHand', 'incoming', 'note'], order: ['product', 'length'],
+      tab: 'size', cols: ['product', 'length', 'stocking', 'onHand', 'incoming', 'reorder', 'note'], order: ['product', 'length'],
       labels: { size: 'Depth' }, tabUnit: '″', perDepth: true,
     },
   };
@@ -177,8 +203,8 @@
   // item in full instead of leaving the size to the tab.
   // A family with no view of its own (EWP, once step 5 names its items) lists
   // its items by name. All lists every family's items by family, then name.
-  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['item'] };
-  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['family', 'item'] };
+  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['item'] };
+  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['family', 'item'] };
   const view = () => {
     if (current === 'all') return ALL;
     const v = VIEWS[current] || PLAIN;
@@ -191,8 +217,9 @@
   async function load() {
     const [body, reasonList] = await Promise.all([fetchItems(), fetch('/api/reasons').then((r) => r.json()).catch(() => ({ ok: false }))]);
     if (!body.ok) return say(body.error, 'bad');
-    ({ families, items, gradeOrder } = body);
+    ({ families, items, lvlDepths, gradeOrder } = body);
     reasons = reasonList.ok ? reasonList.reasons.filter((r) => r.active && !r.entry) : [];
+    paintReorder();
     paintStatus();
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
       if (f === current) return;
@@ -209,6 +236,11 @@
     });
   }
 
+  function paintReorder() {
+    el('show-reorder').innerHTML = [[true, 'Short and Low'], [false, 'All']].map(([only, label]) =>
+      '<button type="button" data-reorder="' + only + '" aria-pressed="' + (only === reorderOnly) + '">' + label + '</button>').join('');
+  }
+
   function paintStatus() {
     el('show-status').innerHTML = STATUSES.map((s) =>
       '<button type="button" data-status="' + esc(s) + '" aria-pressed="' + shown.has(s) + '">' + esc(s) + '</button>').join('');
@@ -222,8 +254,7 @@
     const v = view();
     el('tabs').hidden = !v.tab;
     if (!v.tab) { tab = null; return; }
-    const retired = el('show-retired').checked;
-    const values = [...new Set(items.filter((i) => i.family === current && (retired || i.active)).map((i) => i[v.tab]))].sort(byText);
+    const values = [...new Set(items.filter((i) => i.family === current && kept(i)).map((i) => i[v.tab]))].sort(byText);
     if (!values.includes(tab)) {
       let saved = null;
       try { saved = localStorage.getItem(TAB_KEY + current); } catch { /* storage blocked */ }
@@ -234,14 +265,32 @@
       '<button type="button" data-tab="' + esc(t) + '" aria-pressed="' + (t === tab) + '">' + esc(tabLabel(t)) + '</button>').join('');
   }
 
+  // The Reorder, Show and Show retired choices. The tabs list only the sizes
+  // or depths that keep an item, so "Short and Low" never opens an empty tab.
+  function kept(i) {
+    return (!reorderOnly || i.reorder !== 'OK') && shown.has(i.stocking) && (el('show-retired').checked || i.active);
+  }
+
+  // The open LVL depth's line (Q58): "11-7/8″: 840 LF of 960 LF", its Reorder,
+  // and each short length by name.
+  function paintDepth() {
+    const d = depthLine() && tab != null && lvlDepths.find((x) => x.depth === tab);
+    el('depth').hidden = !d;
+    if (!d) return;
+    const short = items.filter((i) => i.family === current && i.size === tab && i.reorder === 'Short')
+      .sort((a, b) => a.length_ft - b.length_ft).map((i) => i.length_ft + '′ (' + signed(i.on_hand) + ')');
+    el('depth').innerHTML = '<b>' + esc(tab + VIEWS[current].tabUnit) + '</b>: ' + fmtInt(d.available_lf) + ' LF' +
+      (d.threshold_lf == null ? ' <span class="sub">(no threshold)</span>' : ' of ' + fmtInt(d.threshold_lf) + ' LF') + ' · ' +
+      reorderChip(d.reorder, ': ' + esc(short.join(', ')));
+  }
+
   function visible() {
     const v = view();
     const words = el('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const retired = el('show-retired').checked;
     // The person's choice first, then the family's own order, then the name.
     const keys = (sort ? [sort] : []).concat(v.order.map((col) => ({ col, dir: 1 })), [{ col: 'item', dir: 1 }]);
     return items
-      .filter((i) => (current === 'all' || i.family === current) && shown.has(i.stocking) && (retired || i.active))
+      .filter((i) => (current === 'all' || i.family === current) && kept(i))
       .filter((i) => !v.tab || i[v.tab] === tab)
       .filter((i) => {
         const text = (itemLabel(i) + ' ' + (i.note || '')).toLowerCase();
@@ -274,7 +323,8 @@
       STATUSES.map((s) => '<option' + (s === i.stocking ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select></label>';
     const threshold = (VIEWS[i.family] || {}).perDepth
       ? '<span class="field">Threshold <span class="sub" style="padding:7px 0">per depth, in Settings → LVL thresholds</span></span>'
-      : '<label class="field">Threshold <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '"></label>';
+      : '<label class="field">Threshold, in pieces <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '">' +
+        (i.threshold != null && thresholdShown(i) !== i.threshold ? ' <span class="sub">= ' + inUnit(i, thresholdShown(i)) + '</span>' : '') + '</label>';
     const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" maxlength="200" value="' + esc(i.note || '') + '"></label>';
     const actions = '<button type="button" class="ghost" data-do="history">History</button>' + (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
       '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>' +
@@ -374,8 +424,7 @@
       (r) => 'Reversed: ' + r.lines.map((l) => l.item + ' ' + signed(l.quantity)).join(', ') + '.',
       async ({ reversal }) => {
         reversing = null;
-        const [reload, again] = await Promise.all([fetchItems(), fetchHistory(id)]);
-        if (reload.ok) items = reload.items;
+        const [, again] = await Promise.all([reloadItems(), fetchHistory(id)]);
         if (again.ok) history = again.entries;
         return reversal;
       });
@@ -426,6 +475,7 @@
   function paint() {
     const typing = AppHeader.typingIn(el('rows'));
     paintTabs();
+    paintDepth();
     const cols = view().cols.map((c) => [c, COL[c]]);
     const first = cols.find(([, c]) => c.name)[1];
     el('cols').innerHTML = cols.map(([, c]) => '<col style="width:' + c.width + '%">').join('');
@@ -453,13 +503,24 @@
     try {
       say(done(await apply(await send(route, body))), 'ok');
     } catch (err) {
-      if (err.current) items = items.map((i) => (i.id === err.current.id ? err.current : i));
+      if (err.current) items = items.map((i) => (i.id === err.current.id ? { ...i, ...err.current } : i));   // keeps its figures
       say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done, apply) : null);
     }
     paint();
   }
-  function putItem({ item }) {
-    items = items.some((i) => i.id === item.id) ? items.map((i) => (i.id === item.id ? item : i)) : items.concat(item);
+  // Reads the list again, so every figure (On Hand, Incoming, Reorder, the
+  // LVL depth line) is the database's: a new threshold changes Reorder.
+  async function reloadItems() {
+    const body = await fetchItems();
+    if (body.ok) ({ items, lvlDepths } = body);
+    return body.ok;
+  }
+  // A changed item's reply carries no figures, so if the list does not load
+  // again, the row keeps the figures it had.
+  async function putItem({ item }) {
+    if (await reloadItems()) return item;
+    const old = items.find((i) => i.id === item.id);
+    items = old ? items.map((i) => (i.id === item.id ? { ...old, ...item } : i)) : items.concat(item);
     return item;
   }
   const itemOf = (target) => items.find((i) => String(i.id) === target.closest('tr').dataset.id);
@@ -543,9 +604,7 @@
       async (answer) => {
         mode = null;
         replacing = null;
-        const reload = await fetchItems();
-        if (reload.ok) items = reload.items;
-        return { ...answer[as], reloaded: reload.ok };
+        return { ...answer[as], reloaded: await reloadItems() };
       });
   }
   function correct(e) {
@@ -577,6 +636,14 @@
     if (t === undefined) return;
     tab = t;
     try { localStorage.setItem(TAB_KEY + current, t); } catch { /* storage blocked: this visit only */ }
+    paint();
+  });
+  el('show-reorder').addEventListener('click', (e) => {
+    const r = e.target.dataset && e.target.dataset.reorder;
+    if (!r) return;
+    reorderOnly = r === 'true';
+    try { localStorage.setItem(REORDER_KEY, reorderOnly ? 'short-and-low' : 'all'); } catch { /* storage blocked: this visit only */ }
+    paintReorder();
     paint();
   });
   el('show-status').addEventListener('click', (e) => {

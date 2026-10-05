@@ -26,14 +26,15 @@ async function readLumberSizes(database) {
 
 // The families Inventory holds, for the family bar (in the Planner's order,
 // so the two bars match) and "+ Add item", and
-// every item with its figures (inv.item_figures). live says whether the
+// every item with its figures (inv.item_figures), and each LVL depth's
+// line above its lengths (inv.lvl_depth_figures, Q58). live says whether the
 // family takes POs yet, order_unit what its PO lines are ordered in, and
 // trimmable whether its items offer Trim (stories 47–48). A family with no identity fields (EWP until step 5) cannot hold
 // items, so it is left out. choices gives a name field's only values, which
 // the page offers as a list: lumber sizes (inv.lumber_sizes). The version
 // rides along so a save can say which version it read (S41).
 async function listCatalog(database) {
-  const [families, items] = await Promise.all([
+  const [families, items, lvlDepths] = await Promise.all([
     database.read(`
       SELECT code, name, identity, pack_kinds, live, order_unit, trimmable,
              CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
@@ -42,13 +43,14 @@ async function listCatalog(database) {
        ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`),
     database.read(`
       SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
-             i.active, i.version, f.incoming, f.on_hand
+             i.active, i.version, f.incoming, f.on_hand, f.reorder
         FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
        ORDER BY i.family, i.sku, i.product, i.size, i.grade, i.length_ft`),
+    database.read('SELECT depth, available_lf, threshold_lf, reorder FROM inv.lvl_depth_figures ORDER BY depth'),
   ]);
   // gradeOrder: lumber grades weakest first, the engine's own ranking, so the
   // Overview sorts 2x4 #2 ahead of 2x4 #1 (owner, 2026-10-01).
-  return { families, items, gradeOrder: GRADE_STRENGTH_ORDER };
+  return { families, items, lvlDepths, gradeOrder: GRADE_STRENGTH_ORDER };
 }
 
 // Route → the database function it calls, its arguments after the actor and

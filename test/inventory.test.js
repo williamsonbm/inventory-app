@@ -44,7 +44,8 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   assert.equal(back.body.item.active, true);
 
   const { families, items } = await read(ctx, '/api/items');
-  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0 }], 'a list row also carries the item\'s figures');
+  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0, reorder: 'Low' }],
+    'a list row also carries the item\'s figures: none on hand is at or below its threshold of 40');
   // EWP stays out of Inventory until step 5, so the family bar leaves it out.
   // The Planner's order, so the two family bars match (owner, 2026-10-02).
   // pack_kinds: what Settings → Pack sizes offers for each family's items.
@@ -395,6 +396,24 @@ test('Correct on hand changes an item\'s on hand with a reason; the Overview and
     ['correct', 'LUS28', 'added: on hand −2, Damaged – scrapped'],
     ['correct', 'LUS28', 'added: on hand +6, Returned from job site; note: Job 1234'],
   ]);
+});
+
+test('the Overview list carries each item\'s Reorder and a line per LVL depth (stories 52–53, Q58)', async () => {
+  const ctx = await withAdmin();
+  const lvl = { product: '2.0 LVL 1-3/4', size: '11-7/8' };
+  const long = (await change(ctx, '/api/items/add', { family: 'lvl', identity: { ...lvl, length_ft: 16 } })).body.item;
+  const short = (await change(ctx, '/api/items/add', { family: 'lvl', identity: { ...lvl, length_ft: 12 } })).body.item;
+  const set = await change(ctx, '/api/lvl-depth-thresholds/set', { depth: '11-7/8', version: null, threshold_lf: 960 });
+  assert.equal(set.status, 200, set.body.error);
+  await goLive(ctx.db, 'lvl');
+  // Two 16′ boards trimmed to 12′ with none on hand: −32 LF + 24 LF.
+  const trim = await change(ctx, '/api/items/trim', { item_id: long.id, length_ft: 12, boards: 2, note: null });
+  assert.equal(trim.status, 200, trim.body.error);
+
+  const { items, lvlDepths } = await read(ctx, '/api/items');
+  const reorder = (id) => items.find((i) => i.id === id).reorder;
+  assert.deepEqual([reorder(long.id), reorder(short.id)], ['Short', 'Low']);
+  assert.deepEqual(lvlDepths, [{ depth: '11-7/8', available_lf: -8, threshold_lf: 960, reorder: 'Short' }]);
 });
 
 test('Trim takes LVL boards down to a shorter length; the Overview and the Activity Log follow (stories 47–48, Q39)', async () => {

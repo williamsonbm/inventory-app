@@ -353,5 +353,7 @@ tr.grp.non-stock td:first-child{border-left-color:var(--bad)}
    column widths, so the columns stay put when the family filter changes. */
 table.catalog{table-layout:fixed;width:100%}
 table.catalog td{vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+/* A chip alone in a cell (Reorder, On Hand below zero) starts at the column edge, like the text above it. */
+table.catalog td > .chip:first-child{margin-left:0}
 table.catalog td input:not([type="number"]){width:100%;box-sizing:border-box}
 th[data-sort]{cursor:pointer}

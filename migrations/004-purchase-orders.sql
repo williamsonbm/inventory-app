@@ -351,13 +351,43 @@ CREATE TRIGGER check_received BEFORE UPDATE OF item_id, ordered ON inv.po_lines
 -- on_hand is in pieces: every ledger row of the item. Until part 3 adds
 -- counts, the ledger is all there is; part 3 starts it from the latest
 -- approved count instead.
+-- reorder (story 52, Q15): Short when available is below zero, Low when it
+-- is at or below the threshold, otherwise OK; a blank threshold is never
+-- Low. Until step 4 adds committed, available is on hand. An LVL item has
+-- no threshold of its own (Q16, Q35): it is Short by its own length, and
+-- Low when its depth's linear feet (depth_lf: every length at that depth
+-- added together; blank for other families) are at or below the depth's
+-- threshold.
 CREATE VIEW inv.item_figures AS
-SELECT i.id AS item_id,
-       coalesce(pg_catalog.sum(GREATEST(l.ordered - inv.received(l.id), 0)), 0)::integer AS incoming,
-       coalesce((SELECT pg_catalog.sum(g.quantity) FROM inv.ledger g WHERE g.item_id = i.id), 0)::integer AS on_hand
+SELECT d.item_id, d.incoming, d.on_hand, d.depth_lf,
+       CASE WHEN d.on_hand < 0 THEN 'Short'
+            WHEN d.on_hand <= d.threshold OR d.depth_lf <= t.threshold_lf THEN 'Low'
+            ELSE 'OK' END AS reorder
+  FROM (SELECT f.*,
+               CASE WHEN f.family = 'lvl'
+                    THEN pg_catalog.sum(f.on_hand * f.length_ft) OVER (PARTITION BY f.family, f.size)::integer END AS depth_lf
+          FROM (SELECT i.id AS item_id, i.family, i.size, i.length_ft, i.threshold,
+                       coalesce(pg_catalog.sum(GREATEST(l.ordered - inv.received(l.id), 0)), 0)::integer AS incoming,
+                       coalesce((SELECT pg_catalog.sum(g.quantity) FROM inv.ledger g WHERE g.item_id = i.id), 0)::integer AS on_hand
+                  FROM inv.items i
+                  LEFT JOIN inv.po_lines l ON l.item_id = i.id AND l.closed_reason_id IS NULL
+                 GROUP BY i.id) f) d
+  LEFT JOIN inv.lvl_depth_thresholds t ON d.family = 'lvl' AND t.depth = d.size;
+
+-- One row per LVL depth for the line above its lengths on the Overview
+-- (Q58): its linear feet, its threshold, and its Reorder. The depth is Short
+-- when any length is short (Q35), else Low or OK as its lengths are, since
+-- inv.item_figures judges every length at a depth by the depth's feet.
+CREATE VIEW inv.lvl_depth_figures AS
+SELECT i.size AS depth, pg_catalog.max(f.depth_lf) AS available_lf, t.threshold_lf,
+       CASE WHEN pg_catalog.bool_or(f.reorder = 'Short') THEN 'Short'
+            WHEN pg_catalog.bool_or(f.reorder = 'Low') THEN 'Low'
+            ELSE 'OK' END AS reorder
   FROM inv.items i
-  LEFT JOIN inv.po_lines l ON l.item_id = i.id AND l.closed_reason_id IS NULL
- GROUP BY i.id;
+  JOIN inv.item_figures f ON f.item_id = i.id
+  LEFT JOIN inv.lvl_depth_thresholds t ON t.depth = i.size
+ WHERE i.family = 'lvl'
+ GROUP BY i.size, t.threshold_lf;
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('enter PO', false), ('edit PO', false),
   ('close PO line', false), ('re-open PO line', false), ('switch family live', true), ('receive', false),
