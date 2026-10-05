@@ -1,6 +1,11 @@
 // The Activity Log (#77; its own mode since #81 part 1): who did what and when, newest first, a page
-// at a time. Filters by person, by date range and by action; the family
-// filter joins in step 3.
+// at a time. Filters by person, by date range, by action and by family.
+//
+// A row's family (story 56) is its item's, or its PO lines', or the items its
+// ledger rows hold (a receipt, correction, trim or reversal); lumber lengths
+// and grade redirects are Lumber's, LVL depth thresholds LVL's. A row with no
+// family (a person, a supplier, a reason, the catalog import) shows only under
+// All (Q66). The family list rides along for the page's family bar.
 //
 // Dates are office days: a range from D1 to D2 covers midnight at the start
 // of D1 to midnight at the end of D2, Eastern Time with daylight saving (Q17).
@@ -11,21 +16,21 @@
 // would also read "yesterday", and would read 06/07/2026 by the connection's
 // DateStyle setting, which a shared pooler connection does not promise.
 // A person or page of the wrong type is refused by Postgres (answered 400).
-const { itemLabel } = require('../inventory/catalog.js');
+const { itemLabel, readFamilies } = require('../inventory/catalog.js');
 
 const PAGE_SIZE = 50;
 const OFFICE_TIME_ZONE = 'America/New_York';  // the page shows times in the same zone (app-header.js)
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 // Answers { error } for a date in any other form, else one page of entries.
-async function readActivity(database, { person, action, from, to, before }) {
+async function readActivity(database, { person, action, family, from, to, before }) {
   const blank = (v) => (v === undefined || v === '' ? null : v);
   if ([from, to].some((d) => blank(d) !== null && !ISO_DATE.test(d))) {
     return { error: 'A date must be written like 2026-09-29.' };
   }
-  // The list of actions (for the page's filter) does not depend on the
-  // entries, so the two reads run side by side.
-  const [rows, actionRows] = await Promise.all([database.read(`
+  // The lists of actions and families (for the page's filters) do not
+  // depend on the entries, so the three reads run side by side.
+  const [rows, actionRows, families] = await Promise.all([database.read(`
     SELECT l.id, l.at, who.name AS who, l.action, l.target_table, target.name AS target,
            pg_catalog.to_jsonb(item) AS item, l.old_value AS was, l.new_value AS now
       FROM inv.activity_log l
@@ -39,10 +44,22 @@ async function readActivity(database, { person, action, from, to, before }) {
        AND ($3::date IS NULL OR l.at >= ($3::date)::timestamp AT TIME ZONE $6)
        AND ($4::date IS NULL OR l.at < ($4::date + 1)::timestamp AT TIME ZONE $6)
        AND ($5::bigint IS NULL OR l.id < $5)
+       AND ($7::text IS NULL OR CASE
+             WHEN l.target_table IN ('items', 'pack_sizes') THEN item.family = $7
+             WHEN l.target_table = 'lvl_depth_thresholds' THEN $7 = 'lvl'
+             WHEN l.target_table IN ('lumber_purchasable_lengths', 'lumber_grade_redirects') THEN $7 = 'lumber'
+             WHEN l.target_table = 'families'
+               THEN EXISTS (SELECT FROM inv.families f WHERE f.code = $7 AND f.name = l.new_value ->> 'name')
+             WHEN l.target_table = 'purchase_orders'
+               THEN EXISTS (SELECT FROM inv.po_lines pl JOIN inv.items i ON i.id = pl.item_id
+                             WHERE pl.po_id = l.target_id AND i.family = $7)
+             ELSE EXISTS (SELECT FROM inv.ledger g JOIN inv.items i ON i.id = g.item_id
+                           WHERE g.action_id = l.id AND i.family = $7) END)
      ORDER BY l.id DESC
      LIMIT ${PAGE_SIZE + 1}`,
-  [blank(person), blank(action), blank(from), blank(to), blank(before), OFFICE_TIME_ZONE]),
-  database.read('SELECT name FROM inv.actions ORDER BY name')]);
+  [blank(person), blank(action), blank(from), blank(to), blank(before), OFFICE_TIME_ZONE, blank(family)]),
+  database.read('SELECT name FROM inv.actions ORDER BY name'),
+  readFamilies(database)]);
   // One row past the page says whether there is another page, which starts
   // before the last row shown. The ids stay here: `before` is their one reader.
   const page = rows.slice(0, PAGE_SIZE);
@@ -53,7 +70,7 @@ async function readActivity(database, { person, action, from, to, before }) {
     target: target ?? targetName(table, item, now || was),
     change: describeChange(entry.action, table, was, now),
   }));
-  return { entries, before: nextBefore, actions };
+  return { entries, before: nextBefore, actions, families };
 }
 
 // What a change touched, in the words its screen uses, for a row that is not

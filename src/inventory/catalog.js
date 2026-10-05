@@ -24,6 +24,17 @@ async function readLumberSizes(database) {
   return (await database.read('SELECT inv.lumber_sizes() AS sizes'))[0].sizes;
 }
 
+// The families Inventory holds, for the family bar on Inventory and the
+// Activity Log. See listCatalog for the columns.
+function readFamilies(database) {
+  return database.read(`
+    SELECT code, name, identity, pack_kinds, live, order_unit, trimmable,
+           CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
+      FROM inv.families
+     WHERE identity IS NOT NULL
+     ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`);
+}
+
 // The families Inventory holds, for the family bar (in the Planner's order,
 // so the two bars match) and "+ Add item", and
 // every item with its figures (inv.item_figures), and each LVL depth's
@@ -35,12 +46,7 @@ async function readLumberSizes(database) {
 // rides along so a save can say which version it read (S41).
 async function listCatalog(database) {
   const [families, items, lvlDepths] = await Promise.all([
-    database.read(`
-      SELECT code, name, identity, pack_kinds, live, order_unit, trimmable,
-             CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
-        FROM inv.families
-       WHERE identity IS NOT NULL
-       ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`),
+    readFamilies(database),
     database.read(`
       SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
              i.active, i.version, f.incoming, f.on_hand, f.reorder
@@ -181,5 +187,5 @@ async function saveCatalogChange(database, actor, route, body) {
 }
 
 module.exports = {
-  itemLabel, listCatalog, listPos, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
+  itemLabel, listCatalog, readFamilies, listPos, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
 };

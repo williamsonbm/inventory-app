@@ -20,11 +20,12 @@
 <body>
 <!--
   activity.html — the Activity Log (#77; its own mode since #81 part 1): who did what and when,
-  newest first, a page at a time, filtered by person, action and office day.
+  newest first, a page at a time, filtered by family, person, action and office day.
 
   Glue, NOT UNIT-TESTED: the filters and the table need a browser, and this
   repo has no DOM harness. The route's filters, order, paging and Eastern
-  office days are tested in test/users.test.js; the page is checked by hand
+  office days are tested in test/users.test.js, the family filter in
+  test/inventory.test.js; the page is checked by hand
   (#77, Testing Decisions).
 -->
 <header class="appbar">
@@ -36,8 +37,11 @@
   </div>
   <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity" class="here" aria-current="page">Activity Log</a></nav>
   <!-- The filters sit in the grey bar, as Family does on the Planner and
-       Inventory (owner, 2026-10-02). -->
+       Inventory (owner, 2026-10-02). Family is the same bar, with the same
+       saved choice (story 56, Q65); a click on it shows that family at once. -->
   <form id="filters" class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
     <label class="label">Person <select id="person"><option value="">Everyone</option></select></label>
     <label class="label">Action <select id="action"><option value="">Every action</option></select></label>
     <label class="label">From <input id="from" type="date"></label>
@@ -48,7 +52,8 @@
 
 <div class="wrap">
   <div id="message" role="status"></div>
-  <table>
+  <table class="log">
+    <colgroup><col class="c-when"><col class="c-who"><col class="c-action"><col class="c-what"><col></colgroup>
     <thead><tr><th>When (Eastern)</th><th>Who</th><th>Action</th><th>What</th><th>Was → now</th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
@@ -64,18 +69,26 @@
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
   let before = null;
-  let actionsListed = false;
+  let listsShown = false;
+  let family = 'all';
 
   async function load(more) {
     const q = new URLSearchParams();
     for (const id of ['person', 'action', 'from', 'to']) if (el(id).value) q.set(id, el(id).value);
+    if (family !== 'all') q.set('family', family);
     if (more) q.set('before', before);
     const body = await (await fetch('/api/activity?' + q)).json();
     if (!body.ok) { el('message').innerHTML = '<div class="note bad">' + esc(body.error) + '</div>'; return; }
     el('message').innerHTML = '';
-    if (!actionsListed) {
+    if (!listsShown) {
       el('action').insertAdjacentHTML('beforeend', body.actions.map((a) => '<option>' + esc(a) + '</option>').join(''));
-      actionsListed = true;
+      listsShown = true;
+      // Opens on the saved family, which loads again only when it is not All.
+      AppHeader.familyBar(body.families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+        if (f === family) return;
+        family = f;
+        load(false);
+      });
     }
     const html = body.entries.map((e) => '<tr><td>' + esc(showTime(e.at)) + '</td><td>' + esc(e.who) + '</td><td>' +
       esc(e.action) + '</td><td>' + esc(e.target || '') + '</td><td>' + esc(e.change) + '</td></tr>').join('');

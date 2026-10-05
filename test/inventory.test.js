@@ -12,7 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { get, post, signInAndChoose, withAdmin } = require('./support/app.js');
-const { connect, goLive, urlFor } = require('./support/database.js');
+const { connect, goLive, reasonId, urlFor } = require('./support/database.js');
 
 // Posts one change as the signed-in admin and returns the status and parsed answer.
 async function change(ctx, route, body) {
@@ -235,6 +235,43 @@ test('the Activity Log names the item, pack size, supplier or reason each change
     ['add pack size', 'BOGUS26 carton', 'added: 50 pieces'],
     ['add item', 'BOGUS26', 'added: Special Order, no threshold'],
   ]);
+});
+
+// Story 56: one family's changes. A row with no family (a person, a supplier,
+// a reason) shows only under All (Q66).
+test('the Activity Log shows one family\'s changes', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  await change(ctx, '/api/pack-sizes/add', { item_id: hanger.id, kind: 'carton', pieces: 50 });
+  const plate = (await change(ctx, '/api/items/add', { family: 'plates', identity: { sku: 'MP24' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'MiTek' })).body.supplier;
+  await change(ctx, '/api/items/add', { family: 'lvl', identity: { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 } });
+  for (const [route, body] of [['/api/lvl-depth-thresholds/set', { depth: '14', version: null, threshold_lf: 720 }],
+    ['/api/lumber/lengths', { size: '2x4', grade: '#2', version: 1, lengths: [8] }],
+    ['/api/lumber/redirect', { size: '2x6', from_grade: '#2', version: null, to_grade: 'DSS' }]]) {
+    const saved = await change(ctx, route, body);
+    assert.equal(saved.status, 200, saved.body.error);
+  }
+  await goLive(ctx.db, 'plates');
+  const po = (await change(ctx, '/api/pos/enter', { supplier_id: supplier.id, number: '4501', po_date: '2026-10-03',
+    lines: [{ item_id: plate.id, ordered: 100 }] })).body.po;
+  for (const [route, body] of [['/api/receipts/receive', { po_id: po.id, po_version: po.version, supplier_id: null,
+    lines: [{ po_line_id: po.lines[0].id, item_id: plate.id, quantity: 100 }] }],
+  ['/api/items/correct', { item_id: plate.id, quantity: -2, reason_id: await reasonId(ctx.db, 'Damaged – scrapped') }]]) {
+    const saved = await change(ctx, route, body);
+    assert.equal(saved.status, 200, saved.body.error);
+  }
+
+  const targets = async (family) => (await read(ctx, `/api/activity?family=${family}`)).entries.map((e) => [e.action, e.target]);
+  assert.deepEqual(await targets('hangers'), [['add pack size', 'LUS28 carton'], ['add item', 'LUS28']]);
+  assert.deepEqual(await targets('plates'), [['correct', 'MP24'], ['receive', 'PO 4501'], ['enter PO', 'PO 4501'],
+    ['switch family live', 'Plates'], ['add item', 'MP24']]);
+  assert.deepEqual(await targets('lvl'), [['set LVL depth threshold', 'LVL 14″'], ['add item', '2.1 RigidLam LVL 1-3/4 x 14 48′']]);
+  assert.deepEqual(await targets('lumber'), [['set grade redirect', '2x6 #2'], ['set lumber lengths', '2x4 #2']]);
+  // The page's family bar: Inventory's families, in the same order (EWP joins in step 5).
+  assert.deepEqual((await read(ctx, '/api/activity')).families.map((f) => [f.code, f.name]),
+    [['lumber', 'Lumber'], ['plates', 'Plates'], ['hangers', 'Hangers'], ['lvl', 'LVL']]);
+  assert.ok((await targets('')).some(([action]) => action === 'add supplier'), 'blank is All, which shows a row with no family');
 });
 
 test('the Activity Log says what the catalog import and a removal did', async () => {
