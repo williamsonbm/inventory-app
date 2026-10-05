@@ -120,6 +120,46 @@ $$;
 CREATE TRIGGER check_family_live BEFORE INSERT OR UPDATE OF item_id ON inv.po_lines
   FOR EACH ROW EXECUTE FUNCTION inv.check_item_family_live();
 
+-- A PO holds one family: the office never buys two families on one PO
+-- (owner, Q67–68). Refuses item i on PO p_po_id when one of its lines is of
+-- another family, naming line n, or the line p_line_id's number when n is
+-- blank (worked out only to refuse). Closed lines count too, so the
+-- Activity Log shows a PO under one family. A PO entered for the wrong
+-- family is closed and entered again; a one-line PO may change its item's
+-- family. No PO, no lines: nothing is refused.
+CREATE FUNCTION inv.check_po_family(i inv.items, p_po_id bigint, n integer, p_line_id bigint) RETURNS void
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  other text;
+BEGIN
+  SELECT f.name INTO other FROM inv.po_lines l JOIN inv.items x ON x.id = l.item_id JOIN inv.families f ON f.code = x.family
+   WHERE l.po_id = p_po_id AND x.family <> i.family
+   LIMIT 1;
+  IF FOUND THEN
+    RAISE EXCEPTION 'Line %: % is %, but this PO orders %. A PO holds one family.',
+      coalesce(n, inv.po_line_number(p_line_id)), inv.item_label(i),
+      (SELECT name FROM inv.families WHERE code = i.family), other USING ERRCODE = 'IV422';
+  END IF;
+END
+$$;
+
+-- The same, whatever writes a PO line. After the row is written, so its
+-- number counts it.
+CREATE FUNCTION inv.check_po_one_family() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  PERFORM inv.check_po_family(i, NEW.po_id, NULL, NEW.id) FROM inv.items i WHERE i.id = NEW.item_id;
+  RETURN NULL;
+END
+$$;
+
+CREATE TRIGGER check_one_family AFTER INSERT OR UPDATE OF item_id ON inv.po_lines
+  FOR EACH ROW EXECUTE FUNCTION inv.check_po_one_family();
+
 -- A delivery as entered from its Bill of Lading (S13, S16): against a PO, or
 -- from a supplier without one, never both. Its lines are ledger rows. Who
 -- received it and when come from its activity-log row (target receipts).
@@ -894,6 +934,7 @@ BEGIN
   ELSIF NOT i.active THEN
     RAISE EXCEPTION 'Line %: % is retired. Un-retire it before you receive it.', n, inv.item_label(i) USING ERRCODE = 'IV422';
   END IF;
+  PERFORM inv.check_po_family(i, p_po_id, n, NULL);  -- an item not on the PO comes in on it all the same
   IF NOT inv.is_whole_above_zero(r -> 'quantity') THEN
     RAISE EXCEPTION 'Line %: the pieces received are a whole number above 0.', n USING ERRCODE = 'IV400';
   END IF;

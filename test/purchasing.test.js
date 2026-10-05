@@ -64,6 +64,31 @@ test('a PO line for a family not live in Inventory is refused, whatever writes i
   });
 });
 
+// The office never buys two families on one PO (owner, Q67–68).
+test('a PO holds one family: a line of another family is refused, whatever writes it', async () => {
+  const { db, ann, supplier, hanger } = await withHanger();
+  const plate = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'plates', { sku: 'MT20 3x4' });
+  await goLive(db, 'plates');
+  const before = (await logRows(db)).length;
+  const err = await refused(call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4502', '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 10 }, { item_id: plate.id, ordered: 5 }])), 'IV422', 'a mixed PO');
+  assert.equal(err.message, 'Line 2: MT20 3x4 is Plates, but this PO orders Hangers. A PO holds one family.');
+  assert.equal((await logRows(db)).length, before, 'nothing saved: no log row');
+
+  const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4502', '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 10 }]));
+  const edit = (lines) => call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, po.version, supplier.id, '4502', '2026-10-03',
+    JSON.stringify(lines));
+  await refused(edit([{ id: po.lines[0].id, item_id: hanger.id, ordered: 10 }, { item_id: plate.id, ordered: 5 }]),
+    'IV422', 'an added line of another family');
+  const moved = await edit([{ id: po.lines[0].id, item_id: plate.id, ordered: 10 }]);
+  assert.equal(moved.lines[0].item, 'MT20 3x4', 'a one-line PO may change its family');
+
+  // The guarantee: even the owner's own insert is refused.
+  await as(db, null, (owner) => refused(owner.query('INSERT INTO inv.po_lines (po_id, item_id, ordered) VALUES ($1, $2, 1)',
+    [po.id, hanger.id]), 'IV422', 'a direct insert of another family'));
+});
+
 test('impossible POs are refused with a plain message, and none leaves a row', async () => {
   const { db, ann, supplier, hanger } = await withHanger();
   const retired = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
@@ -354,6 +379,8 @@ test('impossible receipts are refused with a plain message, and none leaves a ro
   const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
   const retired = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HU210' });
   await call(db, 'retire_item', ann.id, crypto.randomUUID(), retired.id, 1);
+  const plate = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'plates', { sku: 'MT20 3x4' });
+  await goLive(db, 'plates');
   const elsewhere = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4502', '2026-10-03',
     JSON.stringify([{ item_id: hanger.id, ordered: 1 }]));
   const closed = await call(db, 'close_po_line', ann.id, crypto.randomUUID(), po.lines[1].id, po.version, reason.id);
@@ -369,6 +396,8 @@ test('impossible receipts are refused with a plain message, and none leaves a ro
     ['another PO\'s line', [got(elsewhere.lines[0], { quantity: 5 })], 'IV400', /^Line 1: that line is not on this PO/],
     ['a retired item not on the PO', [loose({ item_id: retired.id })], 'IV422', /^Line 1: HU210 is retired/],
     ['an item not in the catalog', [loose({ item_id: 999999 })], 'IV400', /^Line 1: pick the item/],
+    ['another family not on the PO (Q68)', [got(first, { quantity: 5 }), loose({ item_id: plate.id })], 'IV422',
+      /^Line 2: MT20 3x4 is Plates, but this PO orders Hangers\. A PO holds one family\.$/],
     ['loose pieces but no total', [got(first, { loose: 5 })], 'IV400', /^Line 1: the pieces received are a whole number above 0/],
     ['pieces that are not whole', [got(first, { quantity: 2.5 })], 'IV400', /^Line 1: the pieces received/],
     ['packs without a pack size', [got(first, { quantity: 50, packs: 1 })], 'IV400', /^Line 1: give both the packs and the pack size/],
