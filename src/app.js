@@ -16,6 +16,7 @@ const { readSession, sessionCookie, clearedCookie, checkSecret } = require('./au
 const { signIn, loadPerson, changePassword } = require('./auth/sign-in.js');
 const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js');
 const { readActivity } = require('./settings/activity.js');
+const { readHistory } = require('./inventory/history.js');
 const {
   listCatalog, listPos, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
@@ -150,6 +151,12 @@ function createApp({ database, sessionSecret }) {
   }));
   app.get('/api/pos', catchAsync(async (_req, res) => {
     res.json({ ok: true, pos: await listPos(database) });
+  }));
+  // An item's History (story 55).
+  app.get('/api/items/history', catchAsync(async (req, res) => {
+    const { error, entries } = await readHistory(database, req.query.id);
+    if (error) return res.status(400).json({ ok: false, error });
+    res.json({ ok: true, entries });
   }));
   for (const route of Object.keys(SETTINGS_LISTS)) {
     app.get(route, catchAsync(async (_req, res) => {

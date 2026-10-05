@@ -26,7 +26,8 @@
   (story 32) comes from inv.item_figures; On hand and Reorder join it in a
   later in part 2. "Correct on hand…" in the panel changes an item's on hand
   with a reason (stories 44–46); "Trim…" on an LVL item cuts weathered boards
-  down to a shorter length (stories 47–48). The tasks sit in the grey bar, right of Family
+  down to a shorter length (stories 47–48). "History" lists every change to
+  the item's on hand and settings (story 55). The tasks sit in the grey bar, right of Family
   (#81, entry 7); Count and Month-end join them with part 3.
 
   Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
@@ -83,7 +84,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, itemLabel, unitShort } = AppHeader;
+  const { send, say, itemLabel, unitShort, showTime } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -102,9 +103,15 @@
   let sort = null;        // { col, dir } a person chose; null is the family's own order
   let tab = null;         // the open size (lumber) or depth (LVL) tab
   let open = null;        // the id of the item whose row is open
-  let mode = null;        // what the open row's panel shows instead: 'rename', 'correct' or 'trim'
+  let mode = null;        // what the open row's panel shows instead: 'rename', 'correct', 'trim' or 'history'
+  let history = null;     // the open item's History entries, once loaded
+  let reversing = null;   // the History entry whose Reverse form is open
+  let replacing = null;   // the History entry a Correct or Trim form replaces
   let reasons = [];       // the reasons in use and not kept for another entry, for Correct on hand
 
+  const signed = (n) => (n > 0 ? '+' : '−') + fmtInt(Math.abs(n));
+  const fetchHistory = (id) => fetch('/api/items/history?id=' + id).then((r) => r.json())
+    .catch(() => ({ ok: false, error: 'The History did not load. Try again.' }));
   const family = (code) => families.find((f) => f.code === code) || { name: code };
   const familyName = (code) => family(code).name;
   const orderUnit = (code) => family(code).order_unit;
@@ -244,6 +251,7 @@
   function panel(i) {
     if (mode === 'correct') return correctForm(i);
     if (mode === 'trim') return trimForm(i);
+    if (mode === 'history') return historyTable(i);
     if (mode === 'rename') {
       return '<form class="row" style="align-items:flex-end" data-rename><span class="field">Rename <b>' + esc(itemLabel(i)) + '</b></span>' +
         identityInputs(i.family, i) +
@@ -255,7 +263,7 @@
       ? '<span class="field">Threshold <span class="sub" style="padding:7px 0">per depth, in Settings → LVL thresholds</span></span>'
       : '<label class="field">Threshold <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '"></label>';
     const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" maxlength="200" value="' + esc(i.note || '') + '"></label>';
-    const actions = (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
+    const actions = '<button type="button" class="ghost" data-do="history">History</button>' + (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
       '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>' +
       (family(i.family).live ? '<button type="button" class="ghost" data-do="correct">Correct on hand…</button>' +
         (family(i.family).trimmable ? '<button type="button" class="ghost" data-do="trim">Trim…</button>' : '') : '');
@@ -265,7 +273,7 @@
   // Correct on hand: the change in pieces, + or −, with a reason, and what on
   // hand becomes.
   function correctForm(i) {
-    return '<form class="row" style="align-items:flex-end" data-correct><span class="field">Correct on hand of <b>' + esc(itemLabel(i)) + '</b>' +
+    return replacingNote() + '<form class="row" style="align-items:flex-end" data-correct><span class="field">Correct on hand of <b>' + esc(itemLabel(i)) + '</b>' +
       '<span class="sub" data-f="after" style="padding:7px 0">' + fmtInt(i.on_hand) + ' now</span></span>' +
       '<label class="field">Change, in pieces <input data-f="quantity" type="number" step="1" required style="width:7em" placeholder="12 or -3"></label>' +
       '<label class="field">Reason <select data-f="reason" required><option value="">Reason…</option>' +
@@ -288,7 +296,7 @@
     const retired = (l) => known.has(l) && !known.get(l).active;
     const option = (l) => '<option value="' + l + '"' + (retired(l) ? ' data-retired' : '') + '>' + l + '′' +
       (!known.has(l) ? ' (new item)' : retired(l) ? ' (retired)' : '') + '</option>';
-    return '<form class="row" style="align-items:flex-end" data-trim><span class="field">Trim <b>' + esc(itemLabel(i)) + '</b>' +
+    return replacingNote() + '<form class="row" style="align-items:flex-end" data-trim><span class="field">Trim <b>' + esc(itemLabel(i)) + '</b>' +
       '<span class="sub" style="padding:7px 0">' + fmtInt(i.on_hand) + ' now</span></span>' +
       '<label class="field">Boards <input data-f="boards" type="number" min="1" step="1" required style="width:6em" value="1"></label>' +
       '<label class="field">Trimmed to <select data-f="length" required><option value="">Length…</option>' +
@@ -297,6 +305,80 @@
       '<button data-f="go">Save trim</button><button type="button" class="ghost" data-do="trim-cancel">Cancel</button>' +
       '<span class="sub" data-f="warn" hidden></span><span class="sub" data-f="short" hidden></span></form>';
   }
+  // History: newest first. Change is the change to on hand in pieces; a
+  // settings change has none. A receipt line, a correction or a trim not yet
+  // reversed has "Reverse…" while its family is live; one reversed says so
+  // (stories 42, 49). A reversal itself is never reversed (Q44).
+  function historyTable(i) {
+    const canReverse = (e) => e.id && !e.reversed && e.action !== 'reverse' && family(i.family).live;
+    const last = (e) => (e.reversed ? '<span class="chip">reversed</span>'
+      : canReverse(e) ? '<button type="button" class="ghost" data-do="reverse" data-entry="' + e.id + '">Reverse…</button>' : '');
+    const rows = history === null ? '<tr><td colspan="6" class="sub">Loading…</td></tr>'
+      : history.map((e) => '<tr><td>' + esc(showTime(e.at)) + '</td><td>' + esc(e.who) + '</td><td>' + esc(e.action) + '</td><td>' +
+        (e.change === null ? '' : signed(e.change)) + '</td><td>' + esc(e.detail) + '</td><td>' + last(e) + '</td></tr>' +
+        (e.id === reversing ? '<tr><td colspan="6">' + reverseForm(e) + '</td></tr>' : '')).join('');
+    return '<div class="row" style="align-items:center"><b>History of ' + esc(itemLabel(i)) + '</b>' +
+      '<button type="button" class="ghost" data-do="history-cancel">Close history</button></div>' +
+      '<div class="tw"><table style="width:100%"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Change</th><th>Detail</th><th></th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>';
+  }
+  // Reverse: the original stays, marked reversed; the reversal takes its time.
+  function reverseForm(e) {
+    const what = { receive: 'this receipt line', correct: 'this correction', trim: 'this trim. Both lengths go back' }[e.action];
+    const redo = redoable(e);
+    return '<form class="row" style="align-items:flex-end" data-reverse><span class="field">Reverse ' + what + '?</span>' +
+      '<label class="field" style="flex:1;min-width:16em">Note <input data-f="note" maxlength="200" autocomplete="off"></label>' +
+      '<button>Reverse</button>' + (redo ? '<button type="button" class="ghost" data-do="redo">Reverse and enter again…</button>' : '') +
+      '<button type="button" class="ghost" data-do="reverse-cancel">Cancel</button></form>' +
+      (redo ? '<p class="sub">Reverse and enter again: the new entry takes this one\'s time, so a count made since then does not count it twice.</p>' : '');
+  }
+  // A trim is entered again from its long length, where Trim starts.
+  const redoable = (e) => e.action !== 'trim' || e.change < 0;
+  // Reverse and enter again (owner, 2026-10-05): a receipt goes to the
+  // Receive page, which can pick the right PO; a correction or trim opens
+  // its own form here. Either save reverses this entry and times the new one
+  // as this one.
+  function redo(e) {
+    const what = itemLabel(items.find((i) => i.id === open)) + ' ' + signed(e.change) + ', ' + e.detail;
+    if (e.action === 'receive') {
+      location.href = '/inventory/receive?replaces=' + e.id + '&what=' + encodeURIComponent(what);
+      return;
+    }
+    replacing = { id: e.id, what };
+    reversing = null;
+    mode = e.action === 'correct' ? 'correct' : 'trim';
+    paint();
+  }
+  // Above a Correct or Trim form that replaces an entry.
+  const replacingNote = () => (replacing
+    ? '<p class="sub" style="margin:0 0 6px">Replaces ' + esc(replacing.what) + '. Saving reverses it and times this entry as it.</p>' : '');
+  // Saves a reversal, then reads the catalog and the History again, so both
+  // show the database's figures.
+  function reverseEntry(e) {
+    e.preventDefault();
+    const id = open;
+    save('/api/ledger/reverse', { key: crypto.randomUUID(), id: reversing, note: e.target.querySelector('[data-f="note"]').value.trim() || null },
+      (r) => 'Reversed: ' + r.lines.map((l) => l.item + ' ' + signed(l.quantity)).join(', ') + '.',
+      async ({ reversal }) => {
+        reversing = null;
+        const [reload, again] = await Promise.all([fetchItems(), fetchHistory(id)]);
+        if (reload.ok) items = reload.items;
+        if (again.ok) history = again.entries;
+        return reversal;
+      });
+  }
+  async function showHistory(id) {
+    mode = 'history';
+    history = null;
+    reversing = null;
+    paint();
+    const body = await fetchHistory(id);
+    if (open !== id || mode !== 'history') return;  // closed while loading
+    if (!body.ok) { mode = null; say(body.error, 'bad'); return paint(); }
+    history = body.entries;
+    paint();
+  }
+
   // Picking a retired length says the trim puts it back in use (Q39).
   el('rows').addEventListener('change', (e) => {
     const form = e.target.closest('[data-trim]');
@@ -387,8 +469,15 @@
     const tr = e.target.closest('tr');
     if (!tr) return;
     const what = e.target.dataset && e.target.dataset.do;
-    if (['rename', 'correct', 'trim', 'rename-cancel', 'correct-cancel', 'trim-cancel'].includes(what)) {
+    if (what === 'history') return showHistory(open);
+    if (what === 'redo') return redo(history.find((h) => h.id === reversing));
+    if (what === 'reverse' || what === 'reverse-cancel') {
+      reversing = what === 'reverse' ? Number(e.target.dataset.entry) : null;
+      return paint();
+    }
+    if (['rename', 'correct', 'trim', 'rename-cancel', 'correct-cancel', 'trim-cancel', 'history-cancel'].includes(what)) {
       mode = what.endsWith('-cancel') ? null : what;
+      replacing = null;
       return paint();
     }
     if (what === 'retire' || what === 'unretire') {
@@ -401,6 +490,7 @@
   function toggle(id) {
     open = open === id ? null : id;
     mode = null;
+    replacing = null;
     paint();
   }
 
@@ -417,6 +507,7 @@
   el('rows').addEventListener('submit', (e) => {
     if (e.target.matches('[data-correct]')) return correct(e);
     if (e.target.matches('[data-trim]')) return trim(e);
+    if (e.target.matches('[data-reverse]')) return reverseEntry(e);
     if (!e.target.matches('[data-rename]')) return;
     e.preventDefault();
     // The item as it is now: a save while the row was open changed its version.
@@ -428,15 +519,17 @@
     });
   });
 
-  // Saves a change to on hand (a correction or a trim), then reads the
+  // Saves a change to on hand (a correction or a trim, which may replace an
+  // entry reversed in the same save), then reads the
   // catalog again, so on hand is the database's figure, never one added up
   // here (a retry must not add twice); the reload also brings an item a trim
   // added. `as` is the name the answer comes back under.
   function saveOnHand(route, as, body, done) {
-    save(route, { key: crypto.randomUUID(), item_id: open, ...body },
-      (r) => done(r) + (r.reloaded ? '' : ' Reload the page to see the new on hand.'),
+    save(route, { key: crypto.randomUUID(), item_id: open, replaces: replacing ? replacing.id : null, ...body },
+      (r) => done(r) + (r.reversed ? ' The entry it replaces is reversed.' : '') + (r.reloaded ? '' : ' Reload the page to see the new on hand.'),
       async (answer) => {
         mode = null;
+        replacing = null;
         const reload = await fetchItems();
         if (reload.ok) items = reload.items;
         return { ...answer[as], reloaded: reload.ok };
@@ -447,7 +540,7 @@
     const f = (name) => e.target.querySelector('[data-f="' + name + '"]');
     saveOnHand('/api/items/correct', 'correction', { quantity: Number(f('quantity').value),
       reason_id: Number(f('reason').value) || null, note: f('note').value.trim() || null },
-    (c) => c.item + ': on hand ' + (c.quantity > 0 ? '+' : '−') + fmtInt(Math.abs(c.quantity)) + ', ' + c.reason + '.');
+    (c) => c.item + ': on hand ' + signed(c.quantity) + ', ' + c.reason + '.');
   }
 
   function trim(e) {

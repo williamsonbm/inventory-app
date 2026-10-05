@@ -427,3 +427,117 @@ test('Trim takes LVL boards down to a shorter length; the Overview and the Activ
     ['2.0 LVL 1-3/4 x 11-7/8 16′', 'added: 2 trimmed to 12′; note: wet ends'],
   ]);
 });
+
+test('History lists one item\'s receipts, corrections and settings changes, newest first, with who (story 55)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const other = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'HUS26' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
+  await goLive(ctx.db, 'hangers');
+  await change(ctx, '/api/items/edit', { id: hanger.id, version: hanger.version, changes: { threshold: 40 } });
+  const po = (await change(ctx, '/api/pos/enter', { supplier_id: supplier.id, number: '4501', po_date: '2026-10-03',
+    lines: [{ item_id: hanger.id, ordered: 100 }] })).body.po;
+  await change(ctx, '/api/receipts/receive', { po_id: po.id, po_version: po.version, supplier_id: null, bol: 'B-77',
+    lines: [{ po_line_id: po.lines[0].id, item_id: hanger.id, quantity: 120, packs: 2, pack_size: 50, pack_kind: 'carton', loose: 20 },
+      { po_line_id: null, item_id: other.id, quantity: 6 }] });
+  await change(ctx, '/api/receipts/receive', { po_id: null, po_version: null, supplier_id: supplier.id,
+    lines: [{ item_id: hanger.id, quantity: 4 }] });
+  const { reasons } = await read(ctx, '/api/reasons');
+  await change(ctx, '/api/items/correct', { item_id: hanger.id, quantity: -2,
+    reason_id: reasons.find((r) => r.text === 'Damaged – scrapped').id, note: 'bent' });
+
+  const { entries } = await read(ctx, `/api/items/history?id=${hanger.id}`);
+  assert.deepEqual(entries.map((e) => [e.action, e.who, e.change, e.detail]), [
+    ['correct', 'Ann Lee', -2, 'Damaged – scrapped; note: bent'],
+    ['receive', 'Ann Lee', 4, 'Simpson, no PO'],
+    ['receive', 'Ann Lee', 120, 'PO 4501 line 1, Simpson; 2 cartons of 50 + 20 loose; Bill of Lading or tracking number B-77; '
+      + 'carton size on file: 50'],
+    ['edit item', 'Ann Lee', null, 'threshold: null → 40'],
+    ['add item', 'Ann Lee', null, 'added: Special Order, no threshold'],
+  ]);
+  const times = entries.map((e) => Date.parse(e.at));
+  assert.ok(times.every((t, n) => t && (n === 0 || t <= times[n - 1])), `each entry has its time, newest first: ${times}`);
+
+  const { entries: others } = await read(ctx, `/api/items/history?id=${other.id}`);
+  assert.deepEqual(others.map((e) => [e.action, e.change, e.detail]), [
+    ['receive', 6, 'PO 4501, not on the PO, Simpson; Bill of Lading or tracking number B-77'],
+    ['add item', null, 'added: Special Order, no threshold'],
+  ]);
+  const missing = await get(ctx.base, '/api/items/history?id=999999', ctx.cookie);
+  assert.deepEqual([missing.status, (await missing.json()).error], [400, 'That item is not in the catalog.']);
+});
+
+test('History shows a trim on both lengths: trimmed to on the long one, trimmed from on the short one (story 55)', async () => {
+  const ctx = await withAdmin();
+  const lvl = { product: '2.0 LVL 1-3/4', size: '11-7/8' };
+  const long = (await change(ctx, '/api/items/add', { family: 'lvl', identity: { ...lvl, length_ft: 16 } })).body.item;
+  await goLive(ctx.db, 'lvl');
+  const trimmed = (await change(ctx, '/api/items/trim', { item_id: long.id, length_ft: 12, boards: 2, note: 'wet ends' })).body.trim;
+
+  const { items } = await read(ctx, '/api/items');
+  const short = items.find((i) => i.length_ft === 12);
+  const [onLong] = (await read(ctx, `/api/items/history?id=${long.id}`)).entries;
+  const [onShort] = (await read(ctx, `/api/items/history?id=${short.id}`)).entries;
+  assert.equal(trimmed.to_item, '2.0 LVL 1-3/4 x 11-7/8 12′');
+  assert.deepEqual([onLong.action, onLong.change, onLong.detail], ['trim', -2, 'trimmed to 12′; note: wet ends']);
+  assert.deepEqual([onShort.action, onShort.change, onShort.detail], ['trim', 2, 'trimmed from 16′; note: wet ends']);
+});
+
+test('Reverse undoes a receipt line from History: the original stays, marked reversed, and the reversal takes its time (stories 42, 55, 79)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
+  await goLive(ctx.db, 'hangers');
+  await change(ctx, '/api/receipts/receive', { po_id: null, po_version: null, supplier_id: supplier.id,
+    lines: [{ item_id: hanger.id, quantity: 12 }] });
+  const history = async () => (await read(ctx, `/api/items/history?id=${hanger.id}`)).entries;
+  const [received] = await history();
+  assert.deepEqual([received.action, received.reversed], ['receive', false]);
+
+  const reversed = await change(ctx, '/api/ledger/reverse', { id: received.id, note: 'wrong supplier' });
+  assert.equal(reversed.status, 200, reversed.body.error);
+  assert.deepEqual(reversed.body.reversal.lines, [{ item: 'LUS28', quantity: -12 }]);
+  const again = await change(ctx, '/api/ledger/reverse', { id: received.id, note: null });
+  assert.deepEqual([again.status, again.body.error], [422, 'That entry is already reversed.']);
+
+  const [reversal, original] = await history();
+  assert.deepEqual([reversal.action, reversal.change, reversal.detail, reversal.reversed], ['reverse', -12, 'reverses the receipt; note: wrong supplier', false]);
+  assert.deepEqual([original.id, original.reversed], [received.id, true]);
+  assert.equal(reversal.at, original.at, 'a reversal takes the time of the entry it reverses (story 79)');
+  const { items } = await read(ctx, '/api/items');
+  assert.equal(items.find((i) => i.id === hanger.id).on_hand, 0);
+  const [logged] = (await read(ctx, '/api/activity')).entries;
+  assert.deepEqual([logged.action, logged.target, logged.change], ['reverse', 'LUS28', 'added: reversal of the receipt: LUS28 −12; note: wrong supplier']);
+});
+
+test('a receipt that replaces one on the wrong PO takes the original\'s time, and History shows all three rows (owner, 2026-10-05)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
+  await goLive(ctx.db, 'hangers');
+  const enter = async (number) => (await change(ctx, '/api/pos/enter', { supplier_id: supplier.id, number, po_date: '2026-10-03',
+    lines: [{ item_id: hanger.id, ordered: 100 }] })).body.po;
+  const [wrong, right] = [await enter('4501'), await enter('4502')];
+  const first = (await change(ctx, '/api/receipts/receive', { po_id: wrong.id, po_version: wrong.version, supplier_id: null,
+    lines: [{ po_line_id: wrong.lines[0].id, item_id: hanger.id, quantity: 30 }] })).body.receipt;
+
+  const replaced = await change(ctx, '/api/receipts/receive', { po_id: right.id, po_version: right.version, supplier_id: null,
+    lines: [{ po_line_id: right.lines[0].id, item_id: hanger.id, quantity: 30 }], replaces: first.lines[0].id });
+  assert.equal(replaced.status, 200, replaced.body.error);
+  const entries = (await read(ctx, `/api/items/history?id=${hanger.id}`)).entries.slice(0, 3);
+  assert.deepEqual(entries.map((e) => [e.action, e.change, e.detail, e.reversed]), [
+    ['receive', 30, 'PO 4502 line 1, Simpson', false],
+    ['receive', -30, 'reverses the receipt', false],
+    ['receive', 30, 'PO 4501 line 1, Simpson', true],
+  ]);
+  assert.equal(new Set(entries.map((e) => e.at)).size, 1, 'the replacement and the reversal take the original\'s time');
+  const [logged] = (await read(ctx, '/api/activity')).entries;
+  assert.equal(logged.change, 'added: 30 LUS28 on line 1; reverses the receipt: LUS28 −30');
+
+  const { reasons } = await read(ctx, '/api/reasons');
+  const scrapped = reasons.find((r) => r.text === 'Damaged – scrapped').id;
+  const wrongFix = (await change(ctx, '/api/items/correct', { item_id: hanger.id, quantity: -5, reason_id: scrapped, note: null })).body.correction;
+  const fixed = await change(ctx, '/api/items/correct', { item_id: hanger.id, quantity: -3, reason_id: scrapped, note: null, replaces: wrongFix.id });
+  assert.equal(fixed.status, 200, fixed.body.error);
+  assert.equal(fixed.body.correction.reversed.reverses, 'correct');
+});

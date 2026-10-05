@@ -132,7 +132,10 @@ CREATE TABLE inv.receipts (
 );
 
 -- One row per change in quantity, in pieces (design table 11). Never updated
--- or deleted: a mistake is undone by a reversal. A receipt line keeps the
+-- or deleted: a mistake is undone by a reversal, a row of its own that
+-- mirrors the row it reverses (reverses_id), once. A reversal of a receipt
+-- line keeps its PO line, so what arrived on that line drops and its
+-- incoming comes back (story 43). A receipt line keeps the
 -- delivery as entered, packs × pack size + loose, which adds up to its
 -- quantity, and its own copy of the pack size and its kind (Q13, story 19).
 -- A line on a PO line has that line's item, by the foreign key (story 36),
@@ -141,7 +144,7 @@ CREATE TABLE inv.ledger (
   id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   item_id      bigint NOT NULL REFERENCES inv.items (id),
   quantity     integer NOT NULL CHECK (quantity <> 0),
-  kind         text NOT NULL CHECK (kind IN ('receipt', 'correction')),
+  kind         text NOT NULL CHECK (kind IN ('receipt', 'correction', 'reversal')),
   effective_at timestamptz NOT NULL,
   action_id    bigint NOT NULL REFERENCES inv.activity_log (id),
   receipt_id   bigint REFERENCES inv.receipts (id),
@@ -152,16 +155,19 @@ CREATE TABLE inv.ledger (
   loose        integer CHECK (loose >= 0),
   reason_id    bigint REFERENCES inv.reasons (id),
   note         text CHECK (note = inv.tidy(note) AND note <> ''),
+  reverses_id  bigint UNIQUE REFERENCES inv.ledger (id),
   FOREIGN KEY (po_line_id, item_id) REFERENCES inv.po_lines (id, item_id),
   CHECK ((packs IS NULL) = (pack_size IS NULL) AND (packs IS NULL) = (pack_kind IS NULL)),
   CHECK ((packs IS NULL AND loose IS NULL) OR quantity = coalesce(packs * pack_size, 0) + coalesce(loose, 0)),
   CHECK (kind <> 'receipt' OR (quantity > 0 AND receipt_id IS NOT NULL)),
-  CHECK (po_line_id IS NULL OR receipt_id IS NOT NULL),
-  CHECK ((kind = 'correction') = (reason_id IS NOT NULL))
+  CHECK (po_line_id IS NULL OR receipt_id IS NOT NULL OR kind = 'reversal'),
+  CHECK ((kind = 'correction') = (reason_id IS NOT NULL)),
+  CHECK ((kind = 'reversal') = (reverses_id IS NOT NULL))
 );
 
 CREATE INDEX ledger_item_idx ON inv.ledger (item_id);
 CREATE INDEX ledger_po_line_idx ON inv.ledger (po_line_id);
+CREATE INDEX ledger_action_idx ON inv.ledger (action_id);  -- the rows of one entry: a trim, a reversal
 
 CREATE TRIGGER check_family_live BEFORE INSERT ON inv.ledger
   FOR EACH ROW EXECUTE FUNCTION inv.check_item_family_live();
@@ -187,6 +193,31 @@ $$;
 
 CREATE TRIGGER check_pack_kind BEFORE INSERT ON inv.ledger
   FOR EACH ROW EXECUTE FUNCTION inv.check_ledger_pack_kind();
+
+-- A reversal mirrors the row it reverses, whatever writes it (design, "Rules
+-- the database enforces"): same item and PO line, the opposite quantity, and
+-- the same moment, so a count made after the entry hides both (S27, story
+-- 79). A reversal is never reversed (owner, Q44): the original is entered
+-- again instead. inv.reverse_entry gives the plain refusals; this is the
+-- guarantee.
+CREATE FUNCTION inv.check_reversal() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  o inv.ledger;
+BEGIN
+  SELECT * INTO o FROM inv.ledger WHERE id = NEW.reverses_id;
+  IF o.kind = 'reversal' OR (NEW.item_id, NEW.quantity, NEW.effective_at, NEW.po_line_id)
+       IS DISTINCT FROM (o.item_id, -o.quantity, o.effective_at, o.po_line_id) THEN
+    RAISE EXCEPTION 'A reversal must mirror an entry that is not a reversal.' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_reversal BEFORE INSERT ON inv.ledger
+  FOR EACH ROW WHEN (NEW.reverses_id IS NOT NULL) EXECUTE FUNCTION inv.check_reversal();
 
 -- Story 107 (003 left this refusal to part 2): once an item has receipts,
 -- its name stays, so the records keep naming what arrived, whatever writes
@@ -330,7 +361,7 @@ SELECT i.id AS item_id,
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('enter PO', false), ('edit PO', false),
   ('close PO line', false), ('re-open PO line', false), ('switch family live', true), ('receive', false),
-  ('correct', false), ('trim', false);
+  ('correct', false), ('trim', false), ('reverse', false);
 
 -- 001's inv.finish_action, with one change: a change whose record is the
 -- same before and after, the version aside, is refused (owner, 2026-10-03).
@@ -880,10 +911,12 @@ $$;
 -- (p_supplier_id). One save: a refused line leaves nothing saved (S21).
 -- The moment it takes effect is the save's; part 3's "before or after the
 -- count?" question changes that near a count.
---   p_lines  [{po_line_id, item_id, quantity, packs, pack_size, pack_kind, loose}];
---            quantity in pieces; po_line_id blank for a line not on the PO.
+--   p_lines     [{po_line_id, item_id, quantity, packs, pack_size, pack_kind, loose}];
+--               quantity in pieces; po_line_id blank for a line not on the PO.
+--   p_replaces  a receipt line this receipt replaces (inv.replaced_at), or null.
 CREATE FUNCTION inv.receive(
-  p_actor bigint, p_key uuid, p_po_id bigint, p_po_version integer, p_supplier_id bigint, p_bol text, p_lines jsonb)
+  p_actor bigint, p_key uuid, p_po_id bigint, p_po_version integer, p_supplier_id bigint, p_bol text, p_lines jsonb,
+  p_replaces bigint DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
@@ -891,6 +924,7 @@ AS $$
 DECLARE
   a record;
   v_receipt bigint;
+  v_at timestamptz;
   v_added jsonb := '[]';
   g inv.ledger;
   r jsonb;
@@ -898,8 +932,10 @@ DECLARE
 BEGIN
   a := inv.claim_action(p_actor, p_key, 'receive', 'receipts', NULL,
                         pg_catalog.jsonb_build_object('po_id', p_po_id, 'po_version', p_po_version,
-                                                      'supplier_id', p_supplier_id, 'bol', p_bol, 'lines', p_lines));
+                                                      'supplier_id', p_supplier_id, 'bol', p_bol, 'lines', p_lines,
+                                                      'replaces', p_replaces));
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  v_at := inv.replaced_at(a.log_id, p_replaces);
   IF p_po_id IS NOT NULL AND p_supplier_id IS NOT NULL THEN
     RAISE EXCEPTION 'A receipt against a PO takes its PO''s supplier.' USING ERRCODE = 'IV400';
   ELSIF p_po_id IS NOT NULL THEN
@@ -923,7 +959,7 @@ BEGIN
     g := inv.checked_receipt_line(n, r, p_po_id);
     INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, receipt_id, po_line_id,
                             packs, pack_size, pack_kind, loose)
-    VALUES (g.item_id, g.quantity, 'receipt', pg_catalog.now(), a.log_id, v_receipt, g.po_line_id,
+    VALUES (g.item_id, g.quantity, 'receipt', v_at, a.log_id, v_receipt, g.po_line_id,
             g.packs, g.pack_size, g.pack_kind, g.loose);
     -- Story 19 = B (owner, 2026-10-03): a size typed for a kind the item has
     -- no size of becomes its size on file, logged with this receipt. One it
@@ -938,7 +974,7 @@ BEGIN
     END IF;
   END LOOP;
   RETURN inv.finish_action(a.log_id, v_receipt, NULL,
-    inv.receipt_json(v_receipt) || pg_catalog.jsonb_build_object('pack_sizes_added', v_added));
+    inv.receipt_json(v_receipt) || pg_catalog.jsonb_build_object('pack_sizes_added', v_added) || inv.replaced_json(a.log_id, p_replaces));
 END
 $$;
 
@@ -956,9 +992,11 @@ $$;
 -- Inventory → Overview → an item → Correct on hand: changes its on hand by
 -- p_quantity pieces, + or −, with a reason (S46, story 44). The moment it
 -- takes effect is the save's; part 3's "before or after the count?" question
--- changes that near a count.
+-- changes that near a count. p_replaces: a correction this one replaces
+-- (inv.replaced_at), or null.
 CREATE FUNCTION inv.correct(
-  p_actor bigint, p_key uuid, p_item_id bigint, p_quantity numeric, p_reason_id bigint, p_note text)
+  p_actor bigint, p_key uuid, p_item_id bigint, p_quantity numeric, p_reason_id bigint, p_note text,
+  p_replaces bigint DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
@@ -966,14 +1004,16 @@ AS $$
 DECLARE
   a record;
   v_id bigint;
+  v_at timestamptz;
   f inv.families;
   r inv.reasons;
   v_note text := nullif(inv.tidy(p_note), '');
 BEGIN
   a := inv.claim_action(p_actor, p_key, 'correct', 'ledger', NULL,
                         pg_catalog.jsonb_build_object('item_id', p_item_id, 'quantity', p_quantity,
-                                                      'reason_id', p_reason_id, 'note', p_note));
+                                                      'reason_id', p_reason_id, 'note', p_note, 'replaces', p_replaces));
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  v_at := inv.replaced_at(a.log_id, p_replaces);
   SELECT fam.* INTO f FROM inv.items i JOIN inv.families fam ON fam.code = i.family WHERE i.id = p_item_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Pick the item from the catalog.' USING ERRCODE = 'IV400';
@@ -992,9 +1032,9 @@ BEGIN
     RAISE EXCEPTION '% does not come back from a job site: it is used up on the job.', f.name USING ERRCODE = 'IV422';
   END IF;
   INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, reason_id, note)
-  VALUES (p_item_id, p_quantity, 'correction', pg_catalog.now(), a.log_id, r.id, v_note)
+  VALUES (p_item_id, p_quantity, 'correction', v_at, a.log_id, r.id, v_note)
   RETURNING id INTO v_id;
-  RETURN inv.finish_action(a.log_id, v_id, NULL, inv.correction_json(v_id));
+  RETURN inv.finish_action(a.log_id, v_id, NULL, inv.correction_json(v_id) || inv.replaced_json(a.log_id, p_replaces));
 END
 $$;
 
@@ -1009,9 +1049,11 @@ $$;
 -- screen told the person so (owner, Q39); a stale screen is refused.
 -- The reason is the one kept for a trim (inv.reasons.entry), looked up here:
 -- inv.checked_reason refuses it everywhere else. EWP has no names until step
--- 5, so only LVL is trimmed for now (inv.families.trimmable).
+-- 5, so only LVL is trimmed for now (inv.families.trimmable). p_replaces: a
+-- trim this one replaces (inv.replaced_at), or null.
 CREATE FUNCTION inv.trim(
-  p_actor bigint, p_key uuid, p_item_id bigint, p_length_ft numeric, p_boards numeric, p_note text, p_unretire boolean)
+  p_actor bigint, p_key uuid, p_item_id bigint, p_length_ft numeric, p_boards numeric, p_note text, p_unretire boolean,
+  p_replaces bigint DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
@@ -1019,6 +1061,7 @@ AS $$
 DECLARE
   a record;
   v_id bigint;
+  v_at timestamptz;
   v_unretired boolean := false;
   long inv.items;
   short inv.items;
@@ -1030,8 +1073,10 @@ DECLARE
 BEGIN
   a := inv.claim_action(p_actor, p_key, 'trim', 'ledger', NULL,
                         pg_catalog.jsonb_build_object('item_id', p_item_id, 'length_ft', p_length_ft,
-                                                      'boards', p_boards, 'note', p_note, 'unretire', p_unretire));
+                                                      'boards', p_boards, 'note', p_note, 'unretire', p_unretire,
+                                                      'replaces', p_replaces));
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  v_at := inv.replaced_at(a.log_id, p_replaces);
   SELECT * INTO long FROM inv.items WHERE id = p_item_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Pick the item from the catalog.' USING ERRCODE = 'IV400';
@@ -1070,22 +1115,141 @@ BEGIN
   END IF;
   SELECT * INTO v_reason FROM inv.reasons WHERE entry = 'trim';
   INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, reason_id, note)
-  VALUES (long.id, -p_boards, 'correction', pg_catalog.now(), a.log_id, v_reason.id, v_note)
+  VALUES (long.id, -p_boards, 'correction', v_at, a.log_id, v_reason.id, v_note)
   RETURNING id INTO v_id;
   INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, reason_id, note)
-  VALUES (short.id, p_boards, 'correction', pg_catalog.now(), a.log_id, v_reason.id, v_note);
+  VALUES (short.id, p_boards, 'correction', v_at, a.log_id, v_reason.id, v_note);
   RETURN inv.finish_action(a.log_id, v_id, NULL, pg_catalog.jsonb_build_object(
     'id', v_id, 'item', inv.item_label(long), 'to_item', inv.item_label(short), 'length_ft', short.length_ft,
-    'boards', p_boards, 'note', v_note, 'item_added', v_added, 'item_unretired', v_unretired));
+    'boards', p_boards, 'note', v_note, 'item_added', v_added, 'item_unretired', v_unretired)
+    || inv.replaced_json(a.log_id, p_replaces));
+END
+$$;
+
+-- A reversal as the app shows it and its log row records it: the action
+-- it reverses, and each row with its item, the opposite of the original.
+CREATE FUNCTION inv.reversal_json(p_log_id bigint) RETURNS jsonb
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT pg_catalog.jsonb_build_object(
+    'reverses', pg_catalog.min(ol.action), 'note', pg_catalog.min(g.note),
+    'lines', pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', g.quantity) ORDER BY g.id))
+    FROM inv.ledger g
+    JOIN inv.items i ON i.id = g.item_id
+    JOIN inv.ledger o ON o.id = g.reverses_id
+    JOIN inv.activity_log ol ON ol.id = o.action_id
+   WHERE g.action_id = p_log_id AND g.kind = 'reversal'
+$$;
+
+-- Writes the reversal of ledger row p_id, and of every other row of the same
+-- entry, in action p_log_id; answers the first reversal row's id. An entry
+-- is reversed whole, so a trim's two rows go together or not at all (design,
+-- "A trim or a swap is complete"); a receipt is reversed one line at a time
+-- (owner, Q45). Rows a replacing entry reversed are not part of it. Each
+-- reversal takes the moment of the row it reverses (inv.check_reversal).
+CREATE FUNCTION inv.reverse_entry(p_log_id bigint, p_id bigint, p_note text) RETURNS bigint
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  o inv.ledger;
+  g inv.ledger;
+  v_first bigint;
+  v_id bigint;
+BEGIN
+  SELECT x.* INTO o FROM inv.ledger x WHERE x.id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'That entry is not in the records.' USING ERRCODE = 'IV400';
+  END IF;
+  IF o.kind = 'reversal' THEN
+    RAISE EXCEPTION 'A reversal cannot be reversed. Enter the original again instead.' USING ERRCODE = 'IV422';
+  END IF;
+  FOR g IN SELECT x.* FROM inv.ledger x
+            WHERE x.action_id = o.action_id AND x.kind <> 'reversal' AND (x.id = o.id OR o.receipt_id IS NULL)
+            ORDER BY x.id FOR UPDATE LOOP
+    BEGIN
+      INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, po_line_id, reverses_id, note)
+      VALUES (g.item_id, -g.quantity, 'reversal', g.effective_at, p_log_id, g.po_line_id, g.id, p_note)
+      RETURNING id INTO v_id;
+    EXCEPTION WHEN unique_violation THEN
+      RAISE EXCEPTION 'That entry is already reversed.' USING ERRCODE = 'IV422';
+    END;
+    v_first := coalesce(v_first, v_id);
+  END LOOP;
+  RETURN v_first;
+END
+$$;
+
+-- The moment a new entry takes effect, in action p_log_id: now, or, when it
+-- replaces ledger row p_replaces, that row's moment, after reversing it in
+-- the same save (owner, 2026-10-05). So a receipt moved to the right PO, or
+-- a correction or trim entered again with the right numbers, is timed as
+-- the entry it replaces: a count made in between already holds the real
+-- pieces, and hides both the reversal and the new entry, as it hides any
+-- reversal (S27). Entered as a new entry, it would be timed after that count
+-- and counted twice. An entry replaces only one of its own kind.
+CREATE FUNCTION inv.replaced_at(p_log_id bigint, p_replaces bigint) RETURNS timestamptz
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_action text := (SELECT action FROM inv.activity_log WHERE id = p_log_id);
+  v_at timestamptz;
+BEGIN
+  IF p_replaces IS NULL THEN RETURN pg_catalog.now(); END IF;
+  SELECT g.effective_at INTO v_at FROM inv.ledger g JOIN inv.activity_log l ON l.id = g.action_id
+   WHERE g.id = p_replaces AND l.action = v_action AND g.kind <> 'reversal';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION '%. Reverse this entry from History instead.',
+      CASE v_action WHEN 'receive' THEN 'A receipt replaces only a receipt line'
+                    WHEN 'correct' THEN 'A correction replaces only a correction' ELSE 'A trim replaces only a trim' END
+      USING ERRCODE = 'IV422';
+  END IF;
+  PERFORM inv.reverse_entry(p_log_id, p_replaces, NULL);
+  RETURN v_at;
+END
+$$;
+
+-- What a replacing entry adds to its answer and its log row: the reversal it
+-- made, or nothing when it replaces none.
+CREATE FUNCTION inv.replaced_json(p_log_id bigint, p_replaces bigint) RETURNS jsonb
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT CASE WHEN p_replaces IS NULL THEN '{}'::jsonb
+              ELSE pg_catalog.jsonb_build_object('reversed', inv.reversal_json(p_log_id)) END
+$$;
+
+-- Inventory → Overview → an item → History → Reverse: undoes a receipt
+-- line, a correction or a trim entered by mistake; the original stays,
+-- marked reversed (stories 42, 43, 49).
+CREATE FUNCTION inv.reverse(p_actor bigint, p_key uuid, p_id bigint, p_note text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  v_id bigint;
+BEGIN
+  a := inv.claim_action(p_actor, p_key, 'reverse', 'ledger', NULL,
+                        pg_catalog.jsonb_build_object('id', p_id, 'note', p_note));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  v_id := inv.reverse_entry(a.log_id, p_id, nullif(inv.tidy(p_note), ''));
+  RETURN inv.finish_action(a.log_id, v_id, NULL, inv.reversal_json(a.log_id));
 END
 $$;
 
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA inv FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION inv.correct(bigint, uuid, bigint, numeric, bigint, text) TO inv_app;
-GRANT EXECUTE ON FUNCTION inv.trim(bigint, uuid, bigint, numeric, numeric, text, boolean) TO inv_app;
-GRANT EXECUTE ON FUNCTION inv.receive(bigint, uuid, bigint, integer, bigint, text, jsonb) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.reverse(bigint, uuid, bigint, text) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.correct(bigint, uuid, bigint, numeric, bigint, text, bigint) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.trim(bigint, uuid, bigint, numeric, numeric, text, boolean, bigint) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.receive(bigint, uuid, bigint, integer, bigint, text, jsonb, bigint) TO inv_app;
 -- inv.po_json and inv.item_figures work out what arrived with inv.received.
 GRANT EXECUTE ON FUNCTION inv.received(bigint) TO inv_app;
+-- An item's History (src/inventory/history.js) numbers each receipt's PO line.
+GRANT EXECUTE ON FUNCTION inv.po_line_number(bigint) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.enter_po(bigint, uuid, bigint, text, text, jsonb) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.edit_po(bigint, uuid, bigint, integer, bigint, text, text, jsonb) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.close_po_line(bigint, uuid, bigint, integer, bigint) TO inv_app;

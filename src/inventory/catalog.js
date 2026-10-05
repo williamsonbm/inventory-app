@@ -81,17 +81,24 @@ const CATALOG_CHANGES = {
     fn: 'edit_po', args: (b) => [b.id, b.version, b.supplier_id, b.number, b.po_date, JSON.stringify(b.lines)], as: 'po',
   },
   // A delivery against a PO (po_id and the version the screen read) or
-  // without one (supplier_id).
+  // without one (supplier_id). replaces: a receipt line it replaces, from
+  // History → Reverse → Reverse and enter again; likewise for a correction
+  // and a trim.
   '/api/receipts/receive': {
-    fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines)], as: 'receipt',
+    fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines), b.replaces ?? null], as: 'receipt',
   },
   // Inventory → Overview → an item → Correct on hand: a change in pieces, + or −.
   '/api/items/correct': {
-    fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note], as: 'correction',
+    fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note, b.replaces ?? null], as: 'correction',
   },
   // Inventory → Overview → an LVL item → Trim: boards cut down to a shorter length;
   // unretire: the page said a retired length comes back into use (Q39).
-  '/api/items/trim': { fn: 'trim', args: (b) => [b.item_id, b.length_ft, b.boards, b.note, b.unretire === true], as: 'trim' },
+  '/api/items/trim': {
+    fn: 'trim', args: (b) => [b.item_id, b.length_ft, b.boards, b.note, b.unretire === true, b.replaces ?? null], as: 'trim',
+  },
+  // Inventory → Overview → an item → History → Reverse: a receipt line, a
+  // correction or a trim entered by mistake (stories 42, 43, 49).
+  '/api/ledger/reverse': { fn: 'reverse', args: (b) => [b.id, b.note], as: 'reversal' },
   '/api/pos/close-line': { fn: 'close_po_line', args: (b) => [b.id, b.po_version, b.reason_id], as: 'po' },
   '/api/pos/reopen-line': { fn: 'reopen_po_line', args: (b) => [b.id, b.po_version], as: 'po' },
   '/api/lumber/redirect': {

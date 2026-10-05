@@ -70,7 +70,7 @@ const TARGET_NAMES = {
   lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
   purchase_orders: (_item, row) => `PO ${row.number}`,
   receipts: (_item, row) => (row.po_number ? `PO ${row.po_number}` : `${row.supplier}, no PO`),
-  ledger: (_item, row) => row.item,  // a correction's item, or a trim's long one
+  ledger: (_item, row) => row.item ?? row.lines[0].item,  // a correction's item, a trim's long one, or a reversal's first
   families: (_item, row) => row.name,
 };
 const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
@@ -91,27 +91,43 @@ const ADDED = {
   lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
   purchase_orders: (row) => `${row.supplier}, dated ${row.po_date}, ${row.lines.length} line${row.lines.length === 1 ? '' : 's'}`,
   receipts: describeReceipt,
-  ledger: (row) => `on hand ${row.quantity > 0 ? '+' : '−'}${Math.abs(row.quantity)}, ${row.reason}${noted(row)}`,
+  ledger: (row) => `on hand ${signed(row.quantity)}, ${row.reason}${noted(row)}`,
+  reverse: (row) => `reversal of ${reversalLines(row)}${noted(row)}`,
   trim: (row) => `${row.boards} trimmed to ${row.length_ft}′`
     + `${row.item_added ? ' (new item, Non-Stock)' : row.item_unretired ? ' (put back in use)' : ''}${noted(row)}`,
 };
 
+// What a reversal undid: "the receipt: LUS28 −30".
+const reversalLines = (r) => `${ENTRY_NAMES[r.reverses]}: ${r.lines.map((l) => `${l.item} ${signed(l.quantity)}`).join(', ')}`;
+const signed = (n) => `${n > 0 ? '+' : '−'}${Math.abs(n)}`;
+// The entry a receipt, correction or trim replaced, reversed in the same save.
+const replaced = (row) => (row.reversed ? `; reverses ${reversalLines(row.reversed)}` : '');
+
 const noted = (row) => (row.note ? `; note: ${row.note}` : '');
+
+// The entry a reversal undoes, by the action that wrote it.
+const ENTRY_NAMES = { receive: 'the receipt', correct: 'the correction', trim: 'the trim' };
 
 // What a receipt brought, line by line, with the PO line each went on and
 // how it came, then its Bill of Lading and any pack size it put on file
 // (story 19).
 function describeReceipt(row) {
-  const plural = (kind, n) => (n === 1 ? kind : kind === 'box' ? 'boxes' : `${kind}s`);
   const lines = row.lines.map((l) => {
     const where = l.po_line ? ` on line ${l.po_line}` : row.po_id ? ' not on the PO' : '';
-    const how = [l.packs !== null && `${l.packs} ${plural(l.pack_kind, l.packs)} of ${l.pack_size}`,
-      l.loose !== null && `${l.loose} loose`].filter(Boolean).join(' + ');
+    const how = howItCame(l);
     return `${l.quantity} ${l.item}${where}${how ? ` (${how})` : ''}`;
   });
   if (row.bol) lines.push(`Bill of Lading or tracking number ${row.bol}`);
   for (const p of row.pack_sizes_added) lines.push(`${p.kind} size on file for ${p.item}: ${p.pieces}`);
   return lines.join('; ');
+}
+
+// How a receipt line came, as entered: "2 cartons of 50 + 20 loose", or
+// blank when only the pieces were typed.
+function howItCame(l) {
+  const plural = (kind, n) => (n === 1 ? kind : kind === 'box' ? 'boxes' : `${kind}s`);
+  return [l.packs !== null && `${l.packs} ${plural(l.pack_kind, l.packs)} of ${l.pack_size}`,
+    l.loose !== null && `${l.loose} loose`].filter(Boolean).join(' + ');
 }
 
 // What a change to a PO did, by its supplier, number and date, then line by
@@ -149,11 +165,11 @@ function describeChange(action, table, was, now) {
   if (!now) return 'removed';
   if (!was) {
     const added = (ADDED[action] ?? ADDED[table])?.(now);
-    return added ? `added: ${added}` : 'added';
+    return added ? `added: ${added}${replaced(now)}` : 'added';
   }
   if (CHANGED[table]) return CHANGED[table](was, now);
   return Object.keys(now).filter((k) => k !== 'version' && JSON.stringify(was[k]) !== JSON.stringify(now[k]))
     .map((k) => `${k}: ${was[k]} → ${now[k]}`).join('; ');
 }
 
-module.exports = { readActivity, describeChange };
+module.exports = { readActivity, describeChange, howItCame, noted, ENTRY_NAMES };

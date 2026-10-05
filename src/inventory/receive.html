@@ -25,6 +25,8 @@
   the list of POs. Like the web app's Receiving page, which also takes PO
   lines. The list shows POs with something still to arrive; "Show
   finished" shows the rest, so a line closed by mistake can be re-opened.
+  Opened from an item's History with ?replaces= (Reverse and enter again,
+  owner 2026-10-05), the next receipt saved replaces that receipt line.
 
   The family bar narrows the item choices and the PO list. Only items of a
   family that is live in Inventory can go on a PO: the database refuses the
@@ -54,6 +56,8 @@
 <div class="wrap">
   <div id="message" role="status"></div>
   <p class="sub" id="not-live" hidden></p>
+  <div class="note" id="replacing" hidden><span id="replacing-what"></span>
+    <button type="button" class="ghost" id="replacing-stop">Do not replace</button></div>
 
   <form id="receipt" hidden>
     <h2 style="margin:8px 0" id="receipt-title">Receive</h2>
@@ -170,7 +174,19 @@
     return got.slice(FIGURES.length);
   }
 
+  // The receipt line the next receipt replaces (from History), and its words.
+  const asked = new URLSearchParams(location.search);
+  let replacing = Number(asked.get('replaces')) || null;
+  function paintReplacing() {
+    el('replacing').hidden = !replacing;
+    el('replacing-what').textContent = replacing ? 'Receiving again, to replace ' + (asked.get('what') || 'a receipt line') +
+      '. Click Receive on the right PO, or Receive without a PO. Saving reverses the old line and times this receipt as it.' : '';
+    if (!replacing) history.replaceState(null, '', location.pathname);
+  }
+  el('replacing-stop').addEventListener('click', () => { replacing = null; paintReplacing(); });
+
   async function load() {
+    paintReplacing();
     const got = await refresh(['/api/suppliers', '/api/reasons']);
     if (!got) return;
     const [suppliers, reasonList] = got;
@@ -518,7 +534,7 @@
     });
     const po = receiving.po;
     return { key: crypto.randomUUID(), po_id: po ? po.id : null, po_version: po ? po.version : null,
-      supplier_id: po ? null : Number(el('receipt-supplier').value) || null, bol: el('bol').value, lines };
+      supplier_id: po ? null : Number(el('receipt-supplier').value) || null, bol: el('bol').value, lines, replaces: replacing };
   }
 
   // Saves the receipt, then reloads the list, whose Received and Incoming
@@ -530,7 +546,9 @@
       const from = receipt.po_number ? 'PO ' + receipt.po_number + ' from ' + receipt.supplier : receipt.supplier + ', without a PO';
       const kept = receipt.pack_sizes_added.map((p) => ' ' + p.item + ' now has a ' + p.kind + ' size on file: ' + p.pieces + '.').join('');
       hideReceipt();
-      say('Received ' + from + '.' + kept, 'ok');
+      say('Received ' + from + '.' + kept + (receipt.reversed ? ' The receipt line it replaces is reversed.' : ''), 'ok');
+      replacing = null;
+      paintReplacing();
       await refresh();
     } catch (err) {
       const restart = err.current ? ' Click Receive to start again from it as it is now.' : '';

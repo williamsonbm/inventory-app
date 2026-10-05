@@ -217,3 +217,118 @@ test('a trim to a retired length puts it back in use when the screen said so (Q3
   assert.equal((await trim(ctx, long, 12, 1, null, crypto.randomUUID(), true)).item_unretired, false,
     'a length in use is only trimmed to');
 });
+
+// Reverses ledger row `id` as Ann.
+function reverse(ctx, id, note = null, key = crypto.randomUUID()) {
+  return call(ctx.db, 'reverse', ctx.ann.id, key, id, note);
+}
+
+async function incoming(db) {
+  return as(db, APP, async (app) => Object.fromEntries((await app.query(
+    'SELECT item_id::int, incoming FROM inv.item_figures')).rows.map((r) => [r.item_id, r.incoming])));
+}
+
+test('a reversed receipt line comes off on hand and its PO line\'s incoming comes back, logged once (stories 42, 43)', async () => {
+  const ctx = await withHanger();
+  const { db, ann, supplier, hanger } = ctx;
+  const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4501', '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 100 }]));
+  const receipt = await call(db, 'receive', ann.id, crypto.randomUUID(), po.id, po.version, null, null,
+    JSON.stringify([{ po_line_id: po.lines[0].id, item_id: hanger.id, quantity: 30 }]));
+  assert.deepEqual([(await onHand(db))[hanger.id], (await incoming(db))[hanger.id]], [70, 70]);
+
+  const key = crypto.randomUUID();
+  const reversal = await reverse(ctx, receipt.lines[0].id, ' miscounted ', key);
+  assert.deepEqual(reversal, { reverses: 'receive', lines: [{ item: 'LUS28', quantity: -30 }], note: 'miscounted' });
+  assert.deepEqual([(await onHand(db))[hanger.id], (await incoming(db))[hanger.id]], [40, 100]);
+
+  const log = (await logRows(db)).at(-1);
+  assert.deepEqual([log.action, log.target_table], ['reverse', 'ledger']);
+  assert.deepEqual(log.new_value, reversal);
+  assert.deepEqual(await reverse(ctx, receipt.lines[0].id, ' miscounted ', key), reversal, 'a retry answers with the first save');
+  assert.equal((await onHand(db))[hanger.id], 40, 'a retry takes nothing off twice');
+});
+
+test('a reversed correction or trim undoes it: a trim\'s two rows together (story 49)', async () => {
+  const ctx = await withLvl();
+  const { db, long, short } = ctx;
+  const trimmed = await trim(ctx, long, 12, 3);
+  const scrapped = await correct(ctx, long, -1, await reasonId(db, 'Damaged – scrapped'));
+  assert.deepEqual(await onHand(db), { [long.id]: 1, [short.id]: 3 });
+
+  assert.deepEqual((await reverse(ctx, scrapped.id)).lines, [{ item: '2.0 LVL 1-3/4 x 11-7/8 16′', quantity: 1 }]);
+  const undone = await reverse(ctx, trimmed.id);
+  assert.deepEqual([undone.reverses, undone.lines], ['trim',
+    [{ item: '2.0 LVL 1-3/4 x 11-7/8 16′', quantity: 3 }, { item: '2.0 LVL 1-3/4 x 11-7/8 12′', quantity: -3 }]]);
+  assert.deepEqual(await onHand(db), { [long.id]: 5, [short.id]: 0 });
+});
+
+test('a reversal is refused for an entry already reversed, for a reversal, and for an entry not in the records (Q44)', async () => {
+  const ctx = await withLvl();
+  const { db, long } = ctx;
+  const trimmed = await trim(ctx, long, 12, 3);
+  await reverse(ctx, trimmed.id);
+  const reversalRow = Number((await logRows(db)).at(-1).target_id);  // the log names the reversal's first row
+  const before = { log: (await logRows(db)).length, onHand: await onHand(db) };
+  const cases = [
+    ['the same entry again', trimmed.id, null, 'IV422', /^That entry is already reversed\.$/],
+    // A trim writes its long row, then its short row, so the short row's id is next.
+    ['the short row of a reversed trim', trimmed.id + 1, null, 'IV422', /^That entry is already reversed\.$/],
+    ['a reversal (Q44)', reversalRow, null, 'IV422', /^A reversal cannot be reversed\. Enter the original again instead\.$/],
+    ['not in the records', 999999, null, 'IV400', /^That entry is not in the records\.$/],
+  ];
+  for (const [label, id, note, code, message] of cases) {
+    const err = await refused(reverse(ctx, id, note), code, label);
+    assert.match(err.message, message, label);
+  }
+  const fresh = await trim(ctx, long, 10, 1);
+  const err = await refused(reverse(ctx, fresh.id, 'x'.repeat(201)), 'IV400', 'a long note');
+  assert.match(err.message, /^A note has at most 200 characters\.$/);
+  assert.equal((await logRows(db)).length, before.log + 1, 'no refusal leaves a log row (the one more is the new trim)');
+  assert.equal((await onHand(db))[long.id], before.onHand[long.id] - 1, 'no refusal changes on hand');
+});
+
+test('a receipt line received on the wrong PO is replaced by one on the right PO, in one save (owner, 2026-10-05)', async () => {
+  const ctx = await withHanger();
+  const { db, ann, supplier, hanger } = ctx;
+  const enter = (number, ordered) => call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, number, '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered }]));
+  const wrong = await enter('4501', 100);
+  const right = await enter('4502', 50);
+  const receipt = await call(db, 'receive', ann.id, crypto.randomUUID(), wrong.id, wrong.version, null, null,
+    JSON.stringify([{ po_line_id: wrong.lines[0].id, item_id: hanger.id, quantity: 30 }]));
+  const replace = (lines, replaces = receipt.lines[0].id) => call(db, 'receive', ann.id, crypto.randomUUID(), right.id, right.version,
+    null, null, JSON.stringify(lines), replaces);
+
+  const before = { log: (await logRows(db)).length, onHand: await onHand(db), incoming: await incoming(db) };
+  const err = await refused(replace([{ po_line_id: right.lines[0].id, item_id: hanger.id, quantity: 0 }]), 'IV400', 'a bad line');
+  assert.match(err.message, /^Line 1: the pieces received are a whole number above 0\.$/);
+  const correction = await correct(ctx, hanger, -1, await reasonId(db, 'Damaged – scrapped'));
+  const other = await refused(replace([{ po_line_id: right.lines[0].id, item_id: hanger.id, quantity: 30 }], correction.id), 'IV422', 'a correction');
+  assert.match(other.message, /^A receipt replaces only a receipt line\. Reverse this entry from History instead\.$/);
+  assert.equal((await logRows(db)).length, before.log + 1, 'a refused replacement reverses nothing (the one more is the correction)');
+  assert.deepEqual(await incoming(db), before.incoming);
+
+  const replaced = await replace([{ po_line_id: right.lines[0].id, item_id: hanger.id, quantity: 30 }]);
+  assert.deepEqual(replaced.reversed, { reverses: 'receive', lines: [{ item: 'LUS28', quantity: -30 }], note: null });
+  assert.equal((await onHand(db))[hanger.id], before.onHand[hanger.id] - 1, 'on hand is unchanged but for the correction');
+  assert.equal((await incoming(db))[hanger.id], 100 + 20, 'all of 4501 is incoming again, and 30 of 4502 has arrived');
+  assert.equal((await reverse(ctx, receipt.lines[0].id).catch((e) => e)).message, 'That entry is already reversed.');
+});
+
+test('a correction or a trim is replaced by a new one in one save (owner, 2026-10-05)', async () => {
+  const ctx = await withLvl();
+  const { db, ann, long, short } = ctx;
+  const scrapped = await reasonId(db, 'Damaged – scrapped');
+  const first = await correct(ctx, long, -2, scrapped);
+  const again = await call(db, 'correct', ann.id, crypto.randomUUID(), long.id, -1, scrapped, null, first.id);
+  assert.deepEqual(again.reversed.lines, [{ item: '2.0 LVL 1-3/4 x 11-7/8 16′', quantity: 2 }]);
+  assert.deepEqual(await onHand(db), { [long.id]: 4, [short.id]: 0 });
+
+  const trimmed = await trim(ctx, long, 12, 3);
+  const retrimmed = await call(db, 'trim', ann.id, crypto.randomUUID(), long.id, 12, 1, null, false, trimmed.id);
+  assert.equal(retrimmed.reversed.reverses, 'trim');
+  assert.deepEqual(await onHand(db), { [long.id]: 3, [short.id]: 1 });
+  const err = await refused(call(db, 'trim', ann.id, crypto.randomUUID(), long.id, 12, 1, null, false, again.id), 'IV422', 'a correction');
+  assert.match(err.message, /^A trim replaces only a trim\. Reverse this entry from History instead\.$/);
+});
