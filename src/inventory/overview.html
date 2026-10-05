@@ -22,8 +22,8 @@
   overview.html — Inventory → Overview (#81 part 1): the item catalog, one
   family at a time or All, picked in the same family bar as the Planner's
   (owner, 2026-10-02). A row opens a panel below itself, where its stocking
-  status, threshold and note are edited (owner, 2026-10-01). Incoming
-  (story 32) comes from inv.item_figures; On hand and Reorder join it in a
+  status, threshold and note are edited (owner, 2026-10-01). On Hand and
+  Incoming (stories 32, 50) come from inv.item_figures; Reorder joins them
   later in part 2. "Correct on hand…" in the panel changes an item's on hand
   with a reason (stories 44–46); "Trim…" on an LVL item cuts weathered boards
   down to a shorter length (stories 47–48). "History" lists every change to
@@ -76,7 +76,7 @@
     <tbody id="rows"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
-  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. Incoming is what open POs still bring: linear feet (LF) for lumber, pieces for the rest.</p>
+  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Incoming is what open POs still bring. Both are in linear feet (LF) for lumber, pieces for the rest.</p>
 </div>
 
 <script src="/app-header.js"></script>
@@ -84,7 +84,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, itemLabel, unitShort, showTime } = AppHeader;
+  const { send, say, itemLabel, unitShort, inOrderUnit, showTime } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -123,6 +123,14 @@
   // a grade the engine does not know goes last.
   const gradeRank = (g) => { const r = gradeOrder.indexOf(g); return r === -1 ? gradeOrder.length : r; };
 
+  // An amount in the family's order unit; pieces go unlabeled (owner, 2026-10-03).
+  const inUnit = (i, n) => {
+    const unit = unitShort(orderUnit(i.family));
+    return fmtInt(n) + (unit === 'pieces' ? '' : ' ' + unit);
+  };
+  // on_hand comes in pieces; lumber's order unit is linear feet.
+  const onHand = (i) => inOrderUnit(i.on_hand, i, orderUnit(i.family));
+
   // The columns of a closed row, each with its width, its header, how its
   // cell reads and how it sorts. Lumber and LVL tabs pick the size or depth,
   // so neither repeats it in a column. What a person changes is in the row's
@@ -138,12 +146,17 @@
     // Under All, an LVL row says where its threshold is instead of "not set".
     threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold,
       cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
-    // What open POs still bring, in the family's order unit: "1,280 LF" for
-    // lumber (Q14); pieces go unlabeled (owner, 2026-10-03). None shows blank, not 0.
-    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => {
-      const unit = unitShort(orderUnit(i.family));
-      return i.incoming ? fmtInt(i.incoming) + (unit === 'pieces' ? '' : ' ' + unit) : '';
+    // What is here, in the same unit as Incoming so the two read side by
+    // side: 80 pieces of 16′ lumber is "1,280 LF" (owner, Q49). None shows 0
+    // (Q50); below zero, a shipment entered before its receipt, is red (S67).
+    onHand: { head: 'On Hand', width: 14, sort: onHand, cell: (i) => {
+      const n = onHand(i);
+      const text = inUnit(i, n);
+      return n < 0 ? '<span class="chip neg">' + text + '</span>' : text;
     } },
+    // What open POs still bring, in the family's order unit: "1,280 LF" for
+    // lumber (Q14). None shows blank, not 0.
+    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => (i.incoming ? inUnit(i, i.incoming) : '') },
     // A marker only: the note itself shows when the row is open.
     note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
   };
@@ -152,11 +165,11 @@
   // LVL calls its size the depth, in inches (″), and its thresholds are per
   // depth (Settings → LVL thresholds), so LVL rows have no Threshold column.
   const VIEWS = {
-    plates: { cols: ['sku', 'stocking', 'threshold', 'incoming', 'note'], order: ['sku'] },
-    hangers: { cols: ['sku', 'stocking', 'threshold', 'incoming', 'note'], order: ['sku'] },
-    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'incoming', 'note'], order: ['grade', 'length'] },
+    plates: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['sku'] },
+    hangers: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['sku'] },
+    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['grade', 'length'] },
     lvl: {
-      tab: 'size', cols: ['product', 'length', 'stocking', 'incoming', 'note'], order: ['product', 'length'],
+      tab: 'size', cols: ['product', 'length', 'stocking', 'onHand', 'incoming', 'note'], order: ['product', 'length'],
       labels: { size: 'Depth' }, tabUnit: '″', perDepth: true,
     },
   };
@@ -164,8 +177,8 @@
   // item in full instead of leaving the size to the tab.
   // A family with no view of its own (EWP, once step 5 names its items) lists
   // its items by name. All lists every family's items by family, then name.
-  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'incoming', 'note'], order: ['item'] };
-  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'incoming', 'note'], order: ['family', 'item'] };
+  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['item'] };
+  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'onHand', 'incoming', 'note'], order: ['family', 'item'] };
   const view = () => {
     if (current === 'all') return ALL;
     const v = VIEWS[current] || PLAIN;

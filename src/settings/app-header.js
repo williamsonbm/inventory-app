@@ -1,6 +1,7 @@
 // app-header.js — the header every signed-in page shares (#77): the theme
 // switch, the signed-in person's name, and Sign out. Also `send`, the one way
 // a page posts a change, `say`, its message area, `itemLabel`, `unitShort`,
+// `inOrderUnit`,
 // `familyBar`, the family filter the Planner and Inventory share, and
 // `typingIn`, which keeps a box's typing through a repaint.
 //
@@ -116,6 +117,13 @@ window.AppHeader = (() => {
     return orderUnit === 'linear feet' ? 'LF' : orderUnit;
   }
 
+  // Pieces of an item as an amount in its family's order unit: 80 pieces of
+  // 16′ lumber are 1,280 LF (Q14). The database counts a receipt against its
+  // PO line the same way.
+  function inOrderUnit(pieces, item, orderUnit) {
+    return orderUnit === 'linear feet' ? pieces * item.length_ft : pieces;
+  }
+
   // A time as the office clock shows it: Eastern Time with daylight saving (Q17).
   // The same zone as OFFICE_TIME_ZONE in src/settings/activity.js, which picks the days.
   const OFFICE_ZONE = 'America/New_York';
@@ -184,5 +192,5 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, say, itemLabel, unitShort, showTime, today, familyBar, typingIn };
+  return { me, send, say, itemLabel, unitShort, inOrderUnit, showTime, today, familyBar, typingIn };
 })();
