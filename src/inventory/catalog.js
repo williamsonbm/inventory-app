@@ -27,14 +27,15 @@ async function readLumberSizes(database) {
 // The families Inventory holds, for the family bar (in the Planner's order,
 // so the two bars match) and "+ Add item", and
 // every item with its figures (inv.item_figures). live says whether the
-// family takes POs yet, and order_unit what its PO lines are ordered in. A family with no identity fields (EWP until step 5) cannot hold
+// family takes POs yet, order_unit what its PO lines are ordered in, and
+// trimmable whether its items offer Trim (stories 47–48). A family with no identity fields (EWP until step 5) cannot hold
 // items, so it is left out. choices gives a name field's only values, which
 // the page offers as a list: lumber sizes (inv.lumber_sizes). The version
 // rides along so a save can say which version it read (S41).
 async function listCatalog(database) {
   const [families, items] = await Promise.all([
     database.read(`
-      SELECT code, name, identity, pack_kinds, live, order_unit,
+      SELECT code, name, identity, pack_kinds, live, order_unit, trimmable,
              CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
         FROM inv.families
        WHERE identity IS NOT NULL
@@ -88,6 +89,9 @@ const CATALOG_CHANGES = {
   '/api/items/correct': {
     fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note], as: 'correction',
   },
+  // Inventory → Overview → an LVL item → Trim: boards cut down to a shorter length;
+  // unretire: the page said a retired length comes back into use (Q39).
+  '/api/items/trim': { fn: 'trim', args: (b) => [b.item_id, b.length_ft, b.boards, b.note, b.unretire === true], as: 'trim' },
   '/api/pos/close-line': { fn: 'close_po_line', args: (b) => [b.id, b.po_version, b.reason_id], as: 'po' },
   '/api/pos/reopen-line': { fn: 'reopen_po_line', args: (b) => [b.id, b.po_version], as: 'po' },
   '/api/lumber/redirect': {

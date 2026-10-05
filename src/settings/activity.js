@@ -70,13 +70,15 @@ const TARGET_NAMES = {
   lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
   purchase_orders: (_item, row) => `PO ${row.number}`,
   receipts: (_item, row) => (row.po_number ? `PO ${row.po_number}` : `${row.supplier}, no PO`),
-  ledger: (_item, row) => row.item,
+  ledger: (_item, row) => row.item,  // a correction's item, or a trim's long one
   families: (_item, row) => row.name,
 };
 const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
 
-// What an addition added, beyond the name the row already shows, by the
-// table it went into. The catalog import's row holds its own report.
+// What an addition added, beyond the name the row already shows, by its
+// action where two actions write one table (a trim and a correction both
+// write the ledger), else by the table it went into. The catalog import's
+// row holds its own report.
 const ADDED = {
   users: (row) => `${row.name}, ${row.email}`,
   items: (row) => (row.added
@@ -89,9 +91,12 @@ const ADDED = {
   lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
   purchase_orders: (row) => `${row.supplier}, dated ${row.po_date}, ${row.lines.length} line${row.lines.length === 1 ? '' : 's'}`,
   receipts: describeReceipt,
-  ledger: (row) => `on hand ${row.quantity > 0 ? '+' : '−'}${Math.abs(row.quantity)}, ${row.reason}`
-    + (row.note ? `; note: ${row.note}` : ''),
+  ledger: (row) => `on hand ${row.quantity > 0 ? '+' : '−'}${Math.abs(row.quantity)}, ${row.reason}${noted(row)}`,
+  trim: (row) => `${row.boards} trimmed to ${row.length_ft}′`
+    + `${row.item_added ? ' (new item, Non-Stock)' : row.item_unretired ? ' (put back in use)' : ''}${noted(row)}`,
 };
+
+const noted = (row) => (row.note ? `; note: ${row.note}` : '');
 
 // What a receipt brought, line by line, with the PO line each went on and
 // how it came, then its Bill of Lading and any pack size it put on file
@@ -143,7 +148,7 @@ function describeChange(action, table, was, now) {
   if (action.includes('password')) return '';
   if (!now) return 'removed';
   if (!was) {
-    const added = ADDED[table]?.(now);
+    const added = (ADDED[action] ?? ADDED[table])?.(now);
     return added ? `added: ${added}` : 'added';
   }
   if (CHANGED[table]) return CHANGED[table](was, now);

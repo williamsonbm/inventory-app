@@ -34,6 +34,11 @@ ALTER TABLE inv.families ALTER COLUMN order_unit DROP DEFAULT;
 ALTER TABLE inv.families ADD COLUMN returnable boolean NOT NULL DEFAULT false;
 UPDATE inv.families SET returnable = true WHERE code IN ('hangers', 'lvl', 'ewp');
 
+-- Whether a family's weathered boards are trimmed to a shorter length (design
+-- Q26): LVL now; EWP joins at step 5, once its items have names.
+ALTER TABLE inv.families ADD COLUMN trimmable boolean NOT NULL DEFAULT false;
+UPDATE inv.families SET trimmable = true WHERE code = 'lvl';
+
 -- The one entry a reason is kept for, or none when any entry may use it
 -- (owner, Q31): a trim writes "Weathered – trimmed" itself (story 47), and
 -- only part 4's import writes "Opening balance (web app)". inv.checked_reason
@@ -325,7 +330,7 @@ SELECT i.id AS item_id,
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('enter PO', false), ('edit PO', false),
   ('close PO line', false), ('re-open PO line', false), ('switch family live', true), ('receive', false),
-  ('correct', false);
+  ('correct', false), ('trim', false);
 
 -- 001's inv.finish_action, with one change: a change whose record is the
 -- same before and after, the version aside, is refused (owner, 2026-10-03).
@@ -993,8 +998,91 @@ BEGIN
 END
 $$;
 
+-- Inventory → Overview → an LVL item → Trim: p_boards weathered boards of
+-- the item cut down to p_length_ft, one usable piece from each, the cut-off
+-- thrown away (stories 47–48; owner, Q35–Q37). Two correction rows, − on the
+-- long item and + on the short one, in one action, so a trim is complete or
+-- refused (design, "A trim or swap is complete"). The short item is the same
+-- product and depth; if the catalog has no such length, the trim adds it as
+-- Non-Stock (Q21), so a leftover length is not taken for a special order.
+-- A retired length is put back in use, but only when p_unretire says the
+-- screen told the person so (owner, Q39); a stale screen is refused.
+-- The reason is the one kept for a trim (inv.reasons.entry), looked up here:
+-- inv.checked_reason refuses it everywhere else. EWP has no names until step
+-- 5, so only LVL is trimmed for now (inv.families.trimmable).
+CREATE FUNCTION inv.trim(
+  p_actor bigint, p_key uuid, p_item_id bigint, p_length_ft numeric, p_boards numeric, p_note text, p_unretire boolean)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  v_id bigint;
+  v_unretired boolean := false;
+  long inv.items;
+  short inv.items;
+  wanted inv.items;
+  f inv.families;
+  v_added boolean := false;
+  v_reason inv.reasons;
+  v_note text := nullif(inv.tidy(p_note), '');
+BEGIN
+  a := inv.claim_action(p_actor, p_key, 'trim', 'ledger', NULL,
+                        pg_catalog.jsonb_build_object('item_id', p_item_id, 'length_ft', p_length_ft,
+                                                      'boards', p_boards, 'note', p_note, 'unretire', p_unretire));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  SELECT * INTO long FROM inv.items WHERE id = p_item_id;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Pick the item from the catalog.' USING ERRCODE = 'IV400';
+  END IF;
+  SELECT * INTO f FROM inv.families WHERE code = long.family;
+  IF NOT f.trimmable THEN
+    RAISE EXCEPTION '% items are not trimmed. A trim is for a weathered LVL board.', f.name USING ERRCODE = 'IV422';
+  END IF;
+  IF NOT inv.is_whole_above_zero(pg_catalog.to_jsonb(p_length_ft)) OR p_length_ft >= long.length_ft THEN
+    RAISE EXCEPTION 'Pick a length shorter than %′.', long.length_ft USING ERRCODE = 'IV400';
+  END IF;
+  IF NOT inv.is_whole_above_zero(pg_catalog.to_jsonb(p_boards)) THEN
+    RAISE EXCEPTION 'Type how many boards: a whole number above 0, such as 1 or 3.' USING ERRCODE = 'IV400';
+  END IF;
+  -- The short item is the long one at the new length: same product and depth.
+  wanted := long;
+  wanted.length_ft := p_length_ft;
+  SELECT * INTO short FROM inv.items i WHERE inv.same_item(i, wanted);
+  IF NOT FOUND THEN
+    -- Two trims to a new length at once: the second finds the item the first added.
+    BEGIN
+      INSERT INTO inv.items (family, product, size, length_ft, stocking)
+      VALUES (wanted.family, wanted.product, wanted.size, wanted.length_ft, 'Non-Stock')
+      RETURNING * INTO short;
+      v_added := true;
+    EXCEPTION WHEN unique_violation THEN
+      SELECT * INTO short FROM inv.items i WHERE inv.same_item(i, wanted);
+    END;
+  END IF;
+  IF NOT short.active AND NOT coalesce(p_unretire, false) THEN
+    RAISE EXCEPTION '% is retired. Pick the length again: the trim puts it back in use.', inv.item_label(short)
+      USING ERRCODE = 'IV422';
+  ELSIF NOT short.active THEN
+    UPDATE inv.items SET active = true WHERE id = short.id;
+    v_unretired := true;
+  END IF;
+  SELECT * INTO v_reason FROM inv.reasons WHERE entry = 'trim';
+  INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, reason_id, note)
+  VALUES (long.id, -p_boards, 'correction', pg_catalog.now(), a.log_id, v_reason.id, v_note)
+  RETURNING id INTO v_id;
+  INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, reason_id, note)
+  VALUES (short.id, p_boards, 'correction', pg_catalog.now(), a.log_id, v_reason.id, v_note);
+  RETURN inv.finish_action(a.log_id, v_id, NULL, pg_catalog.jsonb_build_object(
+    'id', v_id, 'item', inv.item_label(long), 'to_item', inv.item_label(short), 'length_ft', short.length_ft,
+    'boards', p_boards, 'note', v_note, 'item_added', v_added, 'item_unretired', v_unretired));
+END
+$$;
+
 REVOKE ALL ON ALL FUNCTIONS IN SCHEMA inv FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION inv.correct(bigint, uuid, bigint, numeric, bigint, text) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.trim(bigint, uuid, bigint, numeric, numeric, text, boolean) TO inv_app;
 GRANT EXECUTE ON FUNCTION inv.receive(bigint, uuid, bigint, integer, bigint, text, jsonb) TO inv_app;
 -- inv.po_json and inv.item_figures work out what arrived with inv.received.
 GRANT EXECUTE ON FUNCTION inv.received(bigint) TO inv_app;

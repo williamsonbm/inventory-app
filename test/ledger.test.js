@@ -118,3 +118,102 @@ test('a reason kept for another entry closes no PO line either (Q31)', async () 
   const remake = await reasonId(db, 'Remake');
   assert.equal((await correct(ctx, hanger, -2, remake)).reason, 'Remake', 'Remake is offered as a correction (Q30)');
 });
+
+// A database with Ann and two LVL lengths of one product and depth, 16′ and
+// 12′, with 5 of the 16′ received and LVL live.
+async function withLvl() {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const supplier = await call(db, 'add_supplier', ann.id, crypto.randomUUID(), 'Boise');
+  const lvl = (length_ft) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl',
+    { product: '2.0 LVL 1-3/4', size: '11-7/8', length_ft });
+  const long = await lvl(16);
+  const short = await lvl(12);
+  await goLive(db, 'lvl');
+  await call(db, 'receive', ann.id, crypto.randomUUID(), null, null, supplier.id, null,
+    JSON.stringify([{ item_id: long.id, quantity: 5 }]));
+  return { db, ann, long, short };
+}
+
+// Trims `boards` of `item` to `length_ft` as Ann; `unretire` says the
+// screen told her a retired length comes back into use.
+function trim(ctx, item, length_ft, boards, note = null, key = crypto.randomUUID(), unretire = false) {
+  return call(ctx.db, 'trim', ctx.ann.id, key, item.id, length_ft, boards, note, unretire);
+}
+
+test('a trim takes boards off the long item and puts them on the short one, as one logged entry (story 47, Q37)', async () => {
+  const ctx = await withLvl();
+  const { db, long, short } = ctx;
+  const trimmed = await trim(ctx, long, 12, 3, ' weathered ends ');
+  assert.deepEqual(trimmed, {
+    id: trimmed.id, item: '2.0 LVL 1-3/4 x 11-7/8 16′', to_item: '2.0 LVL 1-3/4 x 11-7/8 12′', length_ft: 12, boards: 3,
+    note: 'weathered ends', item_added: false, item_unretired: false,
+  });
+  assert.deepEqual(await onHand(db), { [long.id]: 2, [short.id]: 3 });
+
+  const log = (await logRows(db)).at(-1);
+  assert.deepEqual([log.action, log.target_table, Number(log.target_id)], ['trim', 'ledger', trimmed.id]);
+  assert.deepEqual(log.new_value, trimmed);
+});
+
+test('a trim to a length the catalog lacks adds that item as Non-Stock, and a retry adds nothing twice (stories 48, 104)', async () => {
+  const ctx = await withLvl();
+  const { db, long } = ctx;
+  const key = crypto.randomUUID();
+  const trimmed = await trim(ctx, long, 10, 1, null, key);
+  assert.deepEqual([trimmed.to_item, trimmed.item_added], ['2.0 LVL 1-3/4 x 11-7/8 10′', true]);
+  const added = await as(db, APP, async (app) => (await app.query(
+    'SELECT id::int, stocking, active FROM inv.items WHERE family = $1 AND length_ft = 10', ['lvl'])).rows);
+  assert.deepEqual(added, [{ id: added[0].id, stocking: 'Non-Stock', active: true }]);
+
+  assert.deepEqual(await trim(ctx, long, 10, 1, null, key), trimmed, 'a retry answers with the first save');
+  assert.equal((await onHand(db))[added[0].id], 1, 'a retry adds nothing twice');
+  assert.equal((await onHand(db))[long.id], 4);
+});
+
+test('impossible trims are refused with a plain message, and none leaves a row or an item (stories 47–48)', async () => {
+  const ctx = await withLvl();
+  const { db, ann, long, short } = ctx;
+  const hanger = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LUS28' });
+  await goLive(db, 'hangers');
+  const retired = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl',
+    { product: '2.0 LVL 1-3/4', size: '11-7/8', length_ft: 8 });
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), retired.id, retired.version);
+
+  const before = { log: (await logRows(db)).length, onHand: await onHand(db) };
+  const cases = [
+    ['not LVL', [hanger, 2, 1], 'IV422', /^Hangers items are not trimmed\. A trim is for a weathered LVL board\.$/],
+    ['an item not in the catalog', [{ id: 999999 }, 12, 1], 'IV400', /^Pick the item from the catalog\.$/],
+    ['the same length', [long, 16, 1], 'IV400', /^Pick a length shorter than 16′\.$/],
+    ['a longer length', [short, 16, 1], 'IV400', /^Pick a length shorter than 12′\.$/],
+    ['no length', [long, null, 1], 'IV400', /^Pick a length shorter than 16′\.$/],
+    ['a part of a foot', [long, 10.5, 1], 'IV400', /^Pick a length shorter than 16′\.$/],
+    ['no boards', [long, 12, 0], 'IV400', /^Type how many boards: a whole number above 0, such as 1 or 3\.$/],
+    ['a part of a board', [long, 12, 1.5], 'IV400', /^Type how many boards/],
+    ['boards below 0', [long, 12, -1], 'IV400', /^Type how many boards/],
+    ['too many boards to store', [long, 12, 1e12], 'IV400', /^Type how many boards/],
+    ['a retired short length, not confirmed (Q39)', [long, 8, 1], 'IV422',
+      /^2\.0 LVL 1-3\/4 x 11-7\/8 8′ is retired\. Pick the length again: the trim puts it back in use\.$/],
+    ['a long note', [long, 12, 1, 'x'.repeat(201)], 'IV400', /^A note has at most 200 characters\.$/],
+    ['a long note to a new length', [long, 10, 1, 'x'.repeat(201)], 'IV400', /^A note has at most 200 characters\.$/],
+  ];
+  for (const [label, [item, length, boards, note], code, message] of cases) {
+    const err = await refused(trim(ctx, item, length, boards, note), code, label);
+    assert.match(err.message, message, label);
+  }
+  assert.equal((await logRows(db)).length, before.log, 'no refusal leaves a log row');
+  assert.deepEqual(await onHand(db), before.onHand, 'no refusal changes on hand or adds an item');
+});
+
+test('a trim to a retired length puts it back in use when the screen said so (Q39)', async () => {
+  const ctx = await withLvl();
+  const { db, ann, long, short } = ctx;
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), short.id, short.version);
+  const trimmed = await trim(ctx, long, 12, 2, null, crypto.randomUUID(), true);
+  assert.equal(trimmed.item_unretired, true);
+  const back = await as(db, APP, async (app) => (await app.query('SELECT active FROM inv.items WHERE id = $1', [short.id])).rows[0]);
+  assert.deepEqual(back, { active: true });
+  assert.deepEqual(await onHand(db), { [long.id]: 3, [short.id]: 2 });
+  assert.equal((await trim(ctx, long, 12, 1, null, crypto.randomUUID(), true)).item_unretired, false,
+    'a length in use is only trimmed to');
+});

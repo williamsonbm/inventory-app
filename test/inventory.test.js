@@ -50,12 +50,12 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   // pack_kinds: what Settings → Pack sizes offers for each family's items.
   // choices: "+ Add item" and Rename offer only these sizes for lumber.
   // Every family starts not live (#81, "Live in Inventory").
-  const common = { live: false, order_unit: 'pieces', choices: null };
+  const common = { live: false, order_unit: 'pieces', choices: null, trimmable: false };
   assert.deepEqual(families, [
     { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'], pack_kinds: ['pack'], ...common, order_unit: 'linear feet', choices: { size: LUMBER_SIZES } },
     { code: 'plates', name: 'Plates', identity: ['sku'], pack_kinds: ['pack', 'box', 'pallet'], ...common },
     { code: 'hangers', name: 'Hangers', identity: ['sku'], pack_kinds: ['carton'], ...common },
-    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'], pack_kinds: ['pack'], ...common },
+    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'], pack_kinds: ['pack'], ...common, trimmable: true },
   ]);
   const odd = await change(ctx, '/api/items/add', { family: 'lumber', identity: { size: '2x5', grade: '#2', length_ft: 8 } });
   assert.equal(odd.status, 400);
@@ -394,5 +394,36 @@ test('Correct on hand changes an item\'s on hand with a reason; the Overview and
   assert.deepEqual(entries.slice(0, 2).map((e) => [e.action, e.target, e.change]), [
     ['correct', 'LUS28', 'added: on hand −2, Damaged – scrapped'],
     ['correct', 'LUS28', 'added: on hand +6, Returned from job site; note: Job 1234'],
+  ]);
+});
+
+test('Trim takes LVL boards down to a shorter length; the Overview and the Activity Log follow (stories 47–48, Q39)', async () => {
+  const ctx = await withAdmin();
+  const lvl = { product: '2.0 LVL 1-3/4', size: '11-7/8' };
+  const long = (await change(ctx, '/api/items/add', { family: 'lvl', identity: { ...lvl, length_ft: 16 } })).body.item;
+  const short = (await change(ctx, '/api/items/add', { family: 'lvl', identity: { ...lvl, length_ft: 12 } })).body.item;
+  await goLive(ctx.db, 'lvl');
+
+  const toShort = await change(ctx, '/api/items/trim', { item_id: long.id, length_ft: 12, boards: 2, note: 'wet ends' });
+  assert.equal(toShort.status, 200, toShort.body.error);
+  assert.equal(toShort.body.trim.to_item, '2.0 LVL 1-3/4 x 11-7/8 12′');
+  const toNew = await change(ctx, '/api/items/trim', { item_id: long.id, length_ft: 10, boards: 1, note: null });
+  assert.equal(toNew.status, 200, toNew.body.error);
+  const refusedOne = await change(ctx, '/api/items/trim', { item_id: long.id, length_ft: 16, boards: 1, note: null });
+  assert.deepEqual([refusedOne.status, refusedOne.body.error], [400, 'Pick a length shorter than 16′.']);
+  const retired = (await change(ctx, '/api/items/retire', { id: short.id, version: short.version })).body.item;
+  assert.equal(retired.active, false, 'the 12′ is retired');
+  const unretired = await change(ctx, '/api/items/trim', { item_id: long.id, length_ft: 12, boards: 1, note: null, unretire: true });
+  assert.equal(unretired.status, 200, unretired.body.error);
+
+  const { items } = await read(ctx, '/api/items');
+  const figures = (length) => { const i = items.find((x) => x.family === 'lvl' && x.length_ft === length); return [i.on_hand, i.stocking]; };
+  assert.deepEqual([figures(16), figures(12), figures(10)],
+    [[-4, 'Special Order'], [3, 'Special Order'], [1, 'Non-Stock']]);
+  const { entries } = await read(ctx, '/api/activity');
+  assert.deepEqual(entries.filter((e) => e.action === 'trim').map((e) => [e.target, e.change]), [
+    ['2.0 LVL 1-3/4 x 11-7/8 16′', 'added: 1 trimmed to 12′ (put back in use)'],
+    ['2.0 LVL 1-3/4 x 11-7/8 16′', 'added: 1 trimmed to 10′ (new item, Non-Stock)'],
+    ['2.0 LVL 1-3/4 x 11-7/8 16′', 'added: 2 trimmed to 12′; note: wet ends'],
   ]);
 });

@@ -25,7 +25,8 @@
   status, threshold and note are edited (owner, 2026-10-01). Incoming
   (story 32) comes from inv.item_figures; On hand and Reorder join it in a
   later in part 2. "Correct on hand…" in the panel changes an item's on hand
-  with a reason (stories 44–46). The tasks sit in the grey bar, right of Family
+  with a reason (stories 44–46); "Trim…" on an LVL item cuts weathered boards
+  down to a shorter length (stories 47–48). The tasks sit in the grey bar, right of Family
   (#81, entry 7); Count and Month-end join them with part 3.
 
   Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
@@ -101,7 +102,7 @@
   let sort = null;        // { col, dir } a person chose; null is the family's own order
   let tab = null;         // the open size (lumber) or depth (LVL) tab
   let open = null;        // the id of the item whose row is open
-  let mode = null;        // what the open row's panel shows instead: 'rename' or 'correct'
+  let mode = null;        // what the open row's panel shows instead: 'rename', 'correct' or 'trim'
   let reasons = [];       // the reasons in use and not kept for another entry, for Correct on hand
 
   const family = (code) => families.find((f) => f.code === code) || { name: code };
@@ -239,9 +240,10 @@
   }
 
   // The open row's panel: everything a person changes about an item, or the
-  // rename fields when an admin is renaming it, or the Correct on hand form.
+  // rename fields when an admin is renaming it, or the Correct on hand or Trim form.
   function panel(i) {
     if (mode === 'correct') return correctForm(i);
+    if (mode === 'trim') return trimForm(i);
     if (mode === 'rename') {
       return '<form class="row" style="align-items:flex-end" data-rename><span class="field">Rename <b>' + esc(itemLabel(i)) + '</b></span>' +
         identityInputs(i.family, i) +
@@ -255,7 +257,8 @@
     const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" maxlength="200" value="' + esc(i.note || '') + '"></label>';
     const actions = (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
       '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>' +
-      (family(i.family).live ? '<button type="button" class="ghost" data-do="correct">Correct on hand…</button>' : '');
+      (family(i.family).live ? '<button type="button" class="ghost" data-do="correct">Correct on hand…</button>' +
+        (family(i.family).trimmable ? '<button type="button" class="ghost" data-do="trim">Trim…</button>' : '') : '');
     return '<div class="row" style="align-items:flex-end">' + stocking + threshold + note + '<span>' + actions + '</span></div>';
   }
 
@@ -271,6 +274,50 @@
       '<label class="field" style="flex:1;min-width:16em">Note (job number for a return) <input data-f="note" maxlength="200" autocomplete="off"></label>' +
       '<button>Save correction</button><button type="button" class="ghost" data-do="correct-cancel">Cancel</button></form>';
   }
+  // Trim: how many boards, and the shorter length each becomes, picked from
+  // every 2′ length below this one and any other length the catalog has for
+  // the same product and depth, longest first. A length the catalog lacks is
+  // added by the trim as Non-Stock (Q21, Q35); a retired one is put back in
+  // use, and the form says so before the save (Q39).
+  function trimForm(i) {
+    const same = (j) => j.family === i.family && j.length_ft < i.length_ft
+      && String(j.product).toLowerCase() === String(i.product).toLowerCase() && String(j.size).toLowerCase() === String(i.size).toLowerCase();
+    const known = new Map(items.filter(same).map((j) => [j.length_ft, j]));
+    const lengths = [...new Set([...known.keys(), ...Array.from({ length: Math.ceil(i.length_ft / 2) - 1 }, (_, n) => (n + 1) * 2)])]
+      .sort((a, b) => b - a);
+    const retired = (l) => known.has(l) && !known.get(l).active;
+    const option = (l) => '<option value="' + l + '"' + (retired(l) ? ' data-retired' : '') + '>' + l + '′' +
+      (!known.has(l) ? ' (new item)' : retired(l) ? ' (retired)' : '') + '</option>';
+    return '<form class="row" style="align-items:flex-end" data-trim><span class="field">Trim <b>' + esc(itemLabel(i)) + '</b>' +
+      '<span class="sub" style="padding:7px 0">' + fmtInt(i.on_hand) + ' now</span></span>' +
+      '<label class="field">Boards <input data-f="boards" type="number" min="1" step="1" required style="width:6em" value="1"></label>' +
+      '<label class="field">Trimmed to <select data-f="length" required><option value="">Length…</option>' +
+      lengths.map(option).join('') + '</select></label>' +
+      '<label class="field" style="flex:1;min-width:16em">Note <input data-f="note" maxlength="200" autocomplete="off"></label>' +
+      '<button data-f="go">Save trim</button><button type="button" class="ghost" data-do="trim-cancel">Cancel</button>' +
+      '<span class="sub" data-f="warn" hidden></span><span class="sub" data-f="short" hidden></span></form>';
+  }
+  // Picking a retired length says the trim puts it back in use (Q39).
+  el('rows').addEventListener('change', (e) => {
+    const form = e.target.closest('[data-trim]');
+    if (!form || e.target.dataset.f !== 'length') return;
+    const picked = e.target.selectedOptions[0];
+    const back = picked && picked.hasAttribute('data-retired');
+    const warn = form.querySelector('[data-f="warn"]');
+    warn.hidden = !back;
+    warn.textContent = back ? picked.value + '′ is retired. Saving this trim puts it back in use.' : '';
+    form.querySelector('[data-f="go"]').textContent = back ? 'Save trim and un-retire' : 'Save trim';
+  });
+  // Trimming more boards than on hand shows is allowed, since on hand may be
+  // off until a count, but the form says so (owner, Q40).
+  el('rows').addEventListener('input', (e) => {
+    const form = e.target.closest('[data-trim]');
+    if (!form || e.target.dataset.f !== 'boards') return;
+    const item = items.find((i) => i.id === open);
+    const short = form.querySelector('[data-f="short"]');
+    short.hidden = !(Number(e.target.value) > item.on_hand);
+    short.textContent = short.hidden ? '' : 'Only ' + fmtInt(item.on_hand) + ' on hand.';
+  });
   // "40 now → 37" as the change is typed.
   el('rows').addEventListener('input', (e) => {
     const form = e.target.closest('[data-correct]');
@@ -340,7 +387,7 @@
     const tr = e.target.closest('tr');
     if (!tr) return;
     const what = e.target.dataset && e.target.dataset.do;
-    if (['rename', 'correct', 'rename-cancel', 'correct-cancel'].includes(what)) {
+    if (['rename', 'correct', 'trim', 'rename-cancel', 'correct-cancel', 'trim-cancel'].includes(what)) {
       mode = what.endsWith('-cancel') ? null : what;
       return paint();
     }
@@ -369,6 +416,7 @@
 
   el('rows').addEventListener('submit', (e) => {
     if (e.target.matches('[data-correct]')) return correct(e);
+    if (e.target.matches('[data-trim]')) return trim(e);
     if (!e.target.matches('[data-rename]')) return;
     e.preventDefault();
     // The item as it is now: a save while the row was open changed its version.
@@ -380,21 +428,36 @@
     });
   });
 
-  // Saves a correction, then reads the catalog again, so on hand is the
-  // database's figure, never one added up here (a retry must not add twice).
+  // Saves a change to on hand (a correction or a trim), then reads the
+  // catalog again, so on hand is the database's figure, never one added up
+  // here (a retry must not add twice); the reload also brings an item a trim
+  // added. `as` is the name the answer comes back under.
+  function saveOnHand(route, as, body, done) {
+    save(route, { key: crypto.randomUUID(), item_id: open, ...body },
+      (r) => done(r) + (r.reloaded ? '' : ' Reload the page to see the new on hand.'),
+      async (answer) => {
+        mode = null;
+        const reload = await fetchItems();
+        if (reload.ok) items = reload.items;
+        return { ...answer[as], reloaded: reload.ok };
+      });
+  }
   function correct(e) {
     e.preventDefault();
     const f = (name) => e.target.querySelector('[data-f="' + name + '"]');
-    save('/api/items/correct', { key: crypto.randomUUID(), item_id: open, quantity: Number(f('quantity').value),
+    saveOnHand('/api/items/correct', 'correction', { quantity: Number(f('quantity').value),
       reason_id: Number(f('reason').value) || null, note: f('note').value.trim() || null },
-    (c) => c.item + ': on hand ' + (c.quantity > 0 ? '+' : '−') + fmtInt(Math.abs(c.quantity)) + ', ' + c.reason + '.' +
-      (c.reloaded ? '' : ' Reload the page to see the new on hand.'),
-    async ({ correction }) => {
-      mode = null;
-      const reload = await fetchItems();
-      if (reload.ok) items = reload.items;
-      return { ...correction, reloaded: reload.ok };
-    });
+    (c) => c.item + ': on hand ' + (c.quantity > 0 ? '+' : '−') + fmtInt(Math.abs(c.quantity)) + ', ' + c.reason + '.');
+  }
+
+  function trim(e) {
+    e.preventDefault();
+    const f = (name) => e.target.querySelector('[data-f="' + name + '"]');
+    saveOnHand('/api/items/trim', 'trim', { length_ft: Number(f('length').value),
+      boards: Number(f('boards').value), note: f('note').value.trim() || null,
+      unretire: f('length').selectedOptions[0].hasAttribute('data-retired') },
+    (t) => fmtInt(t.boards) + ' of ' + t.item + ' trimmed to ' + t.length_ft + '′' +
+      (t.item_added ? ': ' + t.to_item + ' added as Non-Stock.' : t.item_unretired ? ': ' + t.to_item + ' is in use again.' : '.'));
   }
 
   el('head').addEventListener('click', (e) => {
