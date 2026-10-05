@@ -116,7 +116,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, itemLabel, today, unitShort } = AppHeader;
+  const { send, say, itemLabel, today, unitShort, inOrderUnit } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -433,7 +433,7 @@
       '<td>' + (line ? esc(choiceLabel(item))
         : '<input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…">') + '</td>' +
       '<td class="sub">' + (line ? 'Line ' + n + ' · ' + fmtInt(line.received) + ' of ' + amount(line.ordered, item) + ' in'
-        : receiving.po ? 'not on the PO' : '') + '</td>' +
+        + (split ? '' : '<div data-f="over" hidden></div>') : receiving.po ? 'not on the PO' : '') + '</td>' +
       box('quantity', '7em', 1) + box('packs', '5em', 0) + box('pack', '6em', 1) +
       '<td><select data-f="kind"></select></td>' +
       '<td><input data-f="loose" type="number" min="0" step="1" style="width:5em"></td>' +
@@ -489,6 +489,7 @@
       last.after(receiptRow(po.lines[n], n + 1, true));
     }
     renumber();
+    warnOver();
   });
 
   el('receipt-lines').addEventListener('input', (e) => {
@@ -506,7 +507,28 @@
     // packs × pack size + loose, shown greyed in Pieces received until a
     // total is typed there (owner, 2026-10-04).
     cell(tr, 'quantity').placeholder = packedPieces(tr) ?? '';
+    warnOver();
   });
+
+  // Warns, without refusing, when the rows typed for a PO line bring it past
+  // what it ordered (owner, Q53): a receipt entered twice by mistake looks
+  // just like a supplier sending extra. Split rows of one line add up; the
+  // warning shows on the line's first row.
+  function warnOver() {
+    const po = receiving.po;
+    if (!po) return;
+    const rows = [...el('receipt-lines').children].filter((tr) => tr.dataset.poLine);
+    po.lines.forEach((line, n) => {
+      const own = rows.filter((tr) => Number(tr.dataset.poLine) === line.id);
+      if (!own.length) return;
+      const pieces = own.reduce((sum, tr) => sum + (Number(cell(tr, 'quantity').value) || packedPieces(tr) || 0), 0);
+      const item = itemById(line.item_id);
+      const after = line.received + inOrderUnit(pieces, item, family(item.family).order_unit);
+      const over = cell(own[0], 'over');
+      over.hidden = !pieces || after <= line.ordered;
+      over.textContent = over.hidden ? '' : 'This brings line ' + (n + 1) + ' to ' + fmtInt(after) + ' of ' + amount(line.ordered, item) + ' ordered.';
+    });
+  }
 
   // packs × pack size + loose as typed in a row, or null while they give no
   // whole number: none typed, or packs without a pack size.
