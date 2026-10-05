@@ -11,12 +11,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, as, APP, firstUser, call, goLive, logRows, refused } = require('./support/database.js');
+const { freshDatabase, as, APP, firstUser, call, goLive, logRows, figure, refused } = require('./support/database.js');
 
-async function incoming(db) {
-  return as(db, APP, async (app) => Object.fromEntries((await app.query(
-    'SELECT item_id::int, incoming FROM inv.item_figures')).rows.map((r) => [r.item_id, r.incoming])));
-}
+const incoming = (db) => figure(db, 'incoming');
 
 // A database with Ann, one supplier and a hanger, with hangers live.
 async function withHanger() {

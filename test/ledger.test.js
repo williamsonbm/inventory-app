@@ -10,16 +10,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, as, APP, firstUser, call, goLive, logRows, refused } = require('./support/database.js');
+const { freshDatabase, as, APP, firstUser, call, goLive, logRows, figure, reasonId, refused } = require('./support/database.js');
 
-async function onHand(db) {
-  return as(db, APP, async (app) => Object.fromEntries((await app.query(
-    'SELECT item_id::int, on_hand FROM inv.item_figures')).rows.map((r) => [r.item_id, r.on_hand])));
-}
-
-async function reasonId(db, text) {
-  return as(db, APP, async (app) => Number((await app.query('SELECT id FROM inv.reasons WHERE text = $1', [text])).rows[0].id));
-}
+const onHand = (db) => figure(db, 'on_hand');
 
 // A database with Ann and a hanger that has had 40 received, with hangers live.
 async function withHanger() {
@@ -223,10 +216,7 @@ function reverse(ctx, id, note = null, key = crypto.randomUUID()) {
   return call(ctx.db, 'reverse', ctx.ann.id, key, id, note);
 }
 
-async function incoming(db) {
-  return as(db, APP, async (app) => Object.fromEntries((await app.query(
-    'SELECT item_id::int, incoming FROM inv.item_figures')).rows.map((r) => [r.item_id, r.incoming])));
-}
+const incoming = (db) => figure(db, 'incoming');
 
 test('a reversed receipt line comes off on hand and its PO line\'s incoming comes back, logged once (stories 42, 43)', async () => {
   const ctx = await withHanger();
