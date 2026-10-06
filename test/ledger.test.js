@@ -239,6 +239,32 @@ test('a reversed receipt line comes off on hand and its PO line\'s incoming come
   assert.equal((await onHand(db))[hanger.id], 40, 'a retry takes nothing off twice');
 });
 
+test('reversing a receipt line changes its PO, so a screen opened before it cannot save (S41, Q76)', async () => {
+  const ctx = await withHanger();
+  const { db, ann, supplier, hanger } = ctx;
+  const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4501', '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 100 }]));
+  const line = [{ po_line_id: po.lines[0].id, item_id: hanger.id, quantity: 30 }];
+  const receipt = await call(db, 'receive', ann.id, crypto.randomUUID(), po.id, po.version, null, null, JSON.stringify(line));
+  const opened = po.version + 1;  // the Receive screen read the PO after that receipt, which moved it on once
+  await reverse(ctx, receipt.lines[0].id);
+  const err = await refused(call(db, 'receive', ann.id, crypto.randomUUID(), po.id, opened, null, null, JSON.stringify(line)),
+    'IV409', 'a screen opened before the reversal');
+  assert.equal(err.message, 'Someone else changed this PO since you opened this screen.');
+});
+
+test('a receipt line entered again on the same PO saves from the screen that read the PO (Q76)', async () => {
+  const ctx = await withHanger();
+  const { db, ann, supplier, hanger } = ctx;
+  const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4501', '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 100 }]));
+  const line = (quantity) => JSON.stringify([{ po_line_id: po.lines[0].id, item_id: hanger.id, quantity }]);
+  const receipt = await call(db, 'receive', ann.id, crypto.randomUUID(), po.id, po.version, null, null, line(30));
+  const again = await call(db, 'receive', ann.id, crypto.randomUUID(), po.id, po.version + 1, null, null, line(25), receipt.lines[0].id);
+  assert.deepEqual(again.reversed.lines, [{ item: 'LUS28', quantity: -30 }]);
+  assert.equal((await incoming(db))[hanger.id], 75, '25 of 100 has arrived: the 30 entered by mistake is reversed');
+});
+
 test('a reversed correction or trim undoes it: a trim\'s two rows together (story 49)', async () => {
   const ctx = await withLvl();
   const { db, long, short } = ctx;

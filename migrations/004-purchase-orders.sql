@@ -532,7 +532,9 @@ $$;
 
 -- Reads and locks the PO a change is about, refusing it when the PO or any
 -- of its lines has changed since the screen read it (S41), and moves its
--- version on: every change to a PO or its lines starts here. The refusal's
+-- version on: every change to a PO or its lines starts here, but for a
+-- reversal of a receipt line, which no screen's version is checked for, so
+-- inv.reverse_entry moves the version on itself. The refusal's
 -- DETAIL is the current PO, so the screen can show what the other save did.
 CREATE FUNCTION inv.po_at_version(p_id bigint, p_version integer) RETURNS jsonb
 LANGUAGE plpgsql
@@ -1007,7 +1009,6 @@ BEGIN
                                                       'supplier_id', p_supplier_id, 'bol', p_bol, 'lines', p_lines,
                                                       'replaces', p_replaces));
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
-  v_at := inv.replaced_at(a.log_id, p_replaces);
   IF p_po_id IS NOT NULL AND p_supplier_id IS NOT NULL THEN
     RAISE EXCEPTION 'A receipt against a PO takes its PO''s supplier.' USING ERRCODE = 'IV400';
   ELSIF p_po_id IS NOT NULL THEN
@@ -1015,6 +1016,9 @@ BEGIN
   ELSIF NOT EXISTS (SELECT FROM inv.suppliers WHERE id = p_supplier_id) THEN
     RAISE EXCEPTION 'Pick the supplier from the list.' USING ERRCODE = 'IV400';
   END IF;
+  -- After the PO's check: reversing a line it replaces on the same PO moves
+  -- that PO on too, and must not make this screen look stale (Q76).
+  v_at := inv.replaced_at(a.log_id, p_replaces);
   IF pg_catalog.jsonb_typeof(p_lines) IS DISTINCT FROM 'array' THEN
     RAISE EXCEPTION 'A receipt lists its lines.' USING ERRCODE = 'IV400';
   END IF;
@@ -1254,6 +1258,10 @@ BEGIN
     EXCEPTION WHEN unique_violation THEN
       RAISE EXCEPTION 'That entry is already reversed.' USING ERRCODE = 'IV422';
     END;
+    -- A receipt line's PO now has less received, so a screen that read it
+    -- before is stale (S41, owner Q76).
+    UPDATE inv.purchase_orders SET version = version + 1
+     WHERE id = (SELECT po_id FROM inv.po_lines WHERE id = g.po_line_id);
     v_first := coalesce(v_first, v_id);
   END LOOP;
   RETURN v_first;
