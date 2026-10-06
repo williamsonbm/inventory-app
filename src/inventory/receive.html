@@ -429,7 +429,7 @@
     const item = line && itemById(line.item_id);
     if (line) Object.assign(tr.dataset, { poLine: line.id, itemId: line.item_id });
     const box = (f, w, min) => '<td><input data-f="' + f + '" type="number" min="' + min + '" step="1" style="width:' + w + '"></td>';
-    tr.innerHTML = '<td class="sub" data-f="n"></td>' +
+    tr.innerHTML = '<td class="sub" data-f="n">' + (line ? n : '') + '</td>' +
       '<td>' + (line ? esc(choiceLabel(item))
         : '<input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…">') + '</td>' +
       '<td class="sub">' + (line ? 'Line ' + n + ' · ' + fmtInt(line.received) + ' of ' + amount(line.ordered, item) + ' in'
@@ -443,10 +443,15 @@
     return tr;
   }
 
-  // Each row's number, so "Line n" in a refusal is the nth row here.
-  const renumber = () => [...el('receipt-lines').children].forEach((tr, n) => {
-    cell(tr, 'n').textContent = n + 1;
-  });
+  // Each row's number, as the database numbers it in a refusal (owner, Q74):
+  // a PO line's row shows its line's own number (receiptRow), closed lines
+  // counted, as on the PO list; a row not on the PO is numbered on after the
+  // PO's last line.
+  function renumber() {
+    let after = receiving.po ? receiving.po.lines.length : 0;
+    [...el('receipt-lines').children].filter((tr) => !tr.dataset.poLine)
+      .forEach((tr) => { cell(tr, 'n').textContent = ++after; });
+  }
 
   // Opens the receive form for `po` (every open line, in PO order), or
   // without a PO when po is null.
@@ -540,15 +545,15 @@
   }
 
   // Reads the receive form into the request, one line per row, empty rows
-  // included: the database skips them and counts them, so its "Line n" is
-  // row n here. An item typed but not picked stops here with its row.
+  // included: the database skips them, and numbers every row as renumber
+  // does. An item typed but not picked stops here with its row's number.
   function receiptRequest() {
-    const lines = [...el('receipt-lines').children].map((tr, n) => {
+    const lines = [...el('receipt-lines').children].map((tr) => {
       const value = (f) => cell(tr, f).value.trim();
       const number = (f) => (value(f) === '' ? null : Number(value(f)));
       const filled = ['quantity', 'packs', 'loose'].some((f) => number(f) !== null);
       const itemId = Number(tr.dataset.itemId) || null;
-      if (filled && !itemId) throw new Error(pickRefusal(n + 1));
+      if (filled && !itemId) throw new Error(pickRefusal(cell(tr, 'n').textContent));
       const packs = number('packs');
       // An empty Pieces received takes packs × pack size + loose.
       return { po_line_id: Number(tr.dataset.poLine) || null, item_id: itemId, quantity: number('quantity') ?? packedPieces(tr), packs,

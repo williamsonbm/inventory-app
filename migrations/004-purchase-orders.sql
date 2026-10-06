@@ -1000,6 +1000,7 @@ DECLARE
   g inv.ledger;
   r jsonb;
   n integer;
+  v_last integer;  -- the PO's last line number; a line not on the PO comes after it
 BEGIN
   a := inv.claim_action(p_actor, p_key, 'receive', 'receipts', NULL,
                         pg_catalog.jsonb_build_object('po_id', p_po_id, 'po_version', p_po_version,
@@ -1018,14 +1019,21 @@ BEGIN
     RAISE EXCEPTION 'A receipt lists its lines.' USING ERRCODE = 'IV400';
   END IF;
   -- A line with no pieces, packs or loose filled in is a PO line nothing
-  -- arrived on this time. It is skipped, but still counted, so "Line n" is
-  -- the nth row on the Receive page, which lists every open PO line.
+  -- arrived on this time, and is skipped. "Line n" is the number the Receive
+  -- page shows (owner, Q74): a PO line's own number, closed lines counted,
+  -- as on the PO list; a line not on the PO, numbered on after the PO's last.
   IF NOT EXISTS (SELECT FROM pg_catalog.jsonb_array_elements(p_lines) e WHERE NOT inv.is_blank_receipt_line(e)) THEN
     RAISE EXCEPTION 'Nothing to receive. Fill in the pieces that arrived.' USING ERRCODE = 'IV400';
   END IF;
   INSERT INTO inv.receipts (po_id, supplier_id, bol)
   VALUES (p_po_id, p_supplier_id, nullif(inv.tidy(p_bol), '')) RETURNING id INTO v_receipt;
-  FOR r, n IN SELECT e, e_n::integer FROM pg_catalog.jsonb_array_elements(p_lines) WITH ORDINALITY AS x(e, e_n) LOOP
+  v_last := (SELECT pg_catalog.count(*) FROM inv.po_lines WHERE po_id = p_po_id);
+  FOR r, n IN
+    SELECT e, coalesce(inv.po_line_number(l.id), v_last + pg_catalog.count(*) FILTER (WHERE l.id IS NULL) OVER (ORDER BY e_n)::integer)
+      FROM pg_catalog.jsonb_array_elements(p_lines) WITH ORDINALITY AS x(e, e_n)
+      LEFT JOIN inv.po_lines l
+        ON l.po_id = p_po_id AND l.id = CASE WHEN inv.is_whole_above_zero(e -> 'po_line_id') THEN (e ->> 'po_line_id')::bigint END
+     ORDER BY e_n LOOP
     CONTINUE WHEN inv.is_blank_receipt_line(r);
     g := inv.checked_receipt_line(n, r, p_po_id);
     INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, receipt_id, po_line_id,

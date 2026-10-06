@@ -393,11 +393,11 @@ test('impossible receipts are refused with a plain message, and none leaves a ro
     ['an item that is not its PO line\'s (story 36)', [got(first, { item_id: other.id, quantity: 5 })], 'IV400',
       /^Line 1: that PO line orders LUS28, not HUS26\.$/],
     ['a closed PO line', [got(first, { quantity: 5 }), got(second, { quantity: 5 })], 'IV422', /^Line 2: that PO line is closed\. Re-open it/],
-    ['another PO\'s line', [got(elsewhere.lines[0], { quantity: 5 })], 'IV400', /^Line 1: that line is not on this PO/],
-    ['a retired item not on the PO', [loose({ item_id: retired.id })], 'IV422', /^Line 1: HU210 is retired/],
-    ['an item not in the catalog', [loose({ item_id: 999999 })], 'IV400', /^Line 1: pick the item/],
+    ['another PO\'s line', [got(elsewhere.lines[0], { quantity: 5 })], 'IV400', /^Line 3: that line is not on this PO/],
+    ['a retired item not on the PO', [loose({ item_id: retired.id })], 'IV422', /^Line 3: HU210 is retired/],
+    ['an item not in the catalog', [loose({ item_id: 999999 })], 'IV400', /^Line 3: pick the item/],
     ['another family not on the PO (Q68)', [got(first, { quantity: 5 }), loose({ item_id: plate.id })], 'IV422',
-      /^Line 2: MT20 3x4 is Plates, but this PO orders Hangers\. A PO holds one family\.$/],
+      /^Line 3: MT20 3x4 is Plates, but this PO orders Hangers\. A PO holds one family\.$/],
     ['loose pieces but no total', [got(first, { loose: 5 })], 'IV400', /^Line 1: the pieces received are a whole number above 0/],
     ['pieces that are not whole', [got(first, { quantity: 2.5 })], 'IV400', /^Line 1: the pieces received/],
     ['packs without a pack size', [got(first, { quantity: 50, packs: 1 })], 'IV400', /^Line 1: give both the packs and the pack size/],
@@ -547,7 +547,7 @@ test('an item with receipts can no longer be renamed (story 107)', async () => {
   });
 });
 
-test('a receipt line with nothing filled in is skipped but still counted, so "Line n" is the nth row on the form', async () => {
+test('a receipt line with nothing filled in is skipped, and the next line keeps its own number', async () => {
   const ctx = await withPo();
   const { db, po } = ctx;
   const [first, second] = po.lines;
@@ -558,4 +558,21 @@ test('a receipt line with nothing filled in is skipped but still counted, so "Li
   const [now] = await pos(db);
   const none = await refused(receive(ctx, now, [got(first), got(second)]), 'IV400', 'nothing filled in');
   assert.equal(none.message, 'Nothing to receive. Fill in the pieces that arrived.');
+});
+
+test('a receipt\'s "Line n" is the PO line number, closed lines counted; rows not on the PO come after its last line (Q74)', async () => {
+  const ctx = await withPo();
+  const { db, ann, hanger, po, reason } = ctx;
+  const closed = await call(db, 'close_po_line', ann.id, crypto.randomUUID(), po.lines[0].id, po.version, reason.id);
+  const second = closed.lines[1];
+  const loose = (fields) => ({ po_line_id: null, item_id: hanger.id, quantity: 10, ...fields });
+  const cases = [
+    ['the only open line, after a closed one', [got(second, { quantity: 2.5 })], /^Line 2: the pieces received/],
+    ['a split row repeats its line\'s number', [got(second, { quantity: 5 }), got(second, { quantity: 2.5 })], /^Line 2: /],
+    ['a row not on the PO, after its two lines', [got(second, { quantity: 5 }), loose({ item_id: 999999 })], /^Line 3: pick the item/],
+    ['the second row not on the PO', [got(second), loose({}), loose({ quantity: 2.5 })], /^Line 4: the pieces received/],
+  ];
+  for (const [label, lines, message] of cases) {
+    assert.match((await refused(receive(ctx, closed, lines), 'IV400', label)).message, message, label);
+  }
 });
