@@ -536,7 +536,25 @@ test('History shows a trim on both lengths: trimmed to on the long one, trimmed 
   const [onShort] = (await read(ctx, `/api/items/history?id=${short.id}`)).entries;
   assert.equal(trimmed.to_item, '2.0 LVL 1-3/4 x 11-7/8 12′');
   assert.deepEqual([onLong.action, onLong.change, onLong.detail], ['trim', -2, 'trimmed to 12′; note: wet ends']);
-  assert.deepEqual([onShort.action, onShort.change, onShort.detail], ['trim', 2, 'trimmed from 16′; note: wet ends']);
+  assert.deepEqual([onShort.action, onShort.change, onShort.detail], ['trim', 2, 'trimmed from 16′ and added as Non-Stock; note: wet ends'],
+    'the trim added 12′ to the catalog (Q84)');
+});
+
+test('History says when a trim put a retired length back in use (story 55, Q39, Q82)', async () => {
+  const ctx = await withAdmin();
+  const lvl = { product: '2.0 LVL 1-3/4', size: '11-7/8' };
+  const add = async (length_ft) => (await change(ctx, '/api/items/add', { family: 'lvl', identity: { ...lvl, length_ft } })).body.item;
+  const long = await add(16);
+  const short = await add(12);
+  await change(ctx, '/api/items/retire', { id: short.id, version: short.version });
+  await goLive(ctx.db, 'lvl');
+  const trimmed = await change(ctx, '/api/items/trim', { item_id: long.id, length_ft: 12, boards: 2, note: null, unretire: true });
+  assert.equal(trimmed.status, 200, trimmed.body.error);
+
+  const [onShort] = (await read(ctx, `/api/items/history?id=${short.id}`)).entries;
+  const [onLong] = (await read(ctx, `/api/items/history?id=${long.id}`)).entries;
+  assert.equal(onShort.detail, 'trimmed from 16′ and put back in use');
+  assert.equal(onLong.detail, 'trimmed to 12′', 'the long length was never retired');
 });
 
 test('Reverse undoes a receipt line from History: the original stays, marked reversed, and the reversal takes its time (stories 42, 55, 79)', async () => {

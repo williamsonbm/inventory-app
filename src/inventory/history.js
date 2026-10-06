@@ -18,7 +18,8 @@ const LEDGER_ROWS = `
          ol.action AS reverses, EXISTS (SELECT FROM inv.ledger x WHERE x.reverses_id = g.id) AS reversed,
          r.text AS reason, rc.bol, po.number AS po_number, s.name AS supplier,
          inv.po_line_number(g.po_line_id) AS po_line, g.packs, g.pack_size, g.pack_kind, g.loose,
-         l.new_value -> 'pack_sizes_added' AS pack_sizes_added, inv.item_label(i) AS item, other.length_ft AS other_length
+         l.new_value -> 'pack_sizes_added' AS pack_sizes_added, inv.item_label(i) AS item, other.length_ft AS other_length,
+         (l.new_value ->> 'item_added')::boolean AS added, (l.new_value ->> 'item_unretired')::boolean AS unretired
     FROM inv.ledger g
     JOIN inv.items i ON i.id = g.item_id
     JOIN inv.activity_log l ON l.id = g.action_id
@@ -52,7 +53,10 @@ const DETAIL = {
     return [where, howItCame(g), g.bol && `Bill of Lading or tracking number ${g.bol}`, ...sizes].filter(Boolean).join('; ');
   },
   correct: (g) => g.reason + noted(g),
-  trim: (g) => `trimmed ${g.quantity < 0 ? 'to' : 'from'} ${g.other_length}′${noted(g)}`,
+  // Only the short length, the one a trim adds to, can be added to the
+  // catalog by it or come back in use (Q39, Q82, Q84).
+  trim: (g) => `trimmed ${g.quantity < 0 ? 'to' : 'from'} ${g.other_length}′${
+    g.quantity < 0 ? '' : g.added ? ' and added as Non-Stock' : g.unretired ? ' and put back in use' : ''}${noted(g)}`,
   reverse: (g) => `reverses ${ENTRY_NAMES[g.reverses]}${noted(g)}`,
 };
 
