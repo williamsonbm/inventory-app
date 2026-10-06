@@ -530,14 +530,20 @@ test('a PO line with receipts keeps its item, and its amount never goes below wh
   });
 });
 
-test('an item with receipts can no longer be renamed (story 107)', async () => {
+test('an item with entries in its History can no longer be renamed (story 107, Q83)', async () => {
   const ctx = await withPo();
   const { db, ann, hanger, po } = ctx;
   const renamed = await call(db, 'rename_item', ann.id, crypto.randomUUID(), hanger.id, 1, { sku: 'LUS28Z' });
   await receive(ctx, po, [got(po.lines[0], { quantity: 1 })]);
   const err = await refused(call(db, 'rename_item', ann.id, crypto.randomUUID(), hanger.id, renamed.version, { sku: 'LUS28' }),
     'IV422', 'renamed after a receipt');
-  assert.equal(err.message, 'LUS28Z has receipts, so its name stays.');
+  assert.equal(err.message, 'LUS28Z has entries in its History, so its name stays.');
+  // An item with only a correction, such as the cutover's opening balance, has no receipts (Q83).
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LUS82' });
+  await call(db, 'correct', ann.id, crypto.randomUUID(), other.id, 5, ctx.reason.id, null);
+  const corrected = await refused(call(db, 'rename_item', ann.id, crypto.randomUUID(), other.id, other.version, { sku: 'LUS26' }),
+    'IV422', 'renamed after a correction');
+  assert.equal(corrected.message, 'LUS82 has entries in its History, so its name stays.');
   await as(db, null, async (owner) => {
     await refused(owner.query("UPDATE inv.items SET sku = 'LUS28' WHERE id = $1", [hanger.id]), 'IV422', 'a direct rename');
     await owner.query("UPDATE inv.items SET note = 'Kept dry' WHERE id = $1", [hanger.id]);

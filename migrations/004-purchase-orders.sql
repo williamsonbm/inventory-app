@@ -259,9 +259,11 @@ $$;
 CREATE TRIGGER check_reversal BEFORE INSERT ON inv.ledger
   FOR EACH ROW WHEN (NEW.reverses_id IS NOT NULL) EXECUTE FUNCTION inv.check_reversal();
 
--- Story 107 (003 left this refusal to part 2): once an item has receipts,
--- its name stays, so the records keep naming what arrived, whatever writes
--- the row. Part 3 adds counts to this check.
+-- Story 107 (003 left this refusal to part 2): once an item has an entry
+-- in its History (a receipt, a correction or a trim), its name stays, so
+-- the records keep naming it, whatever writes the row. Part 3 adds counts
+-- to this check. The message names History, not receipts: an item may have
+-- only a correction, such as the cutover's opening balance (owner, Q83).
 CREATE FUNCTION inv.check_item_name_kept() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp
@@ -269,7 +271,7 @@ AS $$
 BEGIN
   IF (NEW.sku, NEW.product, NEW.size, NEW.grade, NEW.length_ft) IS DISTINCT FROM (OLD.sku, OLD.product, OLD.size, OLD.grade, OLD.length_ft)
      AND EXISTS (SELECT FROM inv.ledger WHERE item_id = OLD.id) THEN
-    RAISE EXCEPTION '% has receipts, so its name stays.', inv.item_label(OLD) USING ERRCODE = 'IV422';
+    RAISE EXCEPTION '% has entries in its History, so its name stays.', inv.item_label(OLD) USING ERRCODE = 'IV422';
   END IF;
   RETURN NEW;
 END
