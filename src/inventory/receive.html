@@ -251,17 +251,21 @@
     paintPos();
   }
 
-  // The item a form line names: one picked from the list, or the item a
-  // saved line already orders, which may since be retired.
+  // The item a form line names: the one picked in it while typing, or the
+  // item a saved line already orders (which may since be retired), while
+  // the box still names it; else one from the list. Those two come first
+  // because a name without its family can fit two items: "LUS28" typed
+  // under Plates is also a hanger once the family bar shows All.
   function lineItem(tr, text) {
-    const kept = itemById(Number(tr.dataset.itemId));
-    return orderable().find((i) => isNamed(i, text)) || (kept && isNamed(kept, text) ? kept : null);
+    const own = [tr.dataset.picked, tr.dataset.itemId].map((id) => itemById(Number(id)));
+    return own.find((i) => i && isNamed(i, text)) || orderable().find((i) => isNamed(i, text)) || null;
   }
 
   el('lines').addEventListener('input', (e) => {
     if (e.target.dataset.f !== 'item') return;
     const tr = e.target.closest('tr');
     const item = lineItem(tr, e.target.value);
+    tr.dataset.picked = item ? item.id : '';
     tr.querySelector('[data-f="unit"]').textContent = item ? unitOf(item) : '';
   });
   el('lines').addEventListener('click', (e) => {
