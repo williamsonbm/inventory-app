@@ -373,7 +373,7 @@
   // reversed has "Reverse…" while its family is live; one reversed says so
   // (stories 42, 49). A reversal itself is never reversed (Q44).
   function historyTable(i) {
-    const canReverse = (e) => e.id && !e.reversed && e.action !== 'reverse' && family(i.family).live;
+    const canReverse = (e) => e.id && !e.reversed && !e.reversal && family(i.family).live;
     const last = (e) => (e.reversed ? '<span class="chip">reversed</span>'
       : canReverse(e) ? '<button type="button" class="ghost" data-do="reverse" data-entry="' + e.id + '">Reverse…</button>' : '');
     const rows = history === null ? '<tr><td colspan="6" class="sub">Loading…</td></tr>'

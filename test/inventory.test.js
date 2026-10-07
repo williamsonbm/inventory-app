@@ -599,10 +599,12 @@ test('a receipt that replaces one on the wrong PO takes the original\'s time, an
     lines: [{ po_line_id: right.lines[0].id, item_id: hanger.id, quantity: 30 }], replaces: first.lines[0].id });
   assert.equal(replaced.status, 200, replaced.body.error);
   const entries = (await read(ctx, `/api/items/history?id=${hanger.id}`)).entries.slice(0, 3);
-  assert.deepEqual(entries.map((e) => [e.action, e.change, e.detail, e.reversed]), [
-    ['receive', 30, 'PO 4502 line 1, Simpson', false],
-    ['receive', -30, 'reverses the receipt', false],
-    ['receive', 30, 'PO 4501 line 1, Simpson', true],
+  // reversal marks the row the replacing receipt wrote as a reversal, so the
+  // page offers no Reverse on it, though the receipt's action wrote it (Q44).
+  assert.deepEqual(entries.map((e) => [e.action, e.change, e.detail, e.reversed, e.reversal]), [
+    ['receive', 30, 'PO 4502 line 1, Simpson', false, false],
+    ['receive', -30, 'reverses the receipt', false, true],
+    ['receive', 30, 'PO 4501 line 1, Simpson', true, false],
   ]);
   assert.equal(new Set(entries.map((e) => e.at)).size, 1, 'the replacement and the reversal take the original\'s time');
   const [logged] = (await read(ctx, '/api/activity')).entries;

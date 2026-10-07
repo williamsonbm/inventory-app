@@ -67,7 +67,10 @@ async function readHistory(database, id) {
   const [ledger, settings] = await Promise.all([database.read(LEDGER_ROWS, [id]), database.read(SETTINGS_ROWS, [id])]);
   const entries = [
     ...ledger.map((g) => ({ at: g.at, log_id: g.log_id, id: Number(g.id), who: g.who, action: g.action, change: g.quantity,
-      detail: DETAIL[g.reverses ? 'reverse' : g.action](g), reversed: g.reversed })),
+      detail: DETAIL[g.reverses ? 'reverse' : g.action](g), reversed: g.reversed,
+      // A reversal row, whether Reverse or a replacing entry wrote it: never
+      // reversed again (Q44), so the page offers no Reverse on it.
+      reversal: g.reverses !== null })),
     ...settings.map((s) => ({ at: s.at, log_id: s.log_id, who: s.who, action: s.action, change: null,
       detail: describeChange(s.action, s.target_table, s.was, s.now) })),
   ];
