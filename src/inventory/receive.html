@@ -1,0 +1,605 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Receive · Inventory</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  receive.html — Inventory → Receive (#81 part 2): enter a PO when the
+  office orders (stories 29–31), edit it, close or re-open a line (story
+  39), receive a delivery against a PO or without one (stories 33–41), and
+  the list of POs. Like the web app's Receiving page, which also takes PO
+  lines. The list shows POs with something still to arrive; "Show
+  finished" shows the rest, so a line closed by mistake can be re-opened.
+  Opened from an item's History with ?replaces= (Reverse and enter again,
+  owner 2026-10-05), the next receipt saved replaces that receipt line.
+
+  The family bar narrows the item choices and the PO list. Only items of a
+  family that is live in Inventory can go on a PO: the database refuses the
+  rest (story 57), and this page says which families are not live yet.
+
+  Glue, NOT UNIT-TESTED: the form and the table need a browser, and this
+  repo has no DOM harness. Every route it calls is tested in
+  test/inventory.test.js. The layout is checked by hand (#81, Testing
+  Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">RTW Inventory Tracker</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory" class="here" aria-current="page">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
+  <div class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+    <span class="label" id="task-label">Task</span>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory">Overview</a><a href="/inventory/receive" aria-current="page">Receive</a></nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="message" role="status"></div>
+  <p class="sub" id="not-live" hidden></p>
+  <div class="note" id="replacing" hidden><span id="replacing-what"></span>
+    <button type="button" class="ghost" id="replacing-stop">Do not replace</button></div>
+
+  <form id="receipt" hidden>
+    <h2 style="margin:8px 0" id="receipt-title">Receive</h2>
+    <div class="row" style="align-items:flex-end">
+      <label class="field" id="receipt-supplier-field">Supplier <select id="receipt-supplier"></select></label>
+      <label class="field">Bill of Lading or tracking number (optional) <input id="bol" autocomplete="off" maxlength="60"></label>
+    </div>
+    <div class="tw" style="margin-top:10px"><table class="one-line">
+      <thead><tr><th></th><th style="width:30%">Item</th><th>PO line</th><th>Pieces received</th><th>Packs</th><th>Pack size</th><th>Kind</th><th>Loose</th><th></th></tr></thead>
+      <tbody id="receipt-lines"></tbody>
+    </table></div>
+    <div class="row" style="margin-top:10px">
+      <button type="button" class="ghost" id="receipt-add">+ Add item</button>
+      <button id="receipt-save">Save receipt</button>
+      <button type="button" class="ghost" id="receipt-cancel">Cancel</button>
+    </div>
+    <p class="sub">Fill in only what arrived; a line left empty receives nothing. Pieces received fills in from packs × pack size + loose. To have the two checked, type the total from the Bill of Lading over it: if they do not add up, nothing saves. Split a line to enter one item that came in packs of different sizes. A pack size typed here is kept on this line; it becomes the item's size on file only if the item has none of that kind.</p>
+  </form>
+
+  <form id="po">
+    <h2 style="margin:8px 0" id="form-title">Enter a PO</h2>
+    <div class="row" style="align-items:flex-end">
+      <label class="field">Supplier <select id="supplier" required></select></label>
+      <label class="field">PO number <input id="number" required autocomplete="off" maxlength="20"></label>
+      <label class="field">PO date <input id="po-date" type="date" required></label>
+    </div>
+    <div class="tw" style="margin-top:10px"><table class="one-line">
+      <thead><tr><th style="width:55%">Item</th><th>Amount ordered</th><th>Pack size (optional)</th><th></th></tr></thead>
+      <tbody id="lines"></tbody>
+    </table></div>
+    <div class="row" style="margin-top:10px">
+      <button type="button" class="ghost" id="add-line">+ Add line</button>
+      <button id="save">Save PO</button>
+      <button type="button" class="ghost" id="cancel-edit" hidden>Cancel</button>
+    </div>
+    <p class="sub" id="edit-note" hidden>A saved line is not removed here: cancel, then use Close… on the line.</p>
+  </form>
+
+  <datalist id="item-choices"></datalist>  <!-- the item lists of both forms -->
+
+  <div class="row" style="margin:20px 0 8px;align-items:center">
+    <h2 style="margin:0">POs</h2>
+    <label><input type="checkbox" id="show-finished"> Show finished</label>
+    <button type="button" class="ghost" id="receive-no-po">Receive without a PO…</button>
+  </div>
+  <div class="tw"><table class="one-line">
+    <thead><tr><th>#</th><th style="width:40%">Item</th><th>Ordered</th><th>Received</th><th>Pack size</th><th></th></tr></thead>
+    <tbody id="pos"></tbody>
+  </table></div>
+  <p class="sub" id="count"></p>
+  <p class="sub">Lumber is ordered in linear feet (LF), everything else in pieces; lumber is received in pieces. A pack size is the pieces in one pack, box or carton, if the PO names one. What is still to arrive on each open line shows as Incoming on the Overview. A line is never deleted: close one you no longer expect, with a reason, and re-open it if it comes after all. A PO is Finished when nothing more is expected on it.</p>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+(async () => {
+  const { esc, fmtInt } = PlannerUI;
+  const { send, say, itemLabel, today, unitShort, inOrderUnit } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  const me = await AppHeader.me;
+  if (!me) return;
+
+  let families = [];
+  let items = [];
+  let reasons = [];
+  let pos = [];
+  let packSizes = [];
+  let current = null;   // the family the family bar shows, or 'all'
+  let editing = null;   // the PO the form is editing, or null to enter a new one
+  let closing = null;   // the id of the line whose Close asks for a reason
+  let receiving = null; // { po } while the receive form is open; po is null without a PO
+
+  const family = (code) => families.find((f) => f.code === code);
+  const unitOf = (item) => unitShort(family(item.family).order_unit);
+  // An amount in its item's order unit: "1 piece", "40 pieces", "640 LF".
+  const amount = (n, item) => fmtInt(n) + ' ' + (n === 1 && unitOf(item) === 'pieces' ? 'piece' : unitOf(item));
+  // An item as the item box offers it: under All, its family first, so a
+  // plate and a hanger with the same SKU stay two choices. Either form is
+  // read back, so a line typed before the family bar changed still matches.
+  const choiceLabel = (i) => (current === 'all' ? family(i.family).name + ' · ' : '') + itemLabel(i);
+  // Capitals and spaces aside, as the database names items ("lus28" is
+  // LUS28), and a typed ' or ’ is the foot mark ′ in "2x4 #2 16′".
+  const plain = (text) => text.trim().replace(/\s+/g, ' ').replace(/['’]/g, '′').toLowerCase();
+  const isNamed = (i, text) => [itemLabel(i), family(i.family).name + ' · ' + itemLabel(i)].map(plain).includes(plain(text));
+  // Why line n's item box names no item: nothing to pick from, or a name
+  // not on the list.
+  const pickRefusal = (n) => 'Line ' + n + (orderable().length
+    ? ': pick the item from the list.'
+    : ': there is nothing to pick. Only items of a family that is live in Inventory can be ordered or received, and none shown is live yet.');
+  // The items a PO can order: in use, of a live family, in the family shown.
+  const orderable = () => items.filter((i) => i.active && family(i.family).live && (current === 'all' || i.family === current));
+  const itemById = (id) => items.find((i) => i.id === id);
+
+  // Reads every route at once; null, with the reason said, if any fails.
+  async function getAll(routes) {
+    const fail = { ok: false, error: 'The page did not load. Reload it to try again.' };
+    const bodies = await Promise.all(routes.map((route) => fetch(route).then((r) => r.json()).catch(() => fail)));
+    const bad = bodies.find((b) => !b.ok);
+    if (bad) { say(bad.error, 'bad'); return null; }
+    return bodies;
+  }
+
+  // The items, POs and pack sizes as they are now: after a receipt, and
+  // after a refusal because someone else changed a PO, whose lines may name
+  // an item added since this page loaded. `more` are read alongside, once.
+  const FIGURES = ['/api/items', '/api/pos', '/api/pack-sizes'];
+  async function refresh(more = []) {
+    const got = await getAll(FIGURES.concat(more));
+    if (!got) return null;
+    [{ families, items }, { pos }, { pack_sizes: packSizes }] = got;
+    paintChoices();
+    paintPos();
+    return got.slice(FIGURES.length);
+  }
+
+  // The receipt line the next receipt replaces (from History), and its words.
+  const asked = new URLSearchParams(location.search);
+  let replacing = Number(asked.get('replaces')) || null;
+  function paintReplacing() {
+    el('replacing').hidden = !replacing;
+    el('replacing-what').textContent = replacing ? 'Receiving again, to replace ' + (asked.get('what') || 'a receipt line') +
+      '. Click Receive on the right PO, or Receive without a PO. Saving reverses the old line and times this receipt as it.' : '';
+    if (!replacing) history.replaceState(null, '', location.pathname);
+  }
+  el('replacing-stop').addEventListener('click', () => { replacing = null; paintReplacing(); });
+
+  async function load() {
+    paintReplacing();
+    const got = await refresh(['/api/suppliers', '/api/reasons']);
+    if (!got) return;
+    const [suppliers, reasonList] = got;
+    // Reasons in use, less those kept for another entry (a trim, the import).
+    reasons = reasonList.reasons.filter((r) => r.active && !r.entry);
+    const supplierChoices = '<option value="">Pick one…</option>' +
+      suppliers.suppliers.map((s) => '<option value="' + s.id + '">' + esc(s.name) + '</option>').join('');
+    el('supplier').innerHTML = supplierChoices;
+    el('receipt-supplier').innerHTML = supplierChoices;
+    if (!suppliers.suppliers.length) say('Add your suppliers in Settings → Suppliers first; a PO is picked from that list.', 'bad');
+    const off = families.filter((f) => !f.live).map((f) => f.name);
+    el('not-live').hidden = !off.length;
+    el('not-live').textContent = off.length === families.length
+      ? 'No family is live in Inventory yet, so nothing can be ordered or received here. That starts at the cutover.'
+      : 'Not live in Inventory yet: ' + off.join(', ') + '. Their items cannot be ordered or received until the cutover.';
+    showForm(null);
+    AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+      current = f;
+      paintChoices();
+      paintPos();
+    });
+  }
+
+  function paintChoices() {
+    el('item-choices').innerHTML = orderable().map((i) => '<option value="' + esc(choiceLabel(i)) + '">').join('');
+  }
+
+  // One line of the form, empty or filled from a saved line. A saved line
+  // keeps its id, and has no remove button: a line is never deleted, only
+  // closed (owner, 2026-10-03). A closed line shows, greyed and fixed, so the
+  // form's line 2 is line 2 in the list and the Activity Log. Its unit
+  // follows the item typed in it.
+  function addLine(saved) {
+    const tr = document.createElement('tr');
+    const item = saved && itemById(saved.item_id);
+    const fixed = saved?.closed_reason ? ' disabled' : '';
+    if (saved) Object.assign(tr.dataset, { id: saved.id, itemId: saved.item_id });
+    if (fixed) tr.className = 'sub';
+    tr.innerHTML = '<td><input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…" value="' +
+        esc(item ? choiceLabel(item) : '') + '"' + fixed + '></td>' +
+      '<td><input data-f="ordered" type="number" min="1" step="1" style="width:8em" value="' + (saved ? saved.ordered : '') + '"' + fixed + '>' +
+        ' <span class="sub" data-f="unit">' + (item ? unitOf(item) : '') + '</span></td>' +
+      '<td><input data-f="pack" type="number" min="1" step="1" style="width:7em" value="' + (saved?.pack_size ?? '') + '"' + fixed + '></td>' +
+      '<td>' + (!saved ? '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>'
+        : closedLabel(saved)) + '</td>';
+    el('lines').append(tr);
+  }
+
+  // The form enters a new PO (po null) or edits `po`, with all its lines.
+  function showForm(po) {
+    editing = po;
+    el('form-title').textContent = po ? 'Edit PO ' + po.number + ' from ' + po.supplier : 'Enter a PO';
+    el('save').textContent = po ? 'Save changes' : 'Save PO';
+    el('cancel-edit').hidden = !po;
+    el('edit-note').hidden = !po;
+    el('supplier').value = po ? po.supplier_id : '';
+    el('number').value = po ? po.number : '';
+    el('po-date').value = po ? po.po_date : today();
+    el('lines').replaceChildren();
+    if (po) po.lines.forEach(addLine);
+    addLine();
+    paintPos();
+  }
+
+  // The item a form line names: the one picked in it while typing, or the
+  // item a saved line already orders (which may since be retired), while
+  // the box still names it; else one from the list. Those two come first
+  // because a name without its family can fit two items: "LUS28" typed
+  // under Plates is also a hanger once the family bar shows All.
+  function lineItem(tr, text) {
+    const own = [tr.dataset.picked, tr.dataset.itemId].map((id) => itemById(Number(id)));
+    return own.find((i) => i && isNamed(i, text)) || orderable().find((i) => isNamed(i, text)) || null;
+  }
+
+  el('lines').addEventListener('input', (e) => {
+    if (e.target.dataset.f !== 'item') return;
+    const tr = e.target.closest('tr');
+    const item = lineItem(tr, e.target.value);
+    tr.dataset.picked = item ? item.id : '';
+    tr.querySelector('[data-f="unit"]').textContent = item ? unitOf(item) : '';
+  });
+  el('lines').addEventListener('click', (e) => {
+    if (e.target.dataset.f !== 'remove') return;
+    e.target.closest('tr').remove();
+    if (!el('lines').querySelector('[data-f="remove"]')) addLine();
+  });
+  el('add-line').addEventListener('click', () => addLine());
+  el('cancel-edit').addEventListener('click', () => { say(''); showForm(null); });
+
+  // Reads the form into the request. An item typed but not picked from the
+  // list stops here with the line's number; every other rule is the
+  // database's, which answers in the same words. An empty new line is taken
+  // off the form first, so "Line n" is the nth row on screen, here and in the
+  // database's answer; one empty line goes back at the end for typing.
+  function request() {
+    const empty = (tr) => !tr.dataset.id && [...tr.querySelectorAll('input')].every((i) => !i.value.trim());
+    [...el('lines').children].filter(empty).forEach((tr) => tr.remove());
+    const lines = [];
+    try {
+      for (const [n, tr] of [...el('lines').children].entries()) {
+        const value = (f) => tr.querySelector('[data-f="' + f + '"]').value.trim();
+        const number = (f) => (value(f) === '' ? null : Number(value(f)));
+        // A saved line is closed, never removed (PO edit rules, #81).
+        if (tr.dataset.id && !value('item')) {
+          throw new Error('Line ' + (n + 1) + ' is saved on this PO, so it is not removed here. Cancel, then use Close… on the line.');
+        }
+        const item = lineItem(tr, value('item'));
+        if (!item) throw new Error(pickRefusal(n + 1));
+        lines.push({ id: tr.dataset.id ? Number(tr.dataset.id) : null, item_id: item.id,
+          ordered: number('ordered'), pack_size: number('pack') });
+      }
+    } finally {
+      addLine();
+    }
+    const po = { key: crypto.randomUUID(), supplier_id: Number(el('supplier').value) || null,
+      number: el('number').value, po_date: el('po-date').value, lines };
+    return editing ? ['/api/pos/edit', { ...po, id: editing.id, version: editing.version }] : ['/api/pos/enter', po];
+  }
+
+  // Sends one change to a PO and shows the PO as it comes back. A reply that
+  // never arrives keeps the same body, retry key included, so "Try again"
+  // acts once. A stale screen reloads the list, so it shows the PO as it is now.
+  async function save(route, body, done) {
+    say('');
+    try {
+      const { po } = await send(route, body);
+      pos = pos.some((p) => p.id === po.id) ? pos.map((p) => (p.id === po.id ? po : p)) : [po].concat(pos);
+      say(done(po), 'ok');
+    } catch (err) {
+      const restart = err.current && editing && editing.id === err.current.id ? ' Click Edit to start again from it as it is now.' : '';
+      say(err.message + restart, 'bad', err.unconfirmed ? () => save(route, body, done) : null);
+      if (err.current) return refresh();
+    }
+    paintPos();
+  }
+  el('po').addEventListener('submit', (e) => {
+    e.preventDefault();
+    let route, body;
+    try { [route, body] = request(); } catch (err) { return say(err.message, 'bad'); }
+    el('save').disabled = true;
+    save(route, body, (po) => {
+      const word = editing ? ' was changed.' : ' was entered. Its lines show as Incoming on the Overview.';
+      showForm(null);
+      return 'PO ' + po.number + ' from ' + po.supplier + word;
+    }).finally(() => { el('save').disabled = false; });
+  });
+
+  // Newest PO first: one shaded header row per PO (number, supplier, date,
+  // status, Edit and Receive), then its lines, each numbered by its place on
+  // the PO, closed lines counted, as refusals and the receive form number
+  // them. The family bar shows only that family's lines, under their PO's
+  // header. A finished PO shows only with "Show finished" ticked.
+  const STATUS = { ordered: 'Ordered', partial: 'Partial', finished: 'Finished' };
+  function paintPos() {
+    let shown = 0;
+    const showFinished = el('show-finished').checked;
+    el('pos').innerHTML = pos.filter((po) => showFinished || po.status !== 'finished').map((po) => {
+      const lines = po.lines.filter((l) => current === 'all' || itemById(l.item_id).family === current);
+      if (!lines.length) return '';
+      shown++;
+      const canReceive = po.lines.some((l) => !l.closed_reason) && !busy(po);
+      return '<tr class="po-head" data-po="' + po.id + '"><td colspan="5">PO ' + esc(po.number) + ' · ' +
+          esc(po.supplier) + ' · ' + esc(po.po_date) + ' · ' + STATUS[po.status] + '</td>' +
+          '<td><button type="button" class="ghost" data-do="edit">Edit</button>' +
+          (canReceive ? ' <button type="button" class="ghost" data-do="receive">Receive</button>' : '') + '</td></tr>' +
+        lines.map((l) => {
+          const item = itemById(l.item_id);
+          return '<tr class="po-line' + (l.closed_reason ? ' sub' : '') + '" data-po="' + po.id + '" data-line="' + l.id + '">' +
+            '<td>' + (po.lines.indexOf(l) + 1) + '</td><td class="name">' + esc(choiceLabel(item)) + '</td>' +
+            '<td>' + amount(l.ordered, item) + '</td>' +
+            '<td>' + amount(l.received, item) + '</td>' +
+            '<td>' + (l.pack_size ?? '—') + '</td><td>' + lineAction(po, l) + '</td></tr>';
+        }).join('');
+    }).join('');
+    el('count').textContent = shown + ' PO' + (shown === 1 ? '' : 's') + ' shown.';
+  }
+  el('show-finished').addEventListener('change', paintPos);
+  // Whether a PO is open in the edit form or the receive form: one change to
+  // a PO at a time, so neither form's save meets the other change.
+  const busy = (po) => (editing && editing.id === po.id) || (receiving && receiving.po && receiving.po.id === po.id);
+  // Why a line is closed, as the list and the edit form both say it; nothing
+  // for an open line.
+  const closedLabel = (l) => (l.closed_reason ? 'Closed: ' + esc(l.closed_reason) : '');
+  // An open line offers Close, which first asks for a reason; a closed line
+  // says why and offers Re-open. Neither while its PO is open in a form.
+  function lineAction(po, l) {
+    if (busy(po)) return closedLabel(l) + ' <span class="sub">Save or cancel the form first.</span>';
+    if (l.closed_reason) return closedLabel(l) + ' <button type="button" class="ghost" data-do="reopen">Re-open</button>';
+    if (l.id !== closing) return '<button type="button" class="ghost" data-do="close">Close…</button>';
+    return '<select data-f="reason"><option value="">Reason…</option>' +
+      reasons.map((r) => '<option value="' + r.id + '">' + esc(r.text) + '</option>').join('') + '</select> ' +
+      '<button type="button" data-do="close-line">Close line</button> <button type="button" class="ghost" data-do="close-cancel">Cancel</button>';
+  }
+
+  el('pos').addEventListener('click', (e) => {
+    const what = e.target.dataset && e.target.dataset.do;
+    if (!what) return;
+    const tr = e.target.closest('tr');
+    const po = pos.find((p) => p.id === Number(tr.dataset.po));
+    const line = Number(tr.dataset.line);
+    if (what === 'edit') {
+      say('');
+      if (receiving) hideReceipt();
+      showForm(po);
+      return el('po').scrollIntoView({ behavior: 'smooth' });
+    }
+    if (what === 'receive') {
+      say('');
+      return showReceipt(po);
+    }
+    if (what === 'close' || what === 'close-cancel') { closing = what === 'close' ? line : null; return paintPos(); }
+    if (what === 'close-line') {
+      const reasonId = Number(tr.querySelector('[data-f="reason"]').value) || null;
+      if (!reasonId) return say('Pick the reason the line is closed.', 'bad');
+      closing = null;
+      return save('/api/pos/close-line', { key: crypto.randomUUID(), id: line, po_version: po.version, reason_id: reasonId },
+        (p) => 'A line of PO ' + p.number + ' was closed. It no longer counts as Incoming.');
+    }
+    if (what === 'reopen') {
+      save('/api/pos/reopen-line', { key: crypto.randomUUID(), id: line, po_version: po.version },
+        (p) => 'A line of PO ' + p.number + ' was re-opened. It counts as Incoming again.');
+    }
+  });
+
+  // ── Receiving (stories 33–41) ──────────────────────────────────────────────
+  const cell = (tr, f) => tr.querySelector('[data-f="' + f + '"]');
+  const sizeOnFile = (itemId, kind) => packSizes.find((p) => p.item_id === itemId && p.kind === kind)?.pieces;
+
+  // Fills a receive row's kinds for its item: the first kind the item has a
+  // size on file for, with that size, unless the PO line names its own.
+  function fillPacking(tr, item, poPackSize) {
+    const kinds = item ? family(item.family).pack_kinds : [];
+    const kind = kinds.find((k) => sizeOnFile(item.id, k)) || kinds[0];
+    cell(tr, 'kind').hidden = !kinds.length;  // no item picked yet
+    cell(tr, 'kind').innerHTML = kinds.map((k) =>
+      '<option' + (k === kind ? ' selected' : '') + '>' + esc(k) + '</option>').join('');
+    cell(tr, 'pack').value = poPackSize ?? (item && sizeOnFile(item.id, kind)) ?? '';
+  }
+
+  // One row of the receive form: for PO line number n (line), or, with no
+  // line, an item typed in; `split` for a second row on the same PO line.
+  function receiptRow(line, n, split) {
+    const tr = document.createElement('tr');
+    const item = line && itemById(line.item_id);
+    if (line) Object.assign(tr.dataset, { poLine: line.id, itemId: line.item_id });
+    const box = (f, w, min) => '<td><input data-f="' + f + '" type="number" min="' + min + '" step="1" style="width:' + w + '"></td>';
+    tr.innerHTML = '<td class="sub" data-f="n">' + (line ? n : '') + '</td>' +
+      '<td>' + (line ? esc(choiceLabel(item))
+        : '<input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…">') + '</td>' +
+      '<td class="sub">' + (line ? 'Line ' + n + ' · ' + fmtInt(line.received) + ' of ' + amount(line.ordered, item) + ' in'
+        + (split ? '' : '<div data-f="over" hidden></div>') : receiving.po ? 'not on the PO' : '') + '</td>' +
+      box('quantity', '7em', 1) + box('packs', '5em', 0) + box('pack', '6em', 1) +
+      '<td><select data-f="kind"></select></td>' +
+      '<td><input data-f="loose" type="number" min="0" step="1" style="width:5em"></td>' +
+      '<td>' + (line && !split ? '<button type="button" class="ghost" data-f="split">Split</button>'
+        : '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>') + '</td>';
+    fillPacking(tr, item, line && line.pack_size);
+    return tr;
+  }
+
+  // Each row's number, as the database numbers it in a refusal (owner, Q74):
+  // a PO line's row shows its line's own number (receiptRow), closed lines
+  // counted, as on the PO list; a row not on the PO is numbered on after the
+  // PO's last line.
+  function renumber() {
+    let after = receiving.po ? receiving.po.lines.length : 0;
+    [...el('receipt-lines').children].filter((tr) => !tr.dataset.poLine)
+      .forEach((tr) => { cell(tr, 'n').textContent = ++after; });
+  }
+
+  // Opens the receive form for `po` (every open line, in PO order), or
+  // without a PO when po is null.
+  function showReceipt(po) {
+    if (editing) showForm(null);
+    receiving = { po };
+    el('receipt').hidden = false;
+    el('po').hidden = true;
+    el('receipt-title').textContent = po ? 'Receive PO ' + po.number + ' from ' + po.supplier : 'Receive without a PO';
+    el('receipt-supplier-field').hidden = !!po;
+    el('receipt-supplier').value = '';
+    el('bol').value = '';
+    el('receipt-add').textContent = po ? '+ Add item not on this PO' : '+ Add item';
+    el('receipt-lines').replaceChildren(...(po
+      ? po.lines.map((l, i) => !l.closed_reason && receiptRow(l, i + 1)).filter(Boolean)
+      : [receiptRow(null)]));
+    renumber();
+    paintPos();
+    el('receipt').scrollIntoView({ behavior: 'smooth' });
+  }
+  function hideReceipt() {
+    receiving = null;
+    el('receipt').hidden = true;
+    el('po').hidden = false;
+    paintPos();
+  }
+
+  el('receive-no-po').addEventListener('click', () => { say(''); showReceipt(null); });
+  el('receipt-cancel').addEventListener('click', () => { say(''); hideReceipt(); });
+  el('receipt-add').addEventListener('click', () => { el('receipt-lines').append(receiptRow(null)); renumber(); });
+
+  el('receipt-lines').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr');
+    if (e.target.dataset.f === 'remove') tr.remove();
+    if (e.target.dataset.f === 'split') {
+      const po = receiving.po;
+      const n = po.lines.findIndex((l) => l.id === Number(tr.dataset.poLine));
+      let last = tr;
+      while (last.nextElementSibling && last.nextElementSibling.dataset.poLine === tr.dataset.poLine) last = last.nextElementSibling;
+      last.after(receiptRow(po.lines[n], n + 1, true));
+    }
+    renumber();
+    warnOver();
+  });
+
+  el('receipt-lines').addEventListener('input', (e) => {
+    const tr = e.target.closest('tr');
+    const f = e.target.dataset.f;
+    if (f === 'item') {
+      const item = orderable().find((i) => isNamed(i, e.target.value));
+      tr.dataset.itemId = item ? item.id : '';
+      fillPacking(tr, item, null);
+    }
+    if (f === 'kind') {
+      const size = sizeOnFile(Number(tr.dataset.itemId), e.target.value);
+      if (size) cell(tr, 'pack').value = size;
+    }
+    // packs × pack size + loose, shown greyed in Pieces received until a
+    // total is typed there (owner, 2026-10-04).
+    cell(tr, 'quantity').placeholder = packedPieces(tr) ?? '';
+    warnOver();
+  });
+
+  // Warns, without refusing, when the rows typed for a PO line bring it past
+  // what it ordered (owner, Q53): a receipt entered twice by mistake looks
+  // just like a supplier sending extra. Split rows of one line add up; the
+  // warning shows on the line's first row.
+  function warnOver() {
+    const po = receiving.po;
+    if (!po) return;
+    const rows = [...el('receipt-lines').children].filter((tr) => tr.dataset.poLine);
+    po.lines.forEach((line, n) => {
+      const own = rows.filter((tr) => Number(tr.dataset.poLine) === line.id);
+      if (!own.length) return;
+      const pieces = own.reduce((sum, tr) => sum + (Number(cell(tr, 'quantity').value) || packedPieces(tr) || 0), 0);
+      const item = itemById(line.item_id);
+      const after = line.received + inOrderUnit(pieces, item, family(item.family).order_unit);
+      const over = cell(own[0], 'over');
+      over.hidden = !pieces || after <= line.ordered;
+      over.textContent = over.hidden ? '' : 'This brings line ' + (n + 1) + ' to ' + fmtInt(after) + ' of ' + amount(line.ordered, item) + ' ordered.';
+    });
+  }
+
+  // packs × pack size + loose as typed in a row, or null while they give no
+  // whole number: none typed, or packs without a pack size.
+  function packedPieces(tr) {
+    const [packs, size, loose] = ['packs', 'pack', 'loose'].map((f) => cell(tr, f).value.trim());
+    if ((packs === '' && loose === '') || (packs !== '' && size === '')) return null;
+    const total = Number(packs) * Number(size) + Number(loose);
+    return Number.isSafeInteger(total) ? total : null;
+  }
+
+  // Reads the receive form into the request, one line per row, empty rows
+  // included: the database skips them, and numbers every row as renumber
+  // does. An item typed but not picked stops here with its row's number.
+  function receiptRequest() {
+    const lines = [...el('receipt-lines').children].map((tr) => {
+      const value = (f) => cell(tr, f).value.trim();
+      const number = (f) => (value(f) === '' ? null : Number(value(f)));
+      const filled = ['quantity', 'packs', 'loose'].some((f) => number(f) !== null);
+      const itemId = Number(tr.dataset.itemId) || null;
+      if (filled && !itemId) throw new Error(pickRefusal(cell(tr, 'n').textContent));
+      const packs = number('packs');
+      // An empty Pieces received takes packs × pack size + loose.
+      return { po_line_id: Number(tr.dataset.poLine) || null, item_id: itemId, quantity: number('quantity') ?? packedPieces(tr), packs,
+        pack_size: packs === null ? null : number('pack'), pack_kind: packs === null ? null : value('kind'), loose: number('loose') };
+    });
+    const po = receiving.po;
+    return { key: crypto.randomUUID(), po_id: po ? po.id : null, po_version: po ? po.version : null,
+      supplier_id: po ? null : Number(el('receipt-supplier').value) || null, bol: el('bol').value, lines, replaces: replacing };
+  }
+
+  // Saves the receipt, then reloads the list, whose Received and Incoming
+  // it changed. A stale screen reloads it too, to show the PO as it is now.
+  async function saveReceipt(body) {
+    say('');
+    try {
+      const { receipt } = await send('/api/receipts/receive', body);
+      const from = receipt.po_number ? 'PO ' + receipt.po_number + ' from ' + receipt.supplier : receipt.supplier + ', without a PO';
+      const kept = receipt.pack_sizes_added.map((p) => ' ' + p.item + ' now has a ' + p.kind + ' size on file: ' + p.pieces + '.').join('');
+      hideReceipt();
+      say('Received ' + from + '.' + kept + (receipt.reversed ? ' The receipt line it replaces is reversed.' : ''), 'ok');
+      replacing = null;
+      paintReplacing();
+      await refresh();
+    } catch (err) {
+      const restart = err.current ? ' Click Receive to start again from it as it is now.' : '';
+      say(err.message + restart, 'bad', err.unconfirmed ? () => saveReceipt(body) : null);
+      if (err.current) {
+        hideReceipt();
+        await refresh();
+      }
+    }
+  }
+  el('receipt').addEventListener('submit', (e) => {
+    e.preventDefault();
+    let body;
+    try { body = receiptRequest(); } catch (err) { return say(err.message, 'bad'); }
+    el('receipt-save').disabled = true;
+    saveReceipt(body).finally(() => { el('receipt-save').disabled = false; });
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

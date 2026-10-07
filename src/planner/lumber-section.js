@@ -174,7 +174,7 @@
         <form class="row" id="menu-add" style="margin-top:8px">
           <label class="field">Size <select id="menu-add-size"></select></label>
           <label class="field">Grade <select id="menu-add-grade"></select></label>
-          <label class="field" id="menu-add-other-field" hidden>Other grade <input id="menu-add-other" autocomplete="off" style="width:7em"></label>
+          <label class="field" id="menu-add-other-field" hidden>Other grade <input id="menu-add-other" autocomplete="off" maxlength="20" style="width:7em"></label>
           <button>Add size and grade</button>
         </form>
         <div id="menu-message" role="status"></div>

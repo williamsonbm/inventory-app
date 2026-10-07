@@ -1,5 +1,5 @@
-// Inventory → Overview and the catalog's Settings (#81 part 1): what the
-// screens list, and the changes a signed-in person makes.
+// Inventory → Overview and Receive, and the catalog's Settings (#81 parts 1
+// and 2): what the screens list, and the changes a signed-in person makes.
 //
 // Every change differs only in DATA — which database function it calls, which
 // fields of the request it passes, and the name its answer goes back under —
@@ -24,27 +24,39 @@ async function readLumberSizes(database) {
   return (await database.read('SELECT inv.lumber_sizes() AS sizes'))[0].sizes;
 }
 
+// The families Inventory holds, for the family bar on Inventory and the
+// Activity Log. See listCatalog for the columns.
+function readFamilies(database) {
+  return database.read(`
+    SELECT code, name, identity, pack_kinds, live, order_unit, trimmable,
+           CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
+      FROM inv.families
+     WHERE identity IS NOT NULL
+     ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`);
+}
+
 // The families Inventory holds, for the family bar (in the Planner's order,
 // so the two bars match) and "+ Add item", and
-// every item. A family with no identity fields (EWP until step 5) cannot hold
+// every item with its figures (inv.item_figures), and each LVL depth's
+// line above its lengths (inv.lvl_depth_figures, Q58). live says whether the
+// family takes POs yet, order_unit what its PO lines are ordered in, and
+// trimmable whether its items offer Trim (stories 47–48). A family with no identity fields (EWP until step 5) cannot hold
 // items, so it is left out. choices gives a name field's only values, which
 // the page offers as a list: lumber sizes (inv.lumber_sizes). The version
 // rides along so a save can say which version it read (S41).
 async function listCatalog(database) {
-  const [families, items] = await Promise.all([
+  const [families, items, lvlDepths] = await Promise.all([
+    readFamilies(database),
     database.read(`
-      SELECT code, name, identity, pack_kinds,
-             CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
-        FROM inv.families
-       WHERE identity IS NOT NULL
-       ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`),
-    database.read(`
-      SELECT id::int, family, sku, product, size, grade, length_ft, stocking, threshold, note, active, version
-        FROM inv.items ORDER BY family, sku, product, size, grade, length_ft`),
+      SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
+             i.active, i.version, f.incoming, f.on_hand, f.reorder
+        FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
+       ORDER BY i.family, i.sku, i.product, i.size, i.grade, i.length_ft`),
+    database.read('SELECT depth, available_lf, threshold_lf, reorder FROM inv.lvl_depth_figures ORDER BY depth'),
   ]);
   // gradeOrder: lumber grades weakest first, the engine's own ranking, so the
   // Overview sorts 2x4 #2 ahead of 2x4 #1 (owner, 2026-10-01).
-  return { families, items, gradeOrder: GRADE_STRENGTH_ORDER };
+  return { families, items, lvlDepths, gradeOrder: GRADE_STRENGTH_ORDER };
 }
 
 // Route → the database function it calls, its arguments after the actor and
@@ -68,6 +80,35 @@ const CATALOG_CHANGES = {
   },
   '/api/lumber/lengths': { fn: 'set_lumber_lengths', args: (b) => [b.size, b.grade, b.version, b.lengths], as: 'lengths' },
   '/api/lumber/remove': { fn: 'remove_lumber_group', args: (b) => [b.size, b.grade, b.version], as: 'removed' },
+  // Inventory → Receive. A list of lines is sent as JSON text: pg would send
+  // a JavaScript array as a Postgres array, which a jsonb argument refuses.
+  '/api/pos/enter': {
+    fn: 'enter_po', args: (b) => [b.supplier_id, b.number, b.po_date, JSON.stringify(b.lines)], as: 'po',
+  },
+  '/api/pos/edit': {
+    fn: 'edit_po', args: (b) => [b.id, b.version, b.supplier_id, b.number, b.po_date, JSON.stringify(b.lines)], as: 'po',
+  },
+  // A delivery against a PO (po_id and the version the screen read) or
+  // without one (supplier_id). replaces: a receipt line it replaces, from
+  // History → Reverse → Reverse and enter again; likewise for a correction
+  // and a trim.
+  '/api/receipts/receive': {
+    fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines), b.replaces ?? null], as: 'receipt',
+  },
+  // Inventory → Overview → an item → Correct on hand: a change in pieces, + or −.
+  '/api/items/correct': {
+    fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note, b.replaces ?? null], as: 'correction',
+  },
+  // Inventory → Overview → an LVL item → Trim: boards cut down to a shorter length;
+  // unretire: the page said a retired length comes back into use (Q39).
+  '/api/items/trim': {
+    fn: 'trim', args: (b) => [b.item_id, b.length_ft, b.boards, b.note, b.unretire === true, b.replaces ?? null], as: 'trim',
+  },
+  // Inventory → Overview → an item → History → Reverse: a receipt line, a
+  // correction or a trim entered by mistake (stories 42, 43, 49).
+  '/api/ledger/reverse': { fn: 'reverse', args: (b) => [b.id, b.note], as: 'reversal' },
+  '/api/pos/close-line': { fn: 'close_po_line', args: (b) => [b.id, b.po_version, b.reason_id], as: 'po' },
+  '/api/pos/reopen-line': { fn: 'reopen_po_line', args: (b) => [b.id, b.po_version], as: 'po' },
   '/api/lumber/redirect': {
     fn: 'set_grade_redirect', args: (b) => [b.size, b.from_grade, b.version, b.to_grade], as: 'redirect',
   },
@@ -111,7 +152,7 @@ const SETTINGS_LISTS = {
   },
   '/api/reasons': {
     as: 'reasons',
-    sql: 'SELECT id::int, text, active, built_in, version FROM inv.reasons ORDER BY active DESC, pg_catalog.lower(text)',
+    sql: 'SELECT id::int, text, active, built_in, entry, version FROM inv.reasons ORDER BY active DESC, pg_catalog.lower(text)',
   },
   // Every depth an LVL item has, with its threshold if one was ever saved;
   // a depth never saved has no version yet.
@@ -123,6 +164,14 @@ const SETTINGS_LISTS = {
            ORDER BY pg_catalog.array_position(ARRAY['9-1/2', '11-7/8', '14', '16', '18', '20', '22', '24'], d.depth), d.depth`,
   },
 };
+
+// Inventory → Receive: every PO, newest first, each in the shape
+// /api/pos/enter answers with.
+async function listPos(database) {
+  const rows = await database.read(
+    'SELECT inv.po_json(id) AS po FROM inv.purchase_orders ORDER BY po_date DESC, id DESC');
+  return rows.map((r) => r.po);
+}
 
 async function listSettings(database, route) {
   const { as, sql } = SETTINGS_LISTS[route];
@@ -138,5 +187,5 @@ async function saveCatalogChange(database, actor, route, body) {
 }
 
 module.exports = {
-  itemLabel, listCatalog, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
+  itemLabel, listCatalog, readFamilies, listPos, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
 };

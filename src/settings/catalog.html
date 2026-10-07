@@ -134,12 +134,12 @@
       title: 'Suppliers',
       help: 'Picked on each PO, so each supplier is spelled one way.',
       async load() { this.list = (await get('/api/suppliers')).suppliers; },
-      addForm: () => '<label class="field">Name <input id="f-name" required autocomplete="off"></label><button>Add supplier</button>',
+      addForm: () => '<label class="field">Name <input id="f-name" required autocomplete="off" maxlength="60"></label><button>Add supplier</button>',
       addBody: () => ['/api/suppliers/add', { name: el('f-name').value }],
       head: '<tr><th>Name</th></tr>',
       rows(words) {
         return this.list.filter((s) => words.every((w) => s.name.toLowerCase().includes(w)))
-          .map((s) => '<tr><td>' + input('data-id="' + s.id + '" aria-label="Supplier name"', s.name) + '</td></tr>');
+          .map((s) => '<tr><td>' + input('data-id="' + s.id + '" maxlength="60" aria-label="Supplier name"', s.name) + '</td></tr>');
       },
       onChange(target) {
         const s = this.list.find((x) => String(x.id) === target.dataset.id);
@@ -153,7 +153,7 @@
       title: 'Reasons',
       help: 'Picked for a correction, an unmatched count line or a closed PO line. A reason is retired, never deleted, so old records keep it. The app itself uses the reasons marked "used by the app", so those cannot be retired.',
       async load() { this.list = (await get('/api/reasons')).reasons; },
-      addForm: () => '<label class="field">Reason <input id="f-text" required autocomplete="off"></label><button>Add reason</button>',
+      addForm: () => '<label class="field">Reason <input id="f-text" required autocomplete="off" maxlength="60"></label><button>Add reason</button>',
       addBody: () => ['/api/reasons/add', { text: el('f-text').value }],
       head: '<tr><th>Reason</th><th></th></tr>',
       rows(words) {

@@ -226,7 +226,7 @@ test('reasons: the five the app relies on are there from the start; others are a
   assert.ok(listed.every((r) => r.active && r.built_in), 'the five start active and built in');
 
   const miscount = await call(db, 'add_reason', ann.id, crypto.randomUUID(), ' Miscounted ');
-  assert.deepEqual(miscount, { id: miscount.id, text: 'Miscounted', active: true, built_in: false, version: 1 });
+  assert.deepEqual(miscount, { id: miscount.id, text: 'Miscounted', active: true, built_in: false, entry: null, version: 1 });
   const retired = await call(db, 'retire_reason', ann.id, crypto.randomUUID(), miscount.id, 1);
   assert.deepEqual(retired, { ...miscount, active: false, version: 2 });
   assert.deepEqual((await call(db, 'unretire_reason', ann.id, crypto.randomUUID(), miscount.id, 2)),
@@ -558,4 +558,70 @@ test('the import refuses two sizes of one kind for an item, and an LVL depth no 
   await refused(as(db, null, (owner) => owner.query("INSERT INTO inv.lvl_depth_thresholds (depth) VALUES (' ')")),
     '23514', 'a blank depth, whatever writes it');
   await run([carton(50)], [{ depth: '14', threshold_lf: 100 }]);
+});
+
+test('a save that changes nothing is refused on every edit, so it leaves no log row (story 106)', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const item = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LUS28' });
+  const lvl = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 });
+  const carton = await call(db, 'add_pack_size', ann.id, crypto.randomUUID(), item.id, 'carton', 50);
+  const boise = await call(db, 'add_supplier', ann.id, crypto.randomUUID(), 'Boise Cascade');
+  const depth = await call(db, 'set_lvl_depth_threshold', ann.id, crypto.randomUUID(), lvl.size, null, 720);
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['edit item', 'edit_item', item.id, 1, { stocking: 'Special Order' }],
+    ['rename item', 'rename_item', item.id, 1, { sku: ' LUS28 ' }],
+    ['change pack size', 'change_pack_size', carton.id, 1, 50],
+    ['rename supplier', 'rename_supplier', boise.id, 1, ' Boise Cascade '],
+    ['rename user', 'rename_user', ann.id, ann.version, 'Ann Lee'],
+    ['set LVL depth threshold', 'set_lvl_depth_threshold', lvl.size, depth.version, 720],
+  ];
+  for (const [label, fn, ...args] of cases) {
+    const err = await refused(call(db, fn, ann.id, crypto.randomUUID(), ...args), 'IV422', label);
+    assert.equal(err.message, 'Nothing changed, so nothing was saved.', label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+});
+
+test('every text a person types has a length limit, refused with a plain message (owner, 2026-10-03)', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const supplier = await call(db, 'add_supplier', ann.id, crypto.randomUUID(), 'Simpson');
+  const hanger = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'LUS28' });
+  await as(db, null, (owner) => owner.query("SELECT inv.set_family_live('ann@example.com', 'hangers')"));
+  const x = (n) => 'x'.repeat(n);
+  const key = () => crypto.randomUUID();
+  const po = (number) => call(db, 'enter_po', ann.id, key(), supplier.id, number, '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 1 }]));
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['add_user', [`${x(243)}@example.com`, 'Bob Ray', HASH], 'An email address has at most 254 characters.'],
+    ['add_user', ['bob@example.com', x(71), HASH], 'A name has at most 70 characters.'],
+    ['add_item', ['hangers', { sku: x(31) }], 'A SKU has at most 30 characters.'],
+    ['add_item', ['lvl', { product: x(61), size: '14', length_ft: 48 }], 'An LVL product has at most 60 characters.'],
+    ['add_item', ['lvl', { product: '2.1 RigidLam LVL 1-3/4', size: x(11), length_ft: 48 }], 'An LVL depth has at most 10 characters.'],
+    ['add_item', ['lumber', { size: '2x4', grade: x(21), length_ft: 8 }], 'A grade has at most 20 characters.'],
+    ['edit_item', [hanger.id, 1, { note: x(201) }], 'A note has at most 200 characters.'],
+    ['add_supplier', [x(61)], 'A supplier name has at most 60 characters.'],
+    ['add_reason', [x(61)], 'A reason has at most 60 characters.'],
+    ['set_lumber_lengths', ['2x4', x(21), null, [8]], 'A grade has at most 20 characters.'],
+    ['set_grade_redirect', ['2x4', '#2', null, x(21)], 'A grade has at most 20 characters.'],
+  ];
+  for (const [fn, args, message] of cases) {
+    const err = await refused(call(db, fn, ann.id, key(), ...args), 'IV400', message);
+    assert.equal(err.message, message);
+  }
+  assert.equal((await refused(po(x(21)), 'IV400', 'a PO number of 21')).message, 'A PO number has at most 20 characters.');
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  assert.equal((await po(x(20))).number, x(20), 'a PO number of exactly 20 saves');
+
+  // A longer note saved before the limits existed never blocks another change.
+  await as(db, null, (owner) => owner.query(`ALTER TABLE inv.items DISABLE TRIGGER check_lengths;
+    UPDATE inv.items SET note = repeat('x', 250) WHERE id = ${hanger.id};
+    ALTER TABLE inv.items ENABLE TRIGGER check_lengths;`));
+  const retired = await call(db, 'retire_item', ann.id, key(), hanger.id, 2);
+  assert.equal(retired.note.length, 250);
 });

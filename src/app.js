@@ -16,8 +16,9 @@ const { readSession, sessionCookie, clearedCookie, checkSecret } = require('./au
 const { signIn, loadPerson, changePassword } = require('./auth/sign-in.js');
 const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js');
 const { readActivity } = require('./settings/activity.js');
+const { readHistory } = require('./inventory/history.js');
 const {
-  listCatalog, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
+  listCatalog, listPos, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -39,6 +40,7 @@ const TEMPORARY_OPEN = new Set([
 // address names.
 const PAGE_FILES = {
   '/inventory': ['inventory/overview.html', 'text/html'],
+  '/inventory/receive': ['inventory/receive.html', 'text/html'],
   '/settings/users': ['settings/users.html', 'text/html'],
   '/settings/pack-sizes': ['settings/catalog.html', 'text/html'],
   '/settings/suppliers': ['settings/catalog.html', 'text/html'],
@@ -147,6 +149,15 @@ function createApp({ database, sessionSecret }) {
   app.get('/api/items', catchAsync(async (_req, res) => {
     res.json({ ok: true, ...await listCatalog(database) });
   }));
+  app.get('/api/pos', catchAsync(async (_req, res) => {
+    res.json({ ok: true, pos: await listPos(database) });
+  }));
+  // An item's History (story 55).
+  app.get('/api/items/history', catchAsync(async (req, res) => {
+    const { error, entries } = await readHistory(database, req.query.id);
+    if (error) return res.status(400).json({ ok: false, error });
+    res.json({ ok: true, entries });
+  }));
   for (const route of Object.keys(SETTINGS_LISTS)) {
     app.get(route, catchAsync(async (_req, res) => {
       res.json({ ok: true, ...await listSettings(database, route) });
@@ -251,7 +262,12 @@ function appError(err, req, res, next) {
     if (err.code === 'IV409' && err.detail) body.current = JSON.parse(err.detail);
     return res.status(REFUSAL_STATUS[err.code] || 400).json(body);
   }
-  // A value the database could not take (class 22) or a constraint it
+  // A number too large for its column (22003): a person can type one, so it
+  // gets words, in one place for every function, 003's included.
+  if (err.code === '22003') {
+    return res.status(400).json({ ok: false, error: 'That number is too large. Check what you typed.' });
+  }
+  // Any other value the database could not take (class 22) or a constraint it
   // refused (class 23): the page sent something it never should. Nothing saved.
   if (/^2[23]/.test(err.code || '')) {
     return res.status(400).json({ ok: false, error: 'The request was refused.' });

@@ -48,8 +48,8 @@
 <body>
 <form id="form" novalidate>
   <h1>RTW Inventory Tracker</h1>
-  <label>Email address <input id="email" type="email" autocomplete="username" required autofocus></label>
-  <label>Password <input id="password" type="password" autocomplete="current-password" required></label>
+  <label>Email address <input id="email" type="email" autocomplete="username" required autofocus maxlength="254"></label>
+  <label>Password <input id="password" type="password" maxlength="200" autocomplete="current-password" required></label>
   <p class="error" id="error" role="alert"></p>
   <button id="submit">Sign in</button>
   <p class="help">No account, or forgot your password? Ask an admin.</p>

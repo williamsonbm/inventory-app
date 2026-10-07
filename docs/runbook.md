@@ -19,15 +19,20 @@ Below, `$OWNER_URL` stands for that Session-pooler string with the `postgres` lo
 **Load `$OWNER_URL` without typing the string in a command**, so that the password stays out of
 the shell history and off the screen. Paste the string of the project you mean to change (the
 Preview string for the Preview database) into a private file, read it into the variable, and
-delete the file:
+delete the file. The pod has no `nano`, so make the file on the host desktop: save the string
+in a text editor as `~/Projects/claude-sandbox/owner-url.txt`. The pod sees that folder as
+`/workspace`, outside the repository. Then, in the pod:
 
 ```sh
-umask 077
-nano ~/owner-url.txt           # paste with Shift+Insert, then Ctrl+O, Enter, Ctrl+X
-OWNER_URL="$(tr -d ' \r\n' < ~/owner-url.txt)"
-rm ~/owner-url.txt
+chmod 600 /workspace/owner-url.txt
+OWNER_URL="$(tr -d ' \r\n' < /workspace/owner-url.txt)"
+rm /workspace/owner-url.txt
 OWNER_URL="$OWNER_URL?sslmode=verify-full&sslrootcert=<full path to the certificate file>"
 ```
+
+Claude can also run the commands from the pod without the variable: each command reads the
+file itself, and the string does not show in the chat. Delete the file when they are done.
+(Done this way for the Preview rebuild on 2026-10-07.)
 
 Then run the commands below as written: each passes `$OWNER_URL` to the script. Give the
 certificate as a full path, for example `$HOME/<file name>`: the shell does not expand `~`
@@ -131,8 +136,8 @@ speed, nightly backup, practice restore).
 
 The Free plan allows 2 active projects (go-live step 2), and Preview holds the second. A restore
 target (*Restore a backup*, step 2) therefore needs a paused project or the Pro plan. A Free
-project pauses after a week of inactivity, and a paused Preview stops sign-in. Story 103 of #81
-(empty and rebuild the Preview database) has no steps yet.
+project pauses after a week of inactivity, and a paused Preview stops sign-in. To empty and
+rebuild it, see *Rebuild the Preview database* below.
 
 1. **Create the project** with the settings of go-live step 2: East US (North Virginia), and
    "Enable Data API", "Automatically expose new tables" and "Enable automatic RLS" all
@@ -158,6 +163,49 @@ project pauses after a week of inactivity, and a paused Preview stops sign-in. S
    Then read the live project: the sign-in must not add a row to its `inv.activity_log`.
    Checked on 2026-10-03: the sign-in landed in the Preview project, and the live project's
    newest activity row was older than the Preview project.
+7. **Switch the families live** (*Switch a family live in Inventory*, below), from migration
+   004 on, so the office can try POs on the preview.
+
+### Rebuild the Preview database
+
+Story 103 of #81. **Preview only, never Production**: it erases everything in the app's
+schema, and nothing is kept. Do it when a branch edits a migration file that the Preview
+database already has. The migration runner goes by file name only, so it never applies the
+edited file again. Done 2026-10-07, which also applied migration 004 to Preview.
+
+What survives the rebuild: the three logins and their passwords, and the Vercel variables.
+The logins belong to the whole server, not to the `inv` schema, and the migrations grant them
+everything again. Checked 2026-10-07 on a copy in the pod: the grants and the login passwords
+were the same after the rebuild as before. Everyone who was signed in on the preview must sign
+in again (the sign-in cookie carries the time of the person's password, and the new row has a
+new time).
+
+1. **In the Supabase dashboard, open the Preview project.** The name at the top of the page
+   must read `inventory-app-preview`. Then, in its SQL editor:
+
+   ```sql
+   DROP SCHEMA inv CASCADE;
+   ```
+
+   Good result: no error. A notice that the drop reaches other objects is expected. This also drops `inv.schema_migrations`, the
+   list of applied files, so the next step applies every file again.
+2. **Load `$OWNER_URL` with the Preview string** (top of this page), and check which project
+   it names, without showing the password:
+
+   ```sh
+   echo "$OWNER_URL" | sed -E 's#^[a-z]+://([^:]+):.*#\1#'
+   ```
+
+   It must print `postgres.<preview-project-ref>`, the reference in the Preview project's own
+   address.
+3. **Run the migrations** (go-live step 3). The good result lists every file in `migrations/`.
+4. **Add the first person** (go-live step 6), with a new temporary password.
+5. **Import the practice catalog** (*Import the catalog*, the note on the Preview database):
+   the four files in `csv-examples/`, a `special-order.csv` holding only `family,sku`, and a
+   thresholds file holding only `depth,threshold_lf`. Good result: 233 items and 209 pack
+   sizes added.
+6. **Switch the families live** (*Switch a family live in Inventory*).
+7. `unset OWNER_URL`. Sign in on the preview with the temporary password.
 
 ## Import the catalog
 
@@ -217,6 +265,25 @@ a refused row leaves nothing imported. Try it on the local practice database fir
    a line for each item it skipped because it was already in the catalog, and a line for each
    thing it left out (NAILED, the per-length LVL thresholds it dropped, a
    Special Order SKU missing from its export). Then check a few items in Inventory → Overview.
+
+## Switch a family live in Inventory
+
+Until a family is live, the database refuses its PO lines, and later its receipts and counts
+(#81, "Live in Inventory"). Migration 004 adds the switch, off for every family. **Switch
+families on in the Preview database only.** Production stays off until the cutover. There is no
+switch back: once a family has records, the way back is a correction.
+
+Run it with the owner login, naming an active admin; the activity log shows that admin as the
+one who switched it. Name one family or several (`lumber`, `plates`, `hangers`, `lvl`); each is
+its own save. EWP is refused until step 5.
+
+```sh
+DIRECT_DATABASE_URL="$OWNER_URL" node src/db/switch-family-live.js you@example.com lumber plates hangers lvl
+```
+
+Good result: one line per family, `Hangers is live in Inventory.` A family already live is
+refused with `Hangers is already live in Inventory.`, and the families after it in the
+command are not switched; run the command again without it.
 
 ## Sign everyone out
 

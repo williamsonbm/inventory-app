@@ -182,6 +182,9 @@ th{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;letter-spa
 th.n,td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .tw{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
 tr.jobs td{background:var(--surface-2);padding:12px 14px}
+/* Inventory → Receive: a PO's header row, and its lines indented under it. */
+tr.po-head td{background:var(--surface-2);font-weight:600}
+tr.po-line td:first-child{padding-left:28px}
 
 /* Sortable column headers (Plates buy list). */
 th.sortable{cursor:pointer;user-select:none;transition:color .15s}
@@ -349,6 +352,13 @@ tr.grp.non-stock td:first-child{border-left-color:var(--bad)}
 /* Inventory and its Settings: cells centered on the row's boxes, and fixed
    column widths, so the columns stay put when the family filter changes. */
 table.catalog{table-layout:fixed;width:100%}
+/* The Activity Log keeps its columns in place whatever the rows hold, so
+   they start in the same place for every family (owner, 2026-10-05). */
+table.log{table-layout:fixed}
+table.log td{overflow-wrap:anywhere}
+table.log .c-when{width:17%} table.log .c-who{width:12%} table.log .c-action{width:15%} table.log .c-what{width:18%}
 table.catalog td{vertical-align:middle;overflow:hidden;text-overflow:ellipsis}
+/* A chip alone in a cell (Reorder, On Hand below zero) starts at the column edge, like the text above it. */
+table.catalog td > .chip:first-child{margin-left:0}
 table.catalog td input:not([type="number"]){width:100%;box-sizing:border-box}
 th[data-sort]{cursor:pointer}

@@ -48,9 +48,9 @@
   <div id="message" role="status"></div>
 
   <form id="add" class="row" hidden>
-    <label class="field">Name <input id="add-name" required autocomplete="off"></label>
-    <label class="field">Email address <input id="add-email" type="email" required autocomplete="off"></label>
-    <label class="field">Temporary password <input id="add-password" required autocomplete="new-password" minlength="12"></label>
+    <label class="field">Name <input id="add-name" required autocomplete="off" maxlength="70"></label>
+    <label class="field">Email address <input id="add-email" type="email" required autocomplete="off" maxlength="254"></label>
+    <label class="field">Temporary password <input id="add-password" required autocomplete="new-password" minlength="12" maxlength="200"></label>
     <button id="add-btn">Add person</button>
   </form>
 
@@ -127,9 +127,9 @@
   }
 
   // Rename and Reset password open a small form in the row.
-  function rowForm(tr, label, type, onSave) {
+  function rowForm(tr, label, type, maxlength, onSave) {
     const cell = tr.lastElementChild;
-    cell.innerHTML = '<input type="' + type + '" aria-label="' + esc(label) + '" placeholder="' + esc(label) + '"> ' +
+    cell.innerHTML = '<input type="' + type + '" maxlength="' + maxlength + '" aria-label="' + esc(label) + '" placeholder="' + esc(label) + '"> ' +
       '<button type="button">Save</button><button type="button" class="ghost">Cancel</button>';
     const [input, ok, cancel] = cell.children;
     input.focus();
@@ -143,11 +143,11 @@
     const tr = e.target.closest('tr');
     const u = users.find((x) => String(x.id) === tr.dataset.id);
     if (what === 'rename') {
-      return rowForm(tr, 'New name', 'text', (name) =>
+      return rowForm(tr, 'New name', 'text', 70, (name) =>
         change('/api/users/rename', { name }, (v) => 'Renamed to ' + v.name + '.')(u));
     }
     if (what === 'password') {
-      return rowForm(tr, 'Temporary password', 'text', (password) =>
+      return rowForm(tr, 'Temporary password', 'text', 200, (password) =>
         save('/api/users/set-password', { key: crypto.randomUUID(), id: u.id, password },
           (v) => v.name + ' has a temporary password. Tell them in person; they choose their own at sign-in.'));
     }

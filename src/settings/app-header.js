@@ -1,6 +1,7 @@
 // app-header.js — the header every signed-in page shares (#77): the theme
 // switch, the signed-in person's name, and Sign out. Also `send`, the one way
-// a page posts a change, `say`, its message area, `itemLabel`,
+// a page posts a change, `say`, its message area, `itemLabel`, `unitShort`,
+// `inOrderUnit`,
 // `familyBar`, the family filter the Planner and Inventory share, and
 // `typingIn`, which keeps a box's typing through a repaint.
 //
@@ -110,12 +111,27 @@ window.AppHeader = (() => {
     return `${i.size} ${i.grade} ${i.length_ft}′`;
   }
 
+  // A family's order unit as a page writes it after an amount: linear feet
+  // are "LF" (Q14); pieces stay "pieces". One rule for every page.
+  function unitShort(orderUnit) {
+    return orderUnit === 'linear feet' ? 'LF' : orderUnit;
+  }
+
+  // Pieces of an item as an amount in its family's order unit: 80 pieces of
+  // 16′ lumber are 1,280 LF (Q14). The database counts a receipt against its
+  // PO line the same way.
+  function inOrderUnit(pieces, item, orderUnit) {
+    return orderUnit === 'linear feet' ? pieces * item.length_ft : pieces;
+  }
+
   // A time as the office clock shows it: Eastern Time with daylight saving (Q17).
   // The same zone as OFFICE_TIME_ZONE in src/settings/activity.js, which picks the days.
-  const officeTime = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short',
-  });
+  const OFFICE_ZONE = 'America/New_York';
+  const officeTime = new Intl.DateTimeFormat('en-US', { timeZone: OFFICE_ZONE, dateStyle: 'medium', timeStyle: 'short' });
   const showTime = (iso) => (iso ? officeTime.format(new Date(iso)) : '—');
+  // Today's office date as a date box writes it, YYYY-MM-DD.
+  const officeDay = new Intl.DateTimeFormat('en-CA', { timeZone: OFFICE_ZONE });
+  const today = () => officeDay.format(new Date());
 
   // The family bar under the modes, one for the Planner and Inventory so the
   // two match (owner, 2026-10-02): `families` ({ code, label }) in screen
@@ -176,5 +192,5 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, say, itemLabel, showTime, familyBar, typingIn };
+  return { me, send, say, itemLabel, unitShort, inOrderUnit, showTime, today, familyBar, typingIn };
 })();

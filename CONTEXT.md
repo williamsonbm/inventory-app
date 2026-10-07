@@ -115,6 +115,19 @@ _Avoid_: pack factor, unit
 The reorder threshold for one LVL depth, in linear feet. An LVL item has no threshold of its own.
 _Avoid_: LVL item threshold
 
+**Order unit**:
+The unit a PO line's amount and Incoming are written in: linear feet (LF) for lumber, pieces for
+every other family. Set per family. A box or pallet is not an order unit: 100 boxes of 32 plates go
+on a PO as 3,200 pieces with a pack size of 32.
+_Not_: purchase unit — in the web app that is the box, pack or pallet a supplier sells, which this
+app records as the line's pack size.
+
+**Live in Inventory**:
+A family whose switch is on, so the database takes its POs, receipts and counts. Every family starts
+off, because until the cutover the web app is the record of what is in the yard. The owner switches
+each family on once, with a command; nothing switches a family back off.
+_Avoid_: enabled, active (active is used for items and people)
+
 **Reason**:
 Why a correction, an unmatched count line or a closed PO line happened, picked from the list in
 Settings → Reasons. The reasons the app relies on cannot be retired.

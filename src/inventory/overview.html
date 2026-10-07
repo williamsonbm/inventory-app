@@ -22,10 +22,13 @@
   overview.html — Inventory → Overview (#81 part 1): the item catalog, one
   family at a time or All, picked in the same family bar as the Planner's
   (owner, 2026-10-02). A row opens a panel below itself, where its stocking
-  status, threshold and note are edited (owner, 2026-10-01). On hand,
-  Incoming and Reorder arrive with part 2. Inventory has no task row while
-  the Overview is its only task; Receive, Count and Month-end join the
-  family bar on its right when they arrive (owner, 2026-10-02).
+  status, threshold and note are edited (owner, 2026-10-01). On Hand and
+  Incoming (stories 32, 50) come from inv.item_figures; Reorder joins them
+  later in part 2. "Correct on hand…" in the panel changes an item's on hand
+  with a reason (stories 44–46); "Trim…" on an LVL item cuts weathered boards
+  down to a shorter length (stories 47–48). "History" lists every change to
+  the item's on hand and settings (story 55). The tasks sit in the grey bar, right of Family
+  (#81, entry 7); Count and Month-end join them with part 3.
 
   Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
   repo has no DOM harness. Every route it calls is tested in
@@ -43,6 +46,8 @@
   <div class="appbar-filter">
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+    <span class="label" id="task-label">Task</span>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory" aria-current="page">Overview</a><a href="/inventory/receive">Receive</a></nav>
   </div>
 </header>
 
@@ -51,6 +56,7 @@
 
   <div class="row" style="align-items:flex-end">
     <label class="field">Search <input id="search" type="search" autocomplete="off" placeholder="Name or note…"></label>
+    <div class="field">Reorder <span id="show-reorder" class="pills"></span></div>
     <div class="field">Show <span id="show-status" class="pills"></span></div>
     <label style="padding-bottom:6px"><input type="checkbox" id="show-retired"> Show retired</label>
     <button type="button" id="add-open" style="margin-left:auto" disabled>+ Add item</button>
@@ -64,6 +70,7 @@
   </form>
 
   <div id="tabs" class="pills" style="margin:12px 0" hidden></div>
+  <p id="depth" hidden></p>
 
   <div class="tw"><table class="one-line catalog">
     <colgroup id="cols"></colgroup>
@@ -71,15 +78,15 @@
     <tbody id="rows"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
-  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item.</p>
+  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Incoming is what open POs still bring. Threshold, On Hand and Incoming are in linear feet (LF) for lumber, pieces for the rest. Reorder is Short below zero, Low at or below the threshold, otherwise OK; LVL is Low by its depth's linear feet, shown above its lengths.</p>
 </div>
 
 <script src="/app-header.js"></script>
 <script src="/planner-ui.js"></script>
 <script>
 (async () => {
-  const { esc } = PlannerUI;
-  const { send, say, itemLabel } = AppHeader;
+  const { esc, fmtInt } = PlannerUI;
+  const { send, say, itemLabel, unitShort, inOrderUnit, showTime } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -89,18 +96,35 @@
   const FIELD_LABELS = { sku: 'SKU', product: 'Product', size: 'Size', grade: 'Grade', length_ft: 'Length (ft)' };
   const fieldLabel = (family, field) => ((VIEWS[family] || {}).labels || {})[field] || FIELD_LABELS[field];
   const TAB_KEY = 'inventory.tab.';   // + family: the size or depth tab last open
+  const REORDER_KEY = 'inventory.reorder';   // 'all' when All was picked last
+  // Short first, then Low, then OK (story 52).
+  const REORDER_RANK = { Short: 0, Low: 1, OK: 2 };
 
   let families = [];
   let items = [];
   let gradeOrder = [];
+  let lvlDepths = [];
+  // The Overview opens on Short and Low items (story 53); All shows every
+  // item. The choice last made on this computer opens again (Q61).
+  let reorderOnly = true;
+  try { reorderOnly = localStorage.getItem(REORDER_KEY) !== 'all'; } catch { /* storage blocked */ }
   let current = null;     // the family the family bar shows, or 'all'
   const shown = new Set(STATUSES);
   let sort = null;        // { col, dir } a person chose; null is the family's own order
   let tab = null;         // the open size (lumber) or depth (LVL) tab
   let open = null;        // the id of the item whose row is open
-  let renaming = false;   // the open row shows the rename fields
+  let mode = null;        // what the open row's panel shows instead: 'rename', 'correct', 'trim' or 'history'
+  let history = null;     // the open item's History entries, once loaded
+  let reversing = null;   // the History entry whose Reverse form is open
+  let replacing = null;   // the History entry a Correct or Trim form replaces
+  let reasons = [];       // the reasons in use and not kept for another entry, for Correct on hand
 
-  const familyName = (code) => (families.find((f) => f.code === code) || { name: code }).name;
+  const signed = (n) => (n > 0 ? '+' : '−') + fmtInt(Math.abs(n));
+  const fetchHistory = (id) => fetch('/api/items/history?id=' + id).then((r) => r.json())
+    .catch(() => ({ ok: false, error: 'The History did not load. Try again.' }));
+  const family = (code) => families.find((f) => f.code === code) || { name: code };
+  const familyName = (code) => family(code).name;
+  const orderUnit = (code) => family(code).order_unit;
 
   // Text with numbers in it compared as numbers, so 2x6 comes before 2x10
   // and 9-1/2 before 11-7/8.
@@ -108,6 +132,25 @@
   // A lumber grade's place in the engine's strength order, weakest first;
   // a grade the engine does not know goes last.
   const gradeRank = (g) => { const r = gradeOrder.indexOf(g); return r === -1 ? gradeOrder.length : r; };
+
+  // An amount in the family's order unit; pieces go unlabeled (owner, 2026-10-03).
+  const inUnit = (i, n) => {
+    const unit = unitShort(orderUnit(i.family));
+    return fmtInt(n) + (unit === 'pieces' ? '' : ' ' + unit);
+  };
+  // on_hand comes in pieces; lumber's order unit is linear feet.
+  const onHand = (i) => inOrderUnit(i.on_hand, i, orderUnit(i.family));
+  // The threshold is kept in pieces; it shows in the order unit beside On
+  // Hand, so a lumber row reads "640 LF | 1,280 LF" (Q60).
+  const thresholdShown = (i) => (i.threshold == null ? null : inOrderUnit(i.threshold, i, orderUnit(i.family)));
+  // The line above an LVL depth's lengths shows that depth's Reorder (Q58),
+  // so its length rows show only their own Short. Not while a search lists
+  // every depth together, nor under All.
+  // Short in red, Low in amber, OK in grey (story 52); `what` names the short
+  // amount or lengths.
+  const reorderChip = (r, what = '') => (r === 'Short' ? '<span class="chip neg">Short' + what + '</span>'
+    : r === 'Low' ? '<span class="chip warn">Low</span>' : '<span class="sub">OK</span>');
+  const depthLine = () => current !== 'all' && (VIEWS[current] || {}).perDepth && !el('search').value.trim();
 
   // The columns of a closed row, each with its width, its header, how its
   // cell reads and how it sorts. Lumber and LVL tabs pick the size or depth,
@@ -122,8 +165,24 @@
     length: { head: 'Length', width: 16, sort: (i) => i.length_ft, cell: (i) => i.length_ft + '′', name: true },
     stocking: { head: 'Stocking', width: 20, sort: (i) => i.stocking, cell: (i) => esc(i.stocking) },
     // Under All, an LVL row says where its threshold is instead of "not set".
-    threshold: { head: 'Threshold', width: 14, sort: (i) => i.threshold,
-      cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (i.threshold ?? '—')) },
+    threshold: { head: 'Threshold', width: 14, sort: thresholdShown,
+      cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (thresholdShown(i) == null ? '—' : inUnit(i, thresholdShown(i)))) },
+    // What is here, in the same unit as Incoming so the two read side by
+    // side: 80 pieces of 16′ lumber is "1,280 LF" (owner, Q49). None shows 0
+    // (Q50); below zero, a shipment entered before its receipt, is red (S67).
+    onHand: { head: 'On Hand', width: 14, sort: onHand, cell: (i) => {
+      const n = onHand(i);
+      const text = inUnit(i, n);
+      return n < 0 ? '<span class="chip neg">' + text + '</span>' : text;
+    } },
+    // What open POs still bring, in the family's order unit: "1,280 LF" for
+    // lumber (Q14). None shows blank, not 0.
+    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => (i.incoming ? inUnit(i, i.incoming) : '') },
+    // An LVL length that is short names how many pieces (Q58: "Short (−6)").
+    reorder: { head: 'Reorder', width: 14, sort: (i) => REORDER_RANK[i.reorder], cell: (i) => {
+      if (i.reorder === 'Short') return reorderChip('Short', (VIEWS[i.family] || {}).perDepth ? ' (' + signed(i.on_hand) + ')' : '');
+      return depthLine() ? '' : reorderChip(i.reorder);
+    } },
     // A marker only: the note itself shows when the row is open.
     note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
   };
@@ -132,11 +191,11 @@
   // LVL calls its size the depth, in inches (″), and its thresholds are per
   // depth (Settings → LVL thresholds), so LVL rows have no Threshold column.
   const VIEWS = {
-    plates: { cols: ['sku', 'stocking', 'threshold', 'note'], order: ['sku'] },
-    hangers: { cols: ['sku', 'stocking', 'threshold', 'note'], order: ['sku'] },
-    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'note'], order: ['grade', 'length'] },
+    plates: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['sku'] },
+    hangers: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['sku'] },
+    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['grade', 'length'] },
     lvl: {
-      tab: 'size', cols: ['product', 'length', 'stocking', 'note'], order: ['product', 'length'],
+      tab: 'size', cols: ['product', 'length', 'stocking', 'onHand', 'incoming', 'reorder', 'note'], order: ['product', 'length'],
       labels: { size: 'Depth' }, tabUnit: '″', perDepth: true,
     },
   };
@@ -144,8 +203,8 @@
   // item in full instead of leaving the size to the tab.
   // A family with no view of its own (EWP, once step 5 names its items) lists
   // its items by name. All lists every family's items by family, then name.
-  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'note'], order: ['item'] };
-  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'note'], order: ['family', 'item'] };
+  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['item'] };
+  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['family', 'item'] };
   const view = () => {
     if (current === 'all') return ALL;
     const v = VIEWS[current] || PLAIN;
@@ -153,10 +212,14 @@
     return { cols: ['item'].concat(v.cols.filter((c) => !COL[c].name)), order: ['item'] };
   };
 
+  const fetchItems = () => fetch('/api/items').then((r) => r.json())
+    .catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
   async function load() {
-    const body = await fetch('/api/items').then((r) => r.json()).catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
+    const [body, reasonList] = await Promise.all([fetchItems(), fetch('/api/reasons').then((r) => r.json()).catch(() => ({ ok: false }))]);
     if (!body.ok) return say(body.error, 'bad');
-    ({ families, items, gradeOrder } = body);
+    ({ families, items, lvlDepths, gradeOrder } = body);
+    reasons = reasonList.ok ? reasonList.reasons.filter((r) => r.active && !r.entry) : [];
+    paintReorder();
     paintStatus();
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
       if (f === current) return;
@@ -164,13 +227,18 @@
       sort = null;
       tab = null;
       open = null;
-      renaming = false;
+      mode = null;
       el('add').hidden = true;
       // "+ Add item" adds to the family shown, so All has none to add to.
       el('add-open').disabled = f === 'all';
       el('add-open').title = f === 'all' ? 'Pick a family to add an item.' : '';
       paint();
     });
+  }
+
+  function paintReorder() {
+    el('show-reorder').innerHTML = [[true, 'Short and Low'], [false, 'All']].map(([only, label]) =>
+      '<button type="button" data-reorder="' + only + '" aria-pressed="' + (only === reorderOnly) + '">' + label + '</button>').join('');
   }
 
   function paintStatus() {
@@ -186,8 +254,7 @@
     const v = view();
     el('tabs').hidden = !v.tab;
     if (!v.tab) { tab = null; return; }
-    const retired = el('show-retired').checked;
-    const values = [...new Set(items.filter((i) => i.family === current && (retired || i.active)).map((i) => i[v.tab]))].sort(byText);
+    const values = [...new Set(items.filter((i) => i.family === current && kept(i)).map((i) => i[v.tab]))].sort(byText);
     if (!values.includes(tab)) {
       let saved = null;
       try { saved = localStorage.getItem(TAB_KEY + current); } catch { /* storage blocked */ }
@@ -198,14 +265,32 @@
       '<button type="button" data-tab="' + esc(t) + '" aria-pressed="' + (t === tab) + '">' + esc(tabLabel(t)) + '</button>').join('');
   }
 
+  // The Reorder, Show and Show retired choices. The tabs list only the sizes
+  // or depths that keep an item, so "Short and Low" never opens an empty tab.
+  function kept(i) {
+    return (!reorderOnly || i.reorder !== 'OK') && shown.has(i.stocking) && (el('show-retired').checked || i.active);
+  }
+
+  // The open LVL depth's line (Q58): "11-7/8″: 840 LF of 960 LF", its Reorder,
+  // and each short length by name.
+  function paintDepth() {
+    const d = depthLine() && tab != null && lvlDepths.find((x) => x.depth === tab);
+    el('depth').hidden = !d;
+    if (!d) return;
+    const short = items.filter((i) => i.family === current && i.size === tab && i.reorder === 'Short')
+      .sort((a, b) => a.length_ft - b.length_ft).map((i) => i.length_ft + '′ (' + signed(i.on_hand) + ')');
+    el('depth').innerHTML = '<b>' + esc(tab + VIEWS[current].tabUnit) + '</b>: ' + fmtInt(d.available_lf) + ' LF' +
+      (d.threshold_lf == null ? ' <span class="sub">(no threshold)</span>' : ' of ' + fmtInt(d.threshold_lf) + ' LF') + ' · ' +
+      reorderChip(d.reorder, ': ' + esc(short.join(', ')));
+  }
+
   function visible() {
     const v = view();
     const words = el('search').value.trim().toLowerCase().split(/\s+/).filter(Boolean);
-    const retired = el('show-retired').checked;
     // The person's choice first, then the family's own order, then the name.
     const keys = (sort ? [sort] : []).concat(v.order.map((col) => ({ col, dir: 1 })), [{ col: 'item', dir: 1 }]);
     return items
-      .filter((i) => (current === 'all' || i.family === current) && shown.has(i.stocking) && (retired || i.active))
+      .filter((i) => (current === 'all' || i.family === current) && kept(i))
       .filter((i) => !v.tab || i[v.tab] === tab)
       .filter((i) => {
         const text = (itemLabel(i) + ' ' + (i.note || '')).toLowerCase();
@@ -224,9 +309,12 @@
   }
 
   // The open row's panel: everything a person changes about an item, or the
-  // rename fields when an admin is renaming it.
+  // rename fields when an admin is renaming it, or the Correct on hand or Trim form.
   function panel(i) {
-    if (renaming) {
+    if (mode === 'correct') return correctForm(i);
+    if (mode === 'trim') return trimForm(i);
+    if (mode === 'history') return historyTable(i);
+    if (mode === 'rename') {
       return '<form class="row" style="align-items:flex-end" data-rename><span class="field">Rename <b>' + esc(itemLabel(i)) + '</b></span>' +
         identityInputs(i.family, i) +
         '<button>Save name</button><button type="button" class="ghost" data-do="rename-cancel">Cancel</button></form>';
@@ -235,16 +323,159 @@
       STATUSES.map((s) => '<option' + (s === i.stocking ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select></label>';
     const threshold = (VIEWS[i.family] || {}).perDepth
       ? '<span class="field">Threshold <span class="sub" style="padding:7px 0">per depth, in Settings → LVL thresholds</span></span>'
-      : '<label class="field">Threshold <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '"></label>';
-    const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" value="' + esc(i.note || '') + '"></label>';
-    const actions = (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
-      '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>';
+      : '<label class="field">Threshold, in pieces <input data-field="threshold" type="number" min="0" step="1" style="width:7em" value="' + (i.threshold ?? '') + '">' +
+        (i.threshold != null && thresholdShown(i) !== i.threshold ? ' <span class="sub">= ' + inUnit(i, thresholdShown(i)) + '</span>' : '') + '</label>';
+    const note = '<label class="field" style="flex:1;min-width:16em">Note <input data-field="note" maxlength="200" value="' + esc(i.note || '') + '"></label>';
+    const actions = '<button type="button" class="ghost" data-do="history">History</button>' + (me.admin ? '<button type="button" class="ghost" data-do="rename">Rename</button>' : '') +
+      '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>' +
+      (family(i.family).live ? '<button type="button" class="ghost" data-do="correct">Correct on hand…</button>' +
+        (family(i.family).trimmable ? '<button type="button" class="ghost" data-do="trim">Trim…</button>' : '') : '');
     return '<div class="row" style="align-items:flex-end">' + stocking + threshold + note + '<span>' + actions + '</span></div>';
   }
+
+  // Correct on hand: the change in pieces, + or −, with a reason, and what on
+  // hand becomes.
+  function correctForm(i) {
+    return replacingNote() + '<form class="row" style="align-items:flex-end" data-correct><span class="field">Correct on hand of <b>' + esc(itemLabel(i)) + '</b>' +
+      '<span class="sub" data-f="after" style="padding:7px 0">' + fmtInt(i.on_hand) + ' now</span></span>' +
+      '<label class="field">Change, in pieces <input data-f="quantity" type="number" step="1" required style="width:7em" placeholder="12 or -3"></label>' +
+      '<label class="field">Reason <select data-f="reason" required><option value="">Reason…</option>' +
+      reasons.map((r) => '<option value="' + r.id + '">' + esc(r.text) + '</option>').join('') +
+      '</select></label>' +
+      '<label class="field" style="flex:1;min-width:16em">Note (job number for a return) <input data-f="note" maxlength="200" autocomplete="off"></label>' +
+      '<button>Save correction</button><button type="button" class="ghost" data-do="correct-cancel">Cancel</button></form>';
+  }
+  // Trim: how many boards, and the shorter length each becomes, picked from
+  // every 2′ length below this one and any other length the catalog has for
+  // the same product and depth, longest first. A length the catalog lacks is
+  // added by the trim as Non-Stock (Q21, Q35); a retired one is put back in
+  // use, and the form says so before the save (Q39).
+  function trimForm(i) {
+    const same = (j) => j.family === i.family && j.length_ft < i.length_ft
+      && String(j.product).toLowerCase() === String(i.product).toLowerCase() && String(j.size).toLowerCase() === String(i.size).toLowerCase();
+    const known = new Map(items.filter(same).map((j) => [j.length_ft, j]));
+    const lengths = [...new Set([...known.keys(), ...Array.from({ length: Math.ceil(i.length_ft / 2) - 1 }, (_, n) => (n + 1) * 2)])]
+      .sort((a, b) => b - a);
+    const retired = (l) => known.has(l) && !known.get(l).active;
+    const option = (l) => '<option value="' + l + '"' + (retired(l) ? ' data-retired' : '') + '>' + l + '′' +
+      (!known.has(l) ? ' (new item)' : retired(l) ? ' (retired)' : '') + '</option>';
+    return replacingNote() + '<form class="row" style="align-items:flex-end" data-trim><span class="field">Trim <b>' + esc(itemLabel(i)) + '</b>' +
+      '<span class="sub" style="padding:7px 0">' + fmtInt(i.on_hand) + ' now</span></span>' +
+      '<label class="field">Boards <input data-f="boards" type="number" min="1" step="1" required style="width:6em" value="1"></label>' +
+      '<label class="field">Trimmed to <select data-f="length" required><option value="">Length…</option>' +
+      lengths.map(option).join('') + '</select></label>' +
+      '<label class="field" style="flex:1;min-width:16em">Note <input data-f="note" maxlength="200" autocomplete="off"></label>' +
+      '<button data-f="go">Save trim</button><button type="button" class="ghost" data-do="trim-cancel">Cancel</button>' +
+      '<span class="sub" data-f="warn" hidden></span><span class="sub" data-f="short" hidden></span></form>';
+  }
+  // History: newest first. Change is the change to on hand in pieces; a
+  // settings change has none. A receipt line, a correction or a trim not yet
+  // reversed has "Reverse…" while its family is live; one reversed says so
+  // (stories 42, 49). A reversal itself is never reversed (Q44).
+  function historyTable(i) {
+    const canReverse = (e) => e.id && !e.reversed && !e.reversal && family(i.family).live;
+    const last = (e) => (e.reversed ? '<span class="chip">reversed</span>'
+      : canReverse(e) ? '<button type="button" class="ghost" data-do="reverse" data-entry="' + e.id + '">Reverse…</button>' : '');
+    const rows = history === null ? '<tr><td colspan="6" class="sub">Loading…</td></tr>'
+      : history.map((e) => '<tr><td>' + esc(showTime(e.at)) + '</td><td>' + esc(e.who) + '</td><td>' + esc(e.action) + '</td><td>' +
+        (e.change === null ? '' : signed(e.change)) + '</td><td>' + esc(e.detail) + '</td><td>' + last(e) + '</td></tr>' +
+        (e.id === reversing ? '<tr><td colspan="6">' + reverseForm(e) + '</td></tr>' : '')).join('');
+    return '<div class="row" style="align-items:center"><b>History of ' + esc(itemLabel(i)) + '</b>' +
+      '<button type="button" class="ghost" data-do="history-cancel">Close history</button></div>' +
+      '<div class="tw"><table style="width:100%"><thead><tr><th>When</th><th>Who</th><th>What</th><th>Change</th><th>Detail</th><th></th></tr></thead>' +
+      '<tbody>' + rows + '</tbody></table></div>';
+  }
+  // Reverse: the original stays, marked reversed; the reversal takes its time.
+  function reverseForm(e) {
+    const what = { receive: 'this receipt line', correct: 'this correction', trim: 'this trim. Both lengths go back' }[e.action];
+    const redo = redoable(e);
+    return '<form class="row" style="align-items:flex-end" data-reverse><span class="field">Reverse ' + what + '?</span>' +
+      '<label class="field" style="flex:1;min-width:16em">Note <input data-f="note" maxlength="200" autocomplete="off"></label>' +
+      '<button>Reverse</button>' + (redo ? '<button type="button" class="ghost" data-do="redo">Reverse and enter again…</button>' : '') +
+      '<button type="button" class="ghost" data-do="reverse-cancel">Cancel</button></form>' +
+      (redo ? '<p class="sub">Reverse and enter again: the new entry takes this one\'s time, so a count made since then does not count it twice.</p>' : '');
+  }
+  // A trim is entered again from its long length, where Trim starts.
+  const redoable = (e) => e.action !== 'trim' || e.change < 0;
+  // Reverse and enter again (owner, 2026-10-05): a receipt goes to the
+  // Receive page, which can pick the right PO; a correction or trim opens
+  // its own form here. Either save reverses this entry and times the new one
+  // as this one.
+  function redo(e) {
+    const what = itemLabel(items.find((i) => i.id === open)) + ' ' + signed(e.change) + ', ' + e.detail;
+    if (e.action === 'receive') {
+      location.href = '/inventory/receive?replaces=' + e.id + '&what=' + encodeURIComponent(what);
+      return;
+    }
+    replacing = { id: e.id, what };
+    reversing = null;
+    mode = e.action === 'correct' ? 'correct' : 'trim';
+    paint();
+  }
+  // Above a Correct or Trim form that replaces an entry.
+  const replacingNote = () => (replacing
+    ? '<p class="sub" style="margin:0 0 6px">Replaces ' + esc(replacing.what) + '. Saving reverses it and times this entry as it.</p>' : '');
+  // Saves a reversal, then reads the catalog and the History again, so both
+  // show the database's figures.
+  function reverseEntry(e) {
+    e.preventDefault();
+    const id = open;
+    save('/api/ledger/reverse', { key: crypto.randomUUID(), id: reversing, note: e.target.querySelector('[data-f="note"]').value.trim() || null },
+      (r) => 'Reversed: ' + r.lines.map((l) => l.item + ' ' + signed(l.quantity)).join(', ') + '.',
+      async ({ reversal }) => {
+        reversing = null;
+        const [, again] = await Promise.all([reloadItems(), fetchHistory(id)]);
+        if (again.ok) history = again.entries;
+        return reversal;
+      });
+  }
+  async function showHistory(id) {
+    mode = 'history';
+    history = null;
+    reversing = null;
+    paint();
+    const body = await fetchHistory(id);
+    if (open !== id || mode !== 'history') return;  // closed while loading
+    if (!body.ok) { mode = null; say(body.error, 'bad'); return paint(); }
+    history = body.entries;
+    paint();
+  }
+
+  // Picking a retired length says the trim puts it back in use (Q39).
+  el('rows').addEventListener('change', (e) => {
+    const form = e.target.closest('[data-trim]');
+    if (!form || e.target.dataset.f !== 'length') return;
+    const picked = e.target.selectedOptions[0];
+    const back = picked && picked.hasAttribute('data-retired');
+    const warn = form.querySelector('[data-f="warn"]');
+    warn.hidden = !back;
+    warn.textContent = back ? picked.value + '′ is retired. Saving this trim puts it back in use.' : '';
+    form.querySelector('[data-f="go"]').textContent = back ? 'Save trim and un-retire' : 'Save trim';
+  });
+  // Trimming more boards than on hand shows is allowed, since on hand may be
+  // off until a count, but the form says so (owner, Q40).
+  el('rows').addEventListener('input', (e) => {
+    const form = e.target.closest('[data-trim]');
+    if (!form || e.target.dataset.f !== 'boards') return;
+    const item = items.find((i) => i.id === open);
+    const short = form.querySelector('[data-f="short"]');
+    short.hidden = !(Number(e.target.value) > item.on_hand);
+    short.textContent = short.hidden ? '' : 'Only ' + fmtInt(item.on_hand) + ' on hand.';
+  });
+  // "40 now → 37" as the change is typed.
+  el('rows').addEventListener('input', (e) => {
+    const form = e.target.closest('[data-correct]');
+    if (!form) return;
+    const item = items.find((i) => i.id === open);
+    const change = Number(form.querySelector('[data-f="quantity"]').value);
+    form.querySelector('[data-f="after"]').textContent = fmtInt(item.on_hand) + ' now' +
+      (Number.isInteger(change) && change ? ' → ' + fmtInt(item.on_hand + change) : '');
+  });
 
   function paint() {
     const typing = AppHeader.typingIn(el('rows'));
     paintTabs();
+    paintDepth();
     const cols = view().cols.map((c) => [c, COL[c]]);
     const first = cols.find(([, c]) => c.name)[1];
     el('cols').innerHTML = cols.map(([, c]) => '<col style="width:' + c.width + '%">').join('');
@@ -265,17 +496,32 @@
 
   // Runs one change. On a stale save, the refusal carries the current item,
   // and the table shows it, so the other person's change is visible, never lost.
-  async function save(route, body, done) {
+  // `apply` takes the reply into the table and gives `done` what it saved;
+  // by default the reply is the changed item.
+  async function save(route, body, done, apply = putItem) {
     say('');
     try {
-      const { item } = await send(route, body);
-      items = items.some((i) => i.id === item.id) ? items.map((i) => (i.id === item.id ? item : i)) : items.concat(item);
-      say(done(item), 'ok');
+      say(done(await apply(await send(route, body))), 'ok');
     } catch (err) {
-      if (err.current) items = items.map((i) => (i.id === err.current.id ? err.current : i));
-      say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done) : null);
+      if (err.current) items = items.map((i) => (i.id === err.current.id ? { ...i, ...err.current } : i));   // keeps its figures
+      say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done, apply) : null);
     }
     paint();
+  }
+  // Reads the list again, so every figure (On Hand, Incoming, Reorder, the
+  // LVL depth line) is the database's: a new threshold changes Reorder.
+  async function reloadItems() {
+    const body = await fetchItems();
+    if (body.ok) ({ items, lvlDepths } = body);
+    return body.ok;
+  }
+  // A changed item's reply carries no figures, so if the list does not load
+  // again, the row keeps the figures it had.
+  async function putItem({ item }) {
+    if (await reloadItems()) return item;
+    const old = items.find((i) => i.id === item.id);
+    items = old ? items.map((i) => (i.id === item.id ? { ...old, ...item } : i)) : items.concat(item);
+    return item;
   }
   const itemOf = (target) => items.find((i) => String(i.id) === target.closest('tr').dataset.id);
 
@@ -297,7 +543,17 @@
     const tr = e.target.closest('tr');
     if (!tr) return;
     const what = e.target.dataset && e.target.dataset.do;
-    if (what === 'rename' || what === 'rename-cancel') { renaming = what === 'rename'; return paint(); }
+    if (what === 'history') return showHistory(open);
+    if (what === 'redo') return redo(history.find((h) => h.id === reversing));
+    if (what === 'reverse' || what === 'reverse-cancel') {
+      reversing = what === 'reverse' ? Number(e.target.dataset.entry) : null;
+      return paint();
+    }
+    if (['rename', 'correct', 'trim', 'rename-cancel', 'correct-cancel', 'trim-cancel', 'history-cancel'].includes(what)) {
+      mode = what.endsWith('-cancel') ? null : what;
+      replacing = null;
+      return paint();
+    }
     if (what === 'retire' || what === 'unretire') {
       const item = itemOf(e.target);
       return save(what === 'retire' ? '/api/items/retire' : '/api/items/unretire', { key: crypto.randomUUID(), id: item.id, version: item.version },
@@ -307,7 +563,8 @@
   });
   function toggle(id) {
     open = open === id ? null : id;
-    renaming = false;
+    mode = null;
+    replacing = null;
     paint();
   }
 
@@ -322,16 +579,51 @@
   });
 
   el('rows').addEventListener('submit', (e) => {
+    if (e.target.matches('[data-correct]')) return correct(e);
+    if (e.target.matches('[data-trim]')) return trim(e);
+    if (e.target.matches('[data-reverse]')) return reverseEntry(e);
     if (!e.target.matches('[data-rename]')) return;
     e.preventDefault();
     // The item as it is now: a save while the row was open changed its version.
     const item = items.find((i) => i.id === open);
     const was = itemLabel(item);
     save('/api/items/rename', { key: crypto.randomUUID(), id: item.id, version: item.version, identity: identityFrom(e.target) }, (i) => {
-      renaming = false;
+      mode = null;
       return was + ' is now ' + itemLabel(i) + '.';
     });
   });
+
+  // Saves a change to on hand (a correction or a trim, which may replace an
+  // entry reversed in the same save), then reads the
+  // catalog again, so on hand is the database's figure, never one added up
+  // here (a retry must not add twice); the reload also brings an item a trim
+  // added. `as` is the name the answer comes back under.
+  function saveOnHand(route, as, body, done) {
+    save(route, { key: crypto.randomUUID(), item_id: open, replaces: replacing ? replacing.id : null, ...body },
+      (r) => done(r) + (r.reversed ? ' The entry it replaces is reversed.' : '') + (r.reloaded ? '' : ' Reload the page to see the new on hand.'),
+      async (answer) => {
+        mode = null;
+        replacing = null;
+        return { ...answer[as], reloaded: await reloadItems() };
+      });
+  }
+  function correct(e) {
+    e.preventDefault();
+    const f = (name) => e.target.querySelector('[data-f="' + name + '"]');
+    saveOnHand('/api/items/correct', 'correction', { quantity: Number(f('quantity').value),
+      reason_id: Number(f('reason').value) || null, note: f('note').value.trim() || null },
+    (c) => c.item + ': on hand ' + signed(c.quantity) + ', ' + c.reason + '.');
+  }
+
+  function trim(e) {
+    e.preventDefault();
+    const f = (name) => e.target.querySelector('[data-f="' + name + '"]');
+    saveOnHand('/api/items/trim', 'trim', { length_ft: Number(f('length').value),
+      boards: Number(f('boards').value), note: f('note').value.trim() || null,
+      unretire: f('length').selectedOptions[0].hasAttribute('data-retired') },
+    (t) => fmtInt(t.boards) + ' of ' + t.item + ' trimmed to ' + t.length_ft + '′' +
+      (t.item_added ? ': ' + t.to_item + ' added as Non-Stock.' : t.item_unretired ? ': ' + t.to_item + ' is in use again.' : '.'));
+  }
 
   el('head').addEventListener('click', (e) => {
     const col = e.target.dataset && e.target.dataset.sort;
@@ -346,6 +638,14 @@
     try { localStorage.setItem(TAB_KEY + current, t); } catch { /* storage blocked: this visit only */ }
     paint();
   });
+  el('show-reorder').addEventListener('click', (e) => {
+    const r = e.target.dataset && e.target.dataset.reorder;
+    if (!r) return;
+    reorderOnly = r === 'true';
+    try { localStorage.setItem(REORDER_KEY, reorderOnly ? 'short-and-low' : 'all'); } catch { /* storage blocked: this visit only */ }
+    paintReorder();
+    paint();
+  });
   el('show-status').addEventListener('click', (e) => {
     const s = e.target.dataset && e.target.dataset.status;
     if (!s) return;
@@ -358,13 +658,15 @@
 
   // The name fields of a family, as inputs, filled from `item` when given.
   // A field with fixed choices (lumber sizes) is picked from them, never typed.
+  // The longest each typed name field may be, as the database refuses (migration 004).
+  const MAX_LENGTH = { sku: 30, product: 60, size: 10, grade: 20 };
   function identityInputs(fam, item) {
     const f = families.find((x) => x.code === fam);
     const value = (field) => (item ? item[field] : '');
     const box = (field) => (f.choices && f.choices[field]
       ? '<select data-identity="' + field + '" required>' + f.choices[field].map((s) =>
         '<option' + (s === value(field) ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select>'
-      : '<input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : '') +
+      : '<input data-identity="' + field + '"' + (field === 'length_ft' ? ' type="number" min="1" step="1" style="width:6em"' : ' maxlength="' + MAX_LENGTH[field] + '"') +
         ' required autocomplete="off" value="' + esc(value(field)) + '">');
     return f.identity.map((field) => '<label class="field">' + esc(fieldLabel(fam, field)) + ' ' + box(field) + '</label>').join(' ');
   }
@@ -397,7 +699,7 @@
         try { localStorage.setItem(TAB_KEY + i.family, tab); } catch { /* storage blocked: this visit only */ }
       }
       open = i.id;
-      renaming = false;
+      mode = null;
       return itemLabel(i) + ' was added as Special Order with no threshold. Its row is open below.';
     });
   });
