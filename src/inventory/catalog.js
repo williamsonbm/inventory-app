@@ -112,6 +112,11 @@ const CATALOG_CHANGES = {
   '/api/lumber/redirect': {
     fn: 'set_grade_redirect', args: (b) => [b.size, b.from_grade, b.version, b.to_grade], as: 'redirect',
   },
+  // Settings → Inventory → Working day (#81 story 28). Admin-only: the
+  // window decides when the app asks "before or after the count?" (design Q4).
+  '/api/working-day/set': {
+    fn: 'set_working_day_window', args: (b) => [b.version, b.days], as: 'setting', adminOnly: true,
+  },
 };
 
 // The lumber buying options everyone shares (S37), in the shape the lumber
@@ -162,6 +167,11 @@ const SETTINGS_LISTS = {
             FROM (SELECT DISTINCT size AS depth FROM inv.items WHERE family = 'lvl') d
             LEFT JOIN inv.lvl_depth_thresholds t ON t.depth = d.depth
            ORDER BY pg_catalog.array_position(ARRAY['9-1/2', '11-7/8', '14', '16', '18', '20', '22', '24'], d.depth), d.depth`,
+  },
+  // Everyone reads it; only an admin changes it (/api/working-day/set).
+  '/api/working-day': {
+    as: 'setting',
+    sql: "SELECT name, value, version FROM inv.settings WHERE name = 'working_day_window'",
   },
 };
 

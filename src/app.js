@@ -46,6 +46,7 @@ const PAGE_FILES = {
   '/settings/suppliers': ['settings/catalog.html', 'text/html'],
   '/settings/reasons': ['settings/catalog.html', 'text/html'],
   '/settings/lvl-thresholds': ['settings/catalog.html', 'text/html'],
+  '/settings/working-day': ['settings/catalog.html', 'text/html'],
   '/activity': ['settings/activity.html', 'text/html'],
   '/password': ['settings/password.html', 'text/html'],
   '/app-header.js': ['settings/app-header.js', 'application/javascript'],

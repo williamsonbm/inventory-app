@@ -577,6 +577,7 @@ test('a save that changes nothing is refused on every edit, so it leaves no log 
     ['rename supplier', 'rename_supplier', boise.id, 1, ' Boise Cascade '],
     ['rename user', 'rename_user', ann.id, ann.version, 'Ann Lee'],
     ['set LVL depth threshold', 'set_lvl_depth_threshold', lvl.size, depth.version, 720],
+    ['set working day window', 'set_working_day_window', 1, 1],
   ];
   for (const [label, fn, ...args] of cases) {
     const err = await refused(call(db, fn, ann.id, crypto.randomUUID(), ...args), 'IV422', label);

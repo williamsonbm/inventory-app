@@ -299,6 +299,21 @@ test('only an admin can rename an item', async () => {
   assert.equal(renamed.body.item.sku, 'LUS28');
 });
 
+test('everyone reads the working-day window; only an admin changes it (story 28)', async () => {
+  const ctx = await withAdmin();
+  await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
+  const bob = await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password');
+
+  const seen = await read({ ...ctx, cookie: bob }, '/api/working-day');
+  assert.deepEqual(seen.setting, [{ name: 'working_day_window', value: 1, version: 1 }]);
+
+  const res = await post(ctx.base, '/api/working-day/set', { key: crypto.randomUUID(), version: 1, days: 2 }, bob);
+  assert.equal(res.status, 403);
+  const saved = await change(ctx, '/api/working-day/set', { version: 1, days: 2 });
+  assert.equal(saved.status, 200, saved.body.error);
+  assert.equal(saved.body.setting.value, 2);
+});
+
 test('Receive enters a PO, lists it, and the Overview shows its lines as Incoming (stories 29–32)', async () => {
   const ctx = await withAdmin();
   const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;

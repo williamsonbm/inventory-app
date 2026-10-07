@@ -20,10 +20,11 @@
 <body>
 <!--
   catalog.html — the catalog's Settings pages (#81 part 1): Pack sizes,
-  Suppliers, Reasons and LVL thresholds. One page served at four addresses
-  (src/app.js); it shows the section its address names. Deliberately one
-  file, not four: the four differ only in their table and form, and each
-  would repeat the same header, message and save code.
+  Suppliers, Reasons and LVL thresholds, plus the Inventory group's Working
+  day (#81 part 3, story 28). One page served at five addresses (src/app.js);
+  it shows the section its address names. Deliberately one file, not five:
+  the sections differ only in their table and form, and each would repeat
+  the same header, message and save code.
 
   Glue, NOT UNIT-TESTED: the tables need a browser, and this repo has no DOM
   harness. Every route it calls is tested in test/inventory.test.js. The
@@ -42,6 +43,8 @@
     <div class="seg" role="group" aria-labelledby="accounts-label"><a href="/settings/users">Users</a><a href="/password">Your password</a></div>
     <span class="label" id="catalog-label">Catalog</span>
     <div class="seg" role="group" aria-labelledby="catalog-label"><a href="/settings/pack-sizes">Pack sizes</a><a href="/settings/suppliers">Suppliers</a><a href="/settings/reasons">Reasons</a><a href="/settings/lvl-thresholds">LVL thresholds</a></div>
+    <span class="label" id="inventory-label">Inventory</span>
+    <div class="seg" role="group" aria-labelledby="inventory-label"><a href="/settings/working-day">Working day</a></div>
   </nav>
 </header>
 
@@ -186,6 +189,26 @@
       },
       saved(reply) { this.list = upsert(this.list, reply.threshold, 'depth'); return reply.threshold.depth + '″ threshold saved.'; },
       current(row) { this.list = upsert(this.list, row, 'depth'); },
+    },
+
+    'working-day': {
+      title: 'Working day',
+      help: 'When someone counts an item, anything entered on it within this many working days before the count asks whether it happened before or after the count. Weekends are always skipped; holidays are not. Everyone can see this; only an admin can change it.',
+      async load() {
+        this.setting = (await get('/api/working-day')).setting[0];
+        this.admin = (await AppHeader.me).admin;
+      },
+      head: '<tr><th>Working day window</th></tr>',
+      rows() {
+        return [this.admin
+          ? '<tr><td>' + input('type="number" min="1" step="1" style="width:6em" data-days aria-label="Working day window, in days"', this.setting.value) + '</td></tr>'
+          : '<tr><td>' + esc(String(this.setting.value)) + ' working day(s)</td></tr>'];
+      },
+      onChange(target) {
+        return ['/api/working-day/set', { version: this.setting.version, days: Number(target.value) }];
+      },
+      saved(reply) { this.setting = reply.setting; return 'Working day window saved.'; },
+      current(row) { this.setting = row; },
     },
   };
 
