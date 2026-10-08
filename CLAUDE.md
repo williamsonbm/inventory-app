@@ -19,10 +19,16 @@ under `claude-pod` they are at `/workspace/`.
   only when asked. `/simplify` is this repo's refactor stage, including where `tdd` says
   "the review stage"; it can break passing code.
 - **State test results plainly** — real counts, real pass/fail, never "should pass".
+- **Short replies to the owner.** Under 300 words, at most 3 questions per reply. Log every
+  question, recommendation and answer in the open-questions memory, numbered continuously.
+- **Say it, then do it.** If a reply says work is starting, it makes the first tool call in the
+  same reply. Otherwise say what waits and why.
+- **Show exact PR or issue text before posting.** A yes to "reply on the PR" approves the
+  action, not wording the owner has not seen.
 
 ## Getting facts right
 
-Four rules from real mistakes. Not optional.
+Five rules from real mistakes. Not optional.
 
 - **Re-derive after a scope change.** List and recheck facts inherited from removed scope.
   An EWP-derived field list survived the EWP tab's removal; all four surviving pages would
@@ -33,11 +39,15 @@ Four rules from real mistakes. Not optional.
   "Assertion messages go third" fails for `assert.ok`, used 110 times in the source.
 - **Grep a new rule against the document that states it.** One commit fixed four glossary
   entries; the next repeated the defect two lines below.
+- **Read large files by range.** For a file over ~300 lines (migrations, `test/*.test.js`),
+  `grep -n` for the symbol, then read only that range. Do not read one file twice in a session.
+  For a long issue, fetch the section you need. One session read `004-purchase-orders.sql` whole
+  three times, which added about 40K tokens.
 
 ## Writing code
 
 Read `docs/CODING-STANDARDS.md` before writing, reviewing or testing code. It holds the
-database and access-control rules too, moved there from #28 by step 2 (#77).
+database and access-control rules too.
 
 **Precedence.** Recorded decisions in `docs/CODING-STANDARDS.md`, `CONTEXT.md` and accepted
 ADRs beat generic skill advice; an ADR wins between them. A task may change a decision:
