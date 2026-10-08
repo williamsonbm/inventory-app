@@ -605,7 +605,28 @@ SELECT d.item_id, d.incoming, d.on_hand, d.depth_lf,
 -- inv.item_figures works out on hand with inv.on_hand_at, as the app's login.
 GRANT EXECUTE ON FUNCTION inv.on_hand_at(bigint, timestamptz) TO inv_app;
 
+-- Whether an item had nothing recorded up to p_at: no approved count and no
+-- ledger entry. Such an item needs no reason when Unmatched (owner, Q118),
+-- e.g. one added from the count sheet (story 4). An item the cutover gave an
+-- opening balance has an entry, so its day-one count still needs one.
+CREATE FUNCTION inv.nothing_before(p_item_id bigint, p_at timestamptz) RETURNS boolean
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT NOT EXISTS (SELECT FROM inv.ledger WHERE item_id = p_item_id AND effective_at <= p_at)
+     AND NOT EXISTS (SELECT FROM inv.count_lines l JOIN inv.counts c ON c.id = l.count_id
+                      WHERE l.item_id = p_item_id AND c.status = 'approved' AND c.counted_at <= p_at)
+$$;
+
+-- inv.count_review asks it, as the app's login.
+GRANT EXECUTE ON FUNCTION inv.nothing_before(bigint, timestamptz) TO inv_app;
+
 INSERT INTO inv.actions (name, admin_only) VALUES ('approve count', false), ('reject count', false);
+
+-- A sixth built-in reason, for an Unmatched item nobody can explain, so a
+-- large count is approved without inventing reasons (owner, Q117). Any
+-- entry may use it.
+INSERT INTO inv.reasons (text, built_in) VALUES ('Unexplained', true);
 
 -- Whether a count needs a second person to approve it (owner, Q110, Q114):
 -- on, nobody who started, saved or submitted the count approves it; off,
@@ -648,7 +669,8 @@ GRANT EXECUTE ON FUNCTION inv.set_count_approval_by_another(bigint, uuid, intege
 -- Whatever writes the row (design, "Rules the database enforces"): while
 -- the setting is on, a count's approver is nobody who started, saved or
 -- submitted it (S5; owner, Q113); and every line of an approved count has
--- the app's number, and a reason when its item is Unmatched (S9). Who worked
+-- the app's number, and a reason when its item is Unmatched (S9), unless
+-- the item had nothing recorded before the count (Q118). Who worked
 -- on a count is in its log rows, and Matched spans an item's lines, so this
 -- is a trigger, not a CHECK. inv.approve_count gives the plain refusals.
 CREATE FUNCTION inv.check_count_approval() RETURNS trigger
@@ -662,9 +684,10 @@ BEGIN
                     AND action IN ('start count', 'save count', 'submit count')) THEN
     RAISE EXCEPTION 'You worked on this count, so a second person approves it.' USING ERRCODE = 'IV422';
   END IF;
-  IF EXISTS (SELECT FROM (SELECT l.expected, l.reason_id, pg_catalog.sum(l.quantity) OVER (PARTITION BY l.item_id) AS counted
+  IF EXISTS (SELECT FROM (SELECT l.item_id, l.expected, l.reason_id, pg_catalog.sum(l.quantity) OVER (PARTITION BY l.item_id) AS counted
                             FROM inv.count_lines l WHERE l.count_id = NEW.id) x
-              WHERE x.expected IS NULL OR (x.counted <> x.expected AND x.reason_id IS NULL)) THEN
+              WHERE x.expected IS NULL
+                 OR (x.counted <> x.expected AND x.reason_id IS NULL AND NOT inv.nothing_before(x.item_id, NEW.counted_at))) THEN
     RAISE EXCEPTION 'Every line of an approved count has the app''s number, and a reason when Unmatched.'
       USING ERRCODE = 'check_violation';
   END IF;
@@ -697,13 +720,36 @@ $$;
 
 GRANT EXECUTE ON FUNCTION inv.count_entries(bigint) TO inv_app;
 
+-- What the approval screen reads before Approve: the entries to ask about
+-- (Q33) and each counted item's on hand at the count's moment, so the page
+-- can show Matched or Unmatched without doing sums (S9), and the items that
+-- need no reason (Q118). NULL when no such count.
+CREATE FUNCTION inv.count_review(p_id bigint) RETURNS jsonb
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT pg_catalog.jsonb_build_object(
+           'entries', inv.count_entries(c.id),
+           'on_hand', coalesce(pg_catalog.jsonb_object_agg(x.item_id, inv.on_hand_at(x.item_id, c.counted_at))
+                                 FILTER (WHERE x.item_id IS NOT NULL), '{}'),
+           'nothing_before', coalesce(pg_catalog.jsonb_agg(x.item_id ORDER BY x.item_id)
+                                        FILTER (WHERE x.item_id IS NOT NULL AND inv.nothing_before(x.item_id, c.counted_at)), '[]'))
+    FROM inv.counts c
+    LEFT JOIN (SELECT DISTINCT count_id, item_id FROM inv.count_lines) x ON x.count_id = c.id
+   WHERE c.id = p_id
+   GROUP BY c.id
+$$;
+
+GRANT EXECUTE ON FUNCTION inv.count_review(bigint) TO inv_app;
+
 -- Approve and Reject, one decision each on a waiting count. Refused when the
 -- count changed since the screen read it (S41), or when it is not waiting.
 -- p_action 'approve count' (stories 69–73), final after the page's warning
 -- (S62), writes on each line the app's number for its
 -- item at the count's moment, which on hand then starts from (ADR 0002).
 -- An item whose lines do not add up to that number is Unmatched and needs a
--- reason from Settings → Reasons (story 71, Q111); a Matched one takes none.
+-- reason from Settings → Reasons (story 71, Q111), unless it had nothing
+-- recorded before the count (Q118); a Matched one takes none.
 -- 'reject count' (story 74) only ends the count: it never becomes on hand
 -- (S6), and the recount is a new count with its own moment (Q112).
 CREATE FUNCTION inv.decide_count(p_actor bigint, p_key uuid, p_action text, p_id bigint, p_version integer, p_answers jsonb)
@@ -774,6 +820,7 @@ BEGIN
     END IF;
     CONTINUE WHEN t.counted = t.expected;
     IF NOT inv.is_given(v_reason) THEN
+      CONTINUE WHEN inv.nothing_before(t.item_id, c.counted_at);
       RAISE EXCEPTION '% is Unmatched: counted %, the app had %. Pick a reason.', t.item, t.counted, t.expected
         USING ERRCODE = 'IV400';
     END IF;
@@ -783,8 +830,15 @@ BEGIN
     END IF;
     UPDATE inv.count_lines SET reason_id = (v_reason #>> '{}')::bigint WHERE count_id = p_id AND item_id = t.item_id;
   END LOOP;
-  UPDATE inv.counts SET status = 'approved', approved_at = pg_catalog.now(), approved_by = p_actor, version = version + 1
-   WHERE id = p_id;
+  -- Two approvals of the same family and month at the same moment both pass
+  -- the check above; the unique index stops the second, with the same words.
+  BEGIN
+    UPDATE inv.counts SET status = 'approved', approved_at = pg_catalog.now(), approved_by = p_actor, version = version + 1
+     WHERE id = p_id;
+  EXCEPTION WHEN unique_violation THEN
+    RAISE EXCEPTION '% already has an approved monthly count closing %.', was ->> 'family_name',
+      pg_catalog.to_char(c.closes, 'FMMonth YYYY') USING ERRCODE = 'IV422';
+  END;
   RETURN inv.finish_action(a.log_id, p_id, was, inv.count_json(p_id));
 END
 $$;

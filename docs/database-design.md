@@ -75,7 +75,7 @@ Sources: #72 stories, the schema review's §8, ADR 0001/0002, #9, and this grill
 | S6 | A rejected count never affects on hand | Now | counts |
 | S7 | A draft count has no effect until approved | Now | counts |
 | S8 | Same count submitted twice, or two waiting counts of one item | Now | counts, action keys |
-| S9 | Each unmatched line needs a reason | Now | count lines, reasons |
+| S9 | Each unmatched item needs a reason, unless it had nothing recorded before the count (Q118, 2026-10-08) | Now | count lines, reasons |
 | S10 | A count taken July 3 is labeled "closes June" | Now | counts |
 | S11 | Month-end correction adds a revision; original kept; later count still decides on hand | Now | count corrections |
 | S12 | A PO shows as incoming; the buy list does not reorder it | Now | POs |
@@ -209,7 +209,7 @@ EWP in Inventory (the families flag), EWP cut plan with board grouping (S47), EW
 - A retry key is used once per action (S22).
 - Every change is written by a database function that also writes its activity-log row in the same save; the app's database login can run those functions but cannot write to the tables directly. This makes the log complete and stops an existing action's retry key from being reused.
 - Ledger links match the kind: a receipt line has a receipt, a build or ship row has a job, a return has a job. A trim or swap is complete — both rows, in one action — or refused. Un-build, Un-ship and swaps never give back more than the job consumed.
-- An unmatched count line has a reason before its count can be approved.
+- An unmatched counted item has a reason before its count can be approved, unless the item had nothing recorded before the count: no approved count and no ledger entry (Q118).
 - Status values are fixed lists; nothing is deleted: the app's database login has no DELETE or TRUNCATE (emptying a table) and does not own the tables. It cannot update ledger or activity-log rows.
 - The Planner uses a separate **read-only** database login, so ADR 0001 (the Planner writes nothing) is enforced by the database.
 - Every editable table has a version; each save states the version it read and is refused if the row has changed since (S41).

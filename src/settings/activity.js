@@ -92,6 +92,7 @@ const TARGET_NAMES = {
   ledger: (_item, row) => row.item ?? row.lines[0].item,  // a correction's item, a trim's long one, or a reversal's first
   families: (_item, row) => row.name,
   counts: (_item, row) => `${row.family_name} count`,
+  settings: (_item, row) => SETTINGS[row.name].label,
 };
 const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
 
@@ -177,12 +178,18 @@ function describePoChange(was, now) {
 const monthName = (month) => new Date(`${month}-01T00:00:00Z`)
   .toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
-// What a save or submit did to a count: submitted, the month it closes, and
+// What a decision did to a count (approved: its lines with the app's number
+// and the reason where unmatched; or rejected), else what a save or submit did: submitted, the month it closes, and
 // its lines as they now stand, when they changed: each with how it was
 // found when it was in packs ("157 LUS28 (3 cartons of 50 + 7 loose)"); a
 // line of loose pieces only is just its pieces ("0 HUS26").
 function describeCountChange(was, now) {
   const changes = [];
+  if (now.status === 'rejected') return 'rejected';
+  if (now.status === 'approved') {
+    const lines = now.lines.map((l) => `${l.quantity} ${l.item}${l.matched ? '' : ` (the app had ${l.expected}; ${l.reason})`}`);
+    return `approved; lines: ${lines.join(', ')}`;
+  }
   if (was.status !== now.status) changes.push('submitted for approval');
   if (was.closes !== now.closes) changes.push(`closes: ${monthName(was.closes)} → ${monthName(now.closes)}`);
   if (JSON.stringify(was.lines) !== JSON.stringify(now.lines)) {
@@ -192,9 +199,19 @@ function describeCountChange(was, now) {
   return changes.join('; ');
 }
 
+// Each setting: its name on the Settings page, and its change in words.
+const yesNo = (v) => (v ? 'yes' : 'no');
+const SETTINGS = {
+  working_day_window: { label: 'Working day', describe: (was, now) => `${was.value} → ${now.value}` },
+  count_approval_by_another: {
+    label: 'Count approval', describe: (was, now) => `second person must approve: ${yesNo(was.value)} → ${yesNo(now.value)}`,
+  },
+};
+const describeSettingChange = (was, now) => SETTINGS[now.name].describe(was, now);
+
 // A change told its own way, by the table it changed; any other table's
 // change lists each field that differs.
-const CHANGED = { purchase_orders: describePoChange, counts: describeCountChange };
+const CHANGED = { purchase_orders: describePoChange, counts: describeCountChange, settings: describeSettingChange };
 
 // What a change did, in words, for the "Was → now" column: an addition (no
 // was) says what was added; a removal (no now) says so; a table in CHANGED

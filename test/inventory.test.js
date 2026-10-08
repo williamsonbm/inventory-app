@@ -90,7 +90,7 @@ test('Settings lists and changes pack sizes, suppliers, reasons and LVL depth th
   const back = (await change(ctx, '/api/reasons/unretire', { id: reason.id, version: 2 })).body.reason;
   assert.equal(retired.active, false);
   const { reasons } = await read(ctx, '/api/reasons');
-  assert.equal(reasons.length, 6, 'the five built in, and Miscounted');
+  assert.equal(reasons.length, 7, 'the six built in, and Miscounted');
   assert.deepEqual(reasons.find((r) => r.id === reason.id), back);
 
   const depth = (await change(ctx, '/api/lvl-depth-thresholds/set', { depth: '14', version: null, threshold_lf: 720 })).body.threshold;
@@ -666,4 +666,60 @@ test('anyone starts, saves and submits a count; Count lists it, and the Activity
     ['Bob Ray', 'start count', 'Hangers count', 'added: monthly, closes August 2026'],
   ]);
   assert.deepEqual((await read(ctx, '/api/activity?family=plates')).entries, [], 'a count shows under its own family only');
+});
+
+test('a second person approves a waiting count from its review; the count-approval switch is the admin\'s, and the Activity Log says each step (stories 69–76; Q110, Q113)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  await goLive(ctx.db, 'hangers');
+  await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
+  const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
+  const waiting = async () => {
+    const started = (await change(bob, '/api/counts/start', { family: 'hangers', kind: 'spot check' })).body.count;
+    return (await change(bob, '/api/counts/submit',
+      { id: started.id, version: started.version, closes: null, lines: [{ item_id: hanger.id, loose: 5 }] })).body.count;
+  };
+  const count = await waiting();
+
+  const review = await read(bob, `/api/counts/review?id=${count.id}`);
+  assert.deepEqual([review.entries, review.on_hand, review.nothing_before], [[], { [hanger.id]: 0 }, [hanger.id]]);
+  assert.equal((await post(ctx.base, '/api/counts/review?id=1', {}, bob.cookie)).status, 404, 'a review is read, never posted');
+
+  // Bob worked on it; the admin did not.
+  const { reasons } = await read(ctx, '/api/reasons');
+  const reason = reasons.find((r) => r.text === 'Damaged – scrapped').id;
+  const own = await change(bob, '/api/counts/approve',
+    { id: count.id, version: count.version, answers: { reasons: { [hanger.id]: reason } } });
+  assert.equal(own.status, 422);
+  assert.equal(own.body.error, 'You worked on this count, so a second person approves it.');
+  // LUS28 had nothing before the count, so its reason is optional (Q118).
+  const approved = await change(ctx, '/api/counts/approve',
+    { id: count.id, version: count.version, answers: { reasons: { [hanger.id]: reason } } });
+  assert.equal(approved.status, 200, approved.body.error);
+  assert.equal(approved.body.count.status, 'approved');
+  assert.equal((await read(bob, '/api/items')).items[0].on_hand, 5);
+
+  const second = await waiting();
+  const rejected = await change(ctx, '/api/counts/reject', { id: second.id, version: second.version });
+  assert.equal(rejected.body.count.status, 'rejected');
+  assert.deepEqual((await read(bob, '/api/counts')).counts, [], 'nothing waits any more');
+
+  // The switch: everyone reads it, only an admin changes it.
+  const seen = await read(bob, '/api/count-approval');
+  assert.deepEqual(seen.setting, [{ name: 'count_approval_by_another', value: true, version: 1 }]);
+  const denied = await post(ctx.base, '/api/count-approval/set', { key: crypto.randomUUID(), version: 1, on: false }, bob.cookie);
+  assert.equal(denied.status, 403);
+  assert.equal((await change(ctx, '/api/count-approval/set', { version: 1, on: false })).body.setting.value, false);
+  const third = await waiting();
+  const mine = await change(bob, '/api/counts/approve', { id: third.id, version: third.version, answers: {} });
+  assert.equal(mine.status, 200, 'with the switch off, the counter approves');
+
+  const { entries } = await read(ctx, '/api/activity');
+  assert.deepEqual(entries.filter((e) => /^(approve|reject) count$/.test(e.action)).map((e) => [e.who, e.action, e.target, e.change]), [
+    ['Bob Ray', 'approve count', 'Hangers count', 'approved; lines: 5 LUS28'],
+    ['Ann Lee', 'reject count', 'Hangers count', 'rejected'],
+    ['Ann Lee', 'approve count', 'Hangers count', 'approved; lines: 5 LUS28 (the app had 0; Damaged – scrapped)'],
+  ]);
+  assert.deepEqual(entries.filter((e) => e.action === 'set count approval').map((e) => [e.target, e.change]),
+    [['Count approval', 'second person must approve: yes → no']]);
 });

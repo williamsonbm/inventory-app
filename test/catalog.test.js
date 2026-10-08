@@ -216,14 +216,14 @@ test('suppliers are added and renamed, and one name is never listed twice', asyn
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
 });
 
-test('reasons: the five the app relies on are there from the start; others are added, retired and un-retired', async () => {
+test('reasons: the six the app relies on are there from the start; others are added, retired and un-retired', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const listed = await as(db, APP, async (app) =>
     (await app.query('SELECT text, active, built_in FROM inv.reasons ORDER BY text')).rows);
   assert.deepEqual(listed.map((r) => r.text), ['Damaged – scrapped', 'Opening balance (web app)', 'Remake',
-    'Returned from job site', 'Weathered – trimmed']);
-  assert.ok(listed.every((r) => r.active && r.built_in), 'the five start active and built in');
+    'Returned from job site', 'Unexplained', 'Weathered – trimmed']);
+  assert.ok(listed.every((r) => r.active && r.built_in), 'the six start active and built in');
 
   const miscount = await call(db, 'add_reason', ann.id, crypto.randomUUID(), ' Miscounted ');
   assert.deepEqual(miscount, { id: miscount.id, text: 'Miscounted', active: true, built_in: false, entry: null, version: 1 });

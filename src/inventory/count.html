@@ -31,6 +31,17 @@
   (story 66); Submit sends it for approval (story 67). An item the catalog
   lacks is added in one click from the box under the sheet (story 4).
 
+  Group C (stories 69–76, 80): a count waiting for approval opens Review.
+  Each entry made during the count asks "Was this item counted after this
+  entry?" (Q33); each counted item shows Matched or Unmatched against the
+  app's number (on hand at the count's moment, from /api/counts/review, plus
+  the entries answered Yes) and an Unmatched item takes a reason from
+  Settings → Reasons (Q111): one by one, or the same for all of them at
+  once (Q117). An item with nothing recorded before the count needs none
+  (Q118). Approve and Reject each ask once more first,
+  in the page (story 73, no browser dialog). The preview is advice: the
+  database works the app's number out again at approval and decides.
+
   Glue, NOT UNIT-TESTED: the forms, the sheet and its print need a browser,
   and this repo has no DOM harness. Every route it calls is tested in
   test/inventory.test.js, the counts' rules in test/counts.test.js, and the
@@ -96,6 +107,27 @@
     </form>
   </section>
 
+  <section id="review" class="no-print" hidden>
+    <h2 style="margin:8px 0" id="review-title"></h2>
+    <p class="sub" id="review-started"></p>
+    <div id="review-entries"></div>
+    <p class="row" id="review-all" hidden><label>Same reason for every Unmatched item
+      <select id="review-all-pick"></select></label></p>
+    <div class="tw"><table class="one-line">
+      <thead><tr><th>Item</th><th>Counted</th><th>The app had</th><th>Result</th><th>Reason</th></tr></thead>
+      <tbody id="review-items"></tbody>
+    </table></div>
+    <div class="row" style="margin-top:10px" id="review-buttons">
+      <button type="button" id="review-approve">Approve</button>
+      <button type="button" class="ghost" id="review-reject">Reject</button>
+      <button type="button" class="ghost" id="review-close">Close</button>
+    </div>
+    <div id="review-warning" hidden role="alert">
+      <p id="review-warning-text"></p>
+      <div class="row"><button type="button" id="review-yes"></button><button type="button" class="ghost" id="review-no">Go back</button></div>
+    </div>
+  </section>
+
   <section class="no-print">
     <h2 style="margin:20px 0 8px">Counts in progress</h2>
     <div class="tw"><table class="one-line">
@@ -125,6 +157,8 @@
   let counts = [];
   let current = null;  // the family the family bar shows, or 'all'
   let open = null;     // the draft count whose sheet is open, or null
+  let reasons = [];    // the reasons an Unmatched item may take
+  let review = null;   // { count, entries, on_hand, nothing_before, answers, picks } for the waiting count under review, or null
 
   const family = (code) => families.find((f) => f.code === code);
   const itemById = (id) => items.find((i) => i.id === id);
@@ -133,9 +167,10 @@
   const monthName = (m) => new Date(m + '-01T00:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
   async function load() {
-    const got = await getAll(['/api/items', '/api/pack-sizes', '/api/pos', '/api/counts']);
+    const got = await getAll(['/api/items', '/api/pack-sizes', '/api/pos', '/api/counts', '/api/reasons']);
     if (!got) return;
-    [{ families, items, gradeOrder }, { pack_sizes: packSizes }, { pos }, { counts }] = got;
+    [{ families, items, gradeOrder }, { pack_sizes: packSizes }, { pos }, { counts }, { reasons }] = got;
+    reasons = reasons.filter((r) => r.active && !r.entry);
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
       current = f;
       paintStart();
@@ -155,6 +190,7 @@
       : 'Pick a family above to count it.';
     if (!f) return;
     el('start-btn').textContent = 'Start ' + f.name + ' count and open the sheet';
+    el('start-btn').disabled = !f.live;
     if (!f.live) {
       el('open-pos').innerHTML = '<p class="sub">' + esc(f.name) + ' is not live in Inventory yet, so it cannot be counted until the cutover.</p>';
       return;
@@ -205,12 +241,15 @@
       '<td>' + (c.closes ? monthName(c.closes) : '—') + '</td><td>' + showTime(c.counted_at) + '</td><td>' + esc(c.counted_by) + '</td>' +
       '<td>' + c.lines.length + '</td>' +
       '<td>' + (c.status === 'draft' ? 'Draft' : 'Waiting for approval') + '</td>' +
-      '<td>' + (c.status === 'draft' && !(open && open.id === c.id) ? '<button type="button" class="ghost" data-do="open">Open</button>' : '') + '</td></tr>').join('');
+      '<td>' + (c.status === 'draft' && !(open && open.id === c.id) ? '<button type="button" class="ghost" data-do="open">Open</button>' : '') +
+      (c.status === 'waiting' && !(review && review.count.id === c.id) ? '<button type="button" class="ghost" data-do="review">Review</button>' : '') + '</td></tr>').join('');
   }
   el('counts').addEventListener('click', (e) => {
-    if (e.target.dataset.do !== 'open') return;
+    const what = e.target.dataset.do;
+    if (what !== 'open' && what !== 'review') return;
     say('');
-    openSheet(counts.find((c) => c.id === Number(e.target.closest('tr').dataset.id)));
+    const count = counts.find((c) => c.id === Number(e.target.closest('tr').dataset.id));
+    if (what === 'open') openSheet(count); else openReview(count);
   });
 
   // ── The sheet (stories 61–64, S74) ───────────────────────────────────────
@@ -312,6 +351,125 @@
       last.after(sheetRow(itemById(Number(tr.dataset.itemId)), null, true));
     }
   });
+
+  // ── Review: approve or reject a waiting count (stories 69–76) ─────────────
+  const receiptWord = { receive: 'receipt', correct: 'correction', trim: 'trim' };
+  async function openReview(count) {
+    let got;
+    try {
+      got = (await getAll(['/api/counts/review?id=' + count.id]))?.[0];
+    } catch (err) {
+      return say(err.message, 'bad');
+    }
+    if (!got) return;
+    review = { count, entries: got.entries, on_hand: got.on_hand, nothing_before: got.nothing_before, answers: {}, picks: {} };
+    closeSheet();
+    el('review').hidden = false;
+    el('review-title').textContent = 'Review the ' + count.family_name + (count.kind === 'monthly' ? ' monthly count' : ' spot check');
+    el('review-started').textContent = 'Counted by ' + count.counted_by + '. The count is true as of ' + showTime(count.counted_at) + '.';
+    paintReview();
+    paintCounts();
+  }
+  // One row per counted item (its lines added up, as the database does).
+  function reviewItems() {
+    const byItem = new Map();
+    for (const l of review.count.lines) byItem.set(l.item_id, { id: l.item_id, name: l.item, counted: (byItem.get(l.item_id)?.counted ?? 0) + l.quantity });
+    return [...byItem.values()].map((r) => {
+      const yes = review.entries.filter((en) => en.item_id === r.id && review.answers[en.id] === true).reduce((n, en) => n + en.quantity, 0);
+      return { ...r, app: review.on_hand[r.id] + yes, matched: r.counted === review.on_hand[r.id] + yes,
+        optional: review.nothing_before.includes(r.id) };
+    });
+  }
+  const reasonOptions = (picked) =>
+    reasons.map((x) => '<option value="' + x.id + '"' + (picked === x.id ? ' selected' : '') + '>' + esc(x.text) + '</option>').join('');
+  function paintReview() {
+    const entries = review.entries.map((en) => '<tr data-entry="' + en.id + '"><td>' + esc(en.item) + '</td><td>' + receiptWord[en.action] + ' of ' + fmtInt(en.quantity) +
+      '</td><td>' + showTime(en.at) + '</td><td>Was this item counted after this entry? ' +
+      ['Yes', 'No'].map((w) => '<label><input type="radio" name="entry-' + en.id + '" value="' + w + '"' +
+        (review.answers[en.id] === (w === 'Yes') ? ' checked' : '') + '> ' + w + '</label>').join(' ') + '</td></tr>');
+    el('review-entries').innerHTML = entries.length
+      ? '<h3 style="margin:8px 0">Entries made during the count</h3><div class="tw"><table class="one-line"><tbody>' + entries.join('') + '</tbody></table></div>'
+      : '<p class="sub">Nothing was received or corrected on these items during the count.</p>';
+    const items = reviewItems();
+    el('review-all').hidden = !items.some((r) => !r.matched);
+    el('review-all-pick').innerHTML = '<option value="">Pick a reason</option>' + reasonOptions();
+    el('review-items').innerHTML = items.map((r) => '<tr data-item="' + r.id + '"><td>' + esc(r.name) + '</td><td>' + fmtInt(r.counted) +
+      '</td><td>' + fmtInt(r.app) + '</td><td>' + (r.matched ? 'Matched' : 'Unmatched') + '</td><td>' + (r.matched ? '' :
+        '<select data-pick aria-label="Reason for ' + esc(r.name) + '"><option value="">' +
+        (r.optional ? 'No reason needed (nothing recorded before)' : 'Pick a reason') + '</option>' + reasonOptions(review.picks[r.id]) +
+        '</select>') + '</td></tr>').join('');
+    el('review-warning').hidden = true;
+    el('review-buttons').hidden = false;
+  }
+  el('review-entries').addEventListener('change', (e) => {
+    review.answers[Number(e.target.closest('tr').dataset.entry)] = e.target.value === 'Yes';
+    paintReview();
+  });
+  // Fills every Unmatched item's picker; each can still be changed after.
+  el('review-all-pick').addEventListener('change', (e) => {
+    if (e.target.value === '') return;
+    for (const r of reviewItems()) if (!r.matched) review.picks[r.id] = Number(e.target.value);
+    paintReview();
+  });
+  el('review-items').addEventListener('change', (e) => {
+    review.picks[Number(e.target.closest('tr').dataset.item)] = e.target.value === '' ? undefined : Number(e.target.value);
+  });
+  function closeReview() {
+    review = null;
+    el('review').hidden = true;
+    paintCounts();
+  }
+  el('review-close').addEventListener('click', () => { say(''); closeReview(); });
+
+  // Approve and Reject each warn first and are final (S62, Q112). The
+  // warning replaces the buttons until the person answers it.
+  function warn(kind) {
+    review.deciding = kind;
+    el('review-warning-text').textContent = kind === 'approve'
+      ? 'Approving is final. It cannot be undone or edited: on hand starts from these counted numbers, and a mistake is fixed with a new count.'
+      : 'Rejecting is final. The count is kept, but it changes no on hand; to count again, start a new count.';
+    el('review-yes').textContent = kind === 'approve' ? 'Yes, approve this count' : 'Yes, reject this count';
+    el('review-buttons').hidden = true;
+    el('review-warning').hidden = false;
+  }
+  el('review-approve').addEventListener('click', () => {
+    const missing = reviewItems().filter((r) => !r.matched && !r.optional && !review.picks[r.id]);
+    if (missing.length) {
+      return say(missing.map((r) => r.name).join(', ') + (missing.length > 1 ? ' are' : ' is') +
+        ' Unmatched (counted differs from what the app had). Pick a reason for ' + (missing.length > 1 ? 'each' : 'it') + ' in the Reason column.', 'bad');
+    }
+    say('');
+    warn('approve');
+  });
+  el('review-reject').addEventListener('click', () => warn('reject'));
+  el('review-no').addEventListener('click', () => { el('review-warning').hidden = true; el('review-buttons').hidden = false; });
+  el('review-yes').addEventListener('click', () => {
+    el('review-yes').disabled = true;
+    decide(review.deciding).finally(() => { el('review-yes').disabled = false; });
+  });
+  async function decide(kind) {
+    say('');
+    const { count } = review;
+    const reasonsFor = {};
+    for (const r of reviewItems()) if (!r.matched && review.picks[r.id]) reasonsFor[r.id] = review.picks[r.id];
+    const body = { key: review.key ??= crypto.randomUUID(), id: count.id, version: count.version };
+    if (kind === 'approve') body.answers = { counted_after: review.answers, reasons: reasonsFor };
+    try {
+      const reply = (await send('/api/counts/' + kind, body)).count;
+      counts = counts.filter((c) => c.id !== count.id);
+      closeReview();
+      say('The ' + reply.family_name + ' count was ' + (kind === 'approve' ? 'approved by ' + reply.approved_by + '. On hand now starts from it.' : 'rejected.'), 'ok');
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => decide(kind) : null);
+      if (err.current) {
+        counts = counts.filter((c) => c.id !== err.current.id);
+        if (err.current.status === 'waiting') { counts.push(err.current); openReview(err.current); } else closeReview();
+      } else if (!err.unconfirmed) {
+        review.key = null;
+        paintReview();
+      }
+    }
+  }
 
   // ── An item not on the sheet (story 4) ────────────────────────────────────
   // A retired item is put back in use on the Overview first, as on Receive;

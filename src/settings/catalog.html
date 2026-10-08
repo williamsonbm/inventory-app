@@ -44,7 +44,7 @@
     <span class="label" id="catalog-label">Catalog</span>
     <div class="seg" role="group" aria-labelledby="catalog-label"><a href="/settings/pack-sizes">Pack sizes</a><a href="/settings/suppliers">Suppliers</a><a href="/settings/reasons">Reasons</a><a href="/settings/lvl-thresholds">LVL thresholds</a></div>
     <span class="label" id="inventory-label">Inventory</span>
-    <div class="seg" role="group" aria-labelledby="inventory-label"><a href="/settings/working-day">Working day</a></div>
+    <div class="seg" role="group" aria-labelledby="inventory-label"><a href="/settings/working-day">Working day</a><a href="/settings/count-approval">Count approval</a></div>
   </nav>
 </header>
 
@@ -208,6 +208,27 @@
         return ['/api/working-day/set', { version: this.setting.version, days: Number(target.value) }];
       },
       saved(reply) { this.setting = reply.setting; return 'Working day window saved.'; },
+      current(row) { this.setting = row; },
+    },
+
+    'count-approval': {
+      title: 'Count approval',
+      help: 'When this is on, a count is approved by someone who did not start, save or submit it. When it is off, anyone may approve a count, the person who counted included. Everyone can see this; only an admin can change it.',
+      async load() {
+        const [got, me] = await Promise.all([get('/api/count-approval'), AppHeader.me]);
+        this.setting = got.setting[0];
+        this.admin = me.admin;
+      },
+      head: '<tr><th>A second person approves each count</th></tr>',
+      rows() {
+        return [this.admin
+          ? '<tr><td><label><input type="checkbox" data-approval' + (this.setting.value ? ' checked' : '') + '> On</label></td></tr>'
+          : '<tr><td>' + (this.setting.value ? 'On' : 'Off') + '</td></tr>'];
+      },
+      onChange(target) {
+        return ['/api/count-approval/set', { version: this.setting.version, on: target.checked }];
+      },
+      saved(reply) { this.setting = reply.setting; return 'Count approval saved.'; },
       current(row) { this.setting = row; },
     },
   };

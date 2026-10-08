@@ -18,7 +18,7 @@ const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js
 const { readActivity } = require('./settings/activity.js');
 const { readHistory } = require('./inventory/history.js');
 const {
-  listCatalog, listPos, listCounts, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
+  listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -48,6 +48,7 @@ const PAGE_FILES = {
   '/settings/reasons': ['settings/catalog.html', 'text/html'],
   '/settings/lvl-thresholds': ['settings/catalog.html', 'text/html'],
   '/settings/working-day': ['settings/catalog.html', 'text/html'],
+  '/settings/count-approval': ['settings/catalog.html', 'text/html'],
   '/activity': ['settings/activity.html', 'text/html'],
   '/password': ['settings/password.html', 'text/html'],
   '/app-header.js': ['settings/app-header.js', 'application/javascript'],
@@ -157,6 +158,11 @@ function createApp({ database, sessionSecret }) {
   }));
   app.get('/api/counts', catchAsync(async (_req, res) => {
     res.json({ ok: true, counts: await listCounts(database) });
+  }));
+  app.get('/api/counts/review', catchAsync(async (req, res) => {
+    const review = await readCountReview(database, req.query.id);
+    if (!review) return res.status(404).json({ ok: false, error: 'That count is not on the list.' });
+    res.json({ ok: true, ...review });
   }));
   // An item's History (story 55).
   app.get('/api/items/history', catchAsync(async (req, res) => {

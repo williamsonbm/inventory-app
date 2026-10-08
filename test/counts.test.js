@@ -11,7 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, as, firstUser, call, goLive, logRows, figure, reasonId, refused } = require('./support/database.js');
+const { freshDatabase, as, APP, firstUser, call, goLive, logRows, figure, reasonId, refused } = require('./support/database.js');
 
 // A database with Ann and one hanger, with hangers live.
 async function withHanger() {
@@ -340,6 +340,45 @@ test('an Unmatched item needs a reason from Settings → Reasons before approval
   assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 38, [other.id]: 5 }, 'on hand starts from the count');
 });
 
+test('"Unexplained" is a built-in reason that explains an Unmatched item and cannot be retired (story 71; Q117)', async () => {
+  const { db, ann, bob, hanger, receive, counted, approve } = await withTwo();
+  await receive(hanger, 40);
+  const unexplained = await reasonId(db, 'Unexplained');
+  const err = await refused(call(db, 'retire_reason', ann.id, crypto.randomUUID(), unexplained, 1), 'IV422', 'retiring a built-in reason');
+  assert.equal(err.message, 'The app relies on "Unexplained", so it cannot be retired.');
+  const approved = await approve(bob, await counted([{ item_id: hanger.id, loose: 38 }]), { reasons: { [hanger.id]: unexplained } });
+  assert.deepEqual(approved.lines.map((l) => [l.item, l.matched, l.reason]), [['LUS28', false, 'Unexplained']]);
+});
+
+test('an Unmatched item with nothing recorded before the count needs no reason; after its first approved count it does (story 71; Q118)', async () => {
+  const { db, ann, bob, hanger, receive, counted, approve } = await withTwo();
+  const added = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  await receive(hanger, 40);
+  const count = await counted([{ item_id: hanger.id, loose: 38 }, { item_id: added.id, loose: 5 }]);
+
+  const review = await call(db, 'count_review', count.id);
+  assert.deepEqual(review.nothing_before, [added.id], 'the screen learns which items need no reason');
+  const err = await refused(approve(bob, count), 'IV400', 'LUS28 had a receipt before the count');
+  assert.equal(err.message, 'LUS28 is Unmatched: counted 38, the app had 40. Pick a reason.');
+
+  const unexplained = await reasonId(db, 'Unexplained');
+  const approved = await approve(bob, count, { reasons: { [hanger.id]: unexplained } });
+  assert.deepEqual(approved.lines.map((l) => [l.item, l.matched, l.reason]),
+    [['LUS28', false, 'Unexplained'], ['HUS26', false, null]]);
+
+  // HUS26 now has an approved count, so a different figure needs a reason.
+  const recount = await counted([{ item_id: added.id, loose: 4 }]);
+  assert.deepEqual((await call(db, 'count_review', recount.id)).nothing_before, []);
+  await refused(approve(bob, recount), 'IV400', 'HUS26 after its first approved count');
+  // Whatever writes the row, the same rule holds (the first approval above
+  // passed the same check).
+  await as(db, null, async (owner) => {
+    await owner.query('UPDATE inv.count_lines SET expected = 5 WHERE count_id = $1', [recount.id]);
+    await refused(owner.query("UPDATE inv.counts SET status = 'approved', approved_at = now(), approved_by = $2 WHERE id = $1",
+      [recount.id, bob.id]), '23514', 'approving with no reason, past the function');
+  });
+});
+
 test('an approved count and its lines are locked, whatever writes them, and a rejected count changes no on hand (stories 74, 80; S6, S75)', async () => {
   const { db, bob, hanger, receive, counted, approve, reject } = await withTwo();
   await receive(hanger, 40);
@@ -397,6 +436,39 @@ test('approval asks of each entry made during the count "Was this item counted a
     [['LUS28', 50, 50, true], ['HUS26', 40, 40, true]], 'the app\'s number counts a Yes entry in');
   assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 51, [other.id]: 50 },
     'LUS28: 50 counted + 1 after; HUS26: 40 counted + the 10 it was counted before');
+});
+
+test('the approval screen reads each entry and each item\'s on hand at the count\'s moment, to show Matched before approving (story 71, 72)', async () => {
+  const { ann, db, hanger, receive, counted } = await withTwo();
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  await receive(hanger, 40);
+  const count = await counted([{ item_id: hanger.id, loose: 38 }, { item_id: other.id, loose: 0 }]);
+  await receive(hanger, 10);  // after the submit: in neither list
+
+  const review = await call(db, 'count_review', count.id);
+  assert.deepEqual(review.entries, [], 'no entry was made during the count');
+  assert.deepEqual(review.on_hand, { [hanger.id]: 40, [other.id]: 0 }, 'on hand at counted_at, by item id');
+  assert.equal(await call(db, 'count_review', 999999), null, 'a count that does not exist reads as nothing');
+});
+
+test('two people approving two August monthly counts at the same moment: the second gets the plain message, not the index\'s', async () => {
+  const { db, ann, bob, hanger } = await withTwo();
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  // An item on a waiting count is locked, so each count has its own item.
+  const monthly = async (item) => submit(db, ann,
+    await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'monthly', '2026-08'), [{ item_id: item.id, loose: 0 }]);
+  const [first, second] = [await monthly(hanger), await monthly(other)];
+  const approve = (client, count) => client.query('SELECT inv.approve_count($1, $2, $3, $4, $5) AS result',
+    [bob.id, crypto.randomUUID(), count.id, count.version, '{}']);
+  await as(db, APP, (a) => as(db, APP, async (b) => {
+    await a.query('BEGIN');
+    await approve(a, first);
+    const racing = approve(b, second);  // waits on the index until the first one commits
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await a.query('COMMIT');
+    const err = await racing.then(() => assert.fail('the second approval should be refused'), (e) => e);
+    assert.deepEqual([err.code, err.message], ['IV422', 'Hangers already has an approved monthly count closing August 2026.']);
+  }));
 });
 
 test('a recount of one item changes only that item; an entry before the count, and its later reversal, change nothing (stories 75; S2, S4, S27)', async () => {

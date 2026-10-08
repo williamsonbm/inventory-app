@@ -129,7 +129,7 @@ each family on once, with a command; nothing switches a family back off.
 _Avoid_: enabled, active (active is used for items and people)
 
 **Reason**:
-Why a correction, an unmatched count line or a closed PO line happened, picked from the list in
+Why a correction, an unmatched counted item or a closed PO line happened, picked from the list in
 Settings → Reasons. The reasons the app relies on cannot be retired.
 _Avoid_: note — a note is free text; a reason is picked from the list.
 

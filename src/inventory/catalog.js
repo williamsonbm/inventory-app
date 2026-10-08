@@ -122,6 +122,15 @@ const CATALOG_CHANGES = {
   '/api/counts/start': { fn: 'start_count', args: (b) => [b.family, b.kind, b.closes ?? null], as: 'count' },
   '/api/counts/save': { fn: 'save_count', args: draftArgs, as: 'count' },
   '/api/counts/submit': { fn: 'submit_count', args: draftArgs, as: 'count' },
+  // A waiting count's decision. answers: {counted_after: {entry id: yes or
+  // no}, reasons: {item id: reason id}}, from the approval screen. Anyone
+  // approves a count they did not work on; the database says who may.
+  '/api/counts/approve': { fn: 'approve_count', args: (b) => [b.id, b.version, JSON.stringify(b.answers ?? {})], as: 'count' },
+  '/api/counts/reject': { fn: 'reject_count', args: (b) => [b.id, b.version], as: 'count' },
+  // Settings → Inventory → Count approval. Admin-only (owner, Q110).
+  '/api/count-approval/set': {
+    fn: 'set_count_approval_by_another', args: (b) => [b.version, b.on], as: 'setting', adminOnly: true,
+  },
   // Settings → Inventory → Working day (#81 story 28). Admin-only: the
   // window decides when the app asks "before or after the count?" (design Q4).
   '/api/working-day/set': {
@@ -178,7 +187,12 @@ const SETTINGS_LISTS = {
             LEFT JOIN inv.lvl_depth_thresholds t ON t.depth = d.depth
            ORDER BY pg_catalog.array_position(ARRAY['9-1/2', '11-7/8', '14', '16', '18', '20', '22', '24'], d.depth), d.depth`,
   },
-  // Everyone reads it; only an admin changes it (/api/working-day/set).
+  // Everyone reads them; only an admin changes them (/api/working-day/set,
+  // /api/count-approval/set).
+  '/api/count-approval': {
+    as: 'setting',
+    sql: "SELECT name, value, version FROM inv.settings WHERE name = 'count_approval_by_another'",
+  },
   '/api/working-day': {
     as: 'setting',
     sql: "SELECT name, value, version FROM inv.settings WHERE name = 'working_day_window'",
@@ -201,6 +215,13 @@ async function listCounts(database) {
   return rows.map((r) => r.count);
 }
 
+// Inventory → Count → a waiting count: the entries to ask about and each
+// counted item's on hand at the count's moment. null when there is no such count.
+async function readCountReview(database, id) {
+  if (!/^\d{1,18}$/.test(String(id))) return null;
+  return (await database.read('SELECT inv.count_review($1::bigint) AS review', [id]))[0].review;
+}
+
 async function listSettings(database, route) {
   const { as, sql } = SETTINGS_LISTS[route];
   return { [as]: await database.read(sql) };
@@ -215,5 +236,5 @@ async function saveCatalogChange(database, actor, route, body) {
 }
 
 module.exports = {
-  itemLabel, listCatalog, readFamilies, listPos, listCounts, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
+  itemLabel, listCatalog, readFamilies, listPos, listCounts, readCountReview, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
 };
