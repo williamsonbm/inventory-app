@@ -81,8 +81,10 @@ BEGIN
     RAISE EXCEPTION 'Someone else changed the working-day window since you opened this screen.'
       USING ERRCODE = 'IV409', DETAIL = inv.setting_json(was)::text;
   END IF;
-  IF p_days IS NULL OR p_days <> pg_catalog.trunc(p_days) OR p_days < 1 THEN
-    RAISE EXCEPTION 'The working-day window is a whole number of days, 1 or more.' USING ERRCODE = 'IV400';
+  -- At most 20 (owner, Q126): four working weeks, and inv.working_day_window_start
+  -- steps back one day at a time.
+  IF p_days IS NULL OR p_days <> pg_catalog.trunc(p_days) OR p_days < 1 OR p_days > 20 THEN
+    RAISE EXCEPTION 'The working-day window is a whole number of days, from 1 to 20.' USING ERRCODE = 'IV400';
   END IF;
   UPDATE inv.settings SET value = pg_catalog.to_jsonb(p_days::integer) WHERE name = 'working_day_window'
   RETURNING * INTO s;
@@ -558,6 +560,28 @@ CREATE TABLE inv.count_reflected (
   PRIMARY KEY (count_id, ledger_id)
 );
 
+-- An entry entered again with other numbers (inv.replaced_at) reverses the
+-- original and writes the new rows in one action, at the original's moment.
+-- A count that held the original holds each new row of the same item too,
+-- or on hand adds the new one on top of the pieces the count already holds
+-- (PR #89 review). Recorded when the row is written, so a re-entry of a
+-- re-entry is held as well; a trim's two rows each follow their own item.
+CREATE FUNCTION inv.hold_reentry() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  INSERT INTO inv.count_reflected (count_id, ledger_id)
+  SELECT r.count_id, NEW.id
+    FROM inv.ledger v JOIN inv.count_reflected r ON r.ledger_id = v.reverses_id
+   WHERE v.action_id = NEW.action_id AND v.item_id = NEW.item_id;
+  RETURN NULL;
+END
+$$;
+
+CREATE TRIGGER hold_reentry AFTER INSERT ON inv.ledger
+  FOR EACH ROW WHEN (NEW.reverses_id IS NULL) EXECUTE FUNCTION inv.hold_reentry();
+
 -- An item's on hand at p_at (design, "How the numbers are calculated"): its
 -- figure on the latest approved count that includes it, by moment, plus
 -- every ledger row after that moment up to p_at, except the entries that
@@ -702,14 +726,18 @@ CREATE TRIGGER check_approval BEFORE UPDATE OF status ON inv.counts
 -- ledger row after its moment, up to when it was submitted, but reversals,
 -- which follow the entry they undo. Oldest first, each naming its item and
 -- the action it came from. Approval asks of each one "Was this item counted
--- after this entry?"; the approval screen lists them (/api/counts/entries).
+-- after this entry?"; the approval screen lists them (/api/counts/review).
+-- net is its quantity with its reversal, if any, added: what a Yes adds to
+-- the app's number, so the page shows Matched as approval works it out.
 CREATE FUNCTION inv.count_entries(p_id bigint) RETURNS jsonb
 LANGUAGE sql STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
            'id', g.id, 'item_id', g.item_id, 'item', inv.item_label(i), 'action', a.action,
-           'quantity', g.quantity, 'at', g.effective_at) ORDER BY g.effective_at, g.id), '[]')
+           'quantity', g.quantity,
+           'net', g.quantity + coalesce((SELECT v.quantity FROM inv.ledger v WHERE v.reverses_id = g.id), 0),
+           'at', g.effective_at) ORDER BY g.effective_at, g.id), '[]')
     FROM inv.counts c
     JOIN inv.ledger g ON g.item_id IN (SELECT item_id FROM inv.count_lines WHERE count_id = c.id)
                      AND g.effective_at > c.counted_at AND g.effective_at <= c.submitted_at AND g.kind <> 'reversal'
@@ -765,6 +793,7 @@ DECLARE
   e jsonb;
   v_reason jsonb;
   v_answers jsonb := coalesce(p_answers -> 'counted_after', '{}');
+  v_entries jsonb;
 BEGIN
   a := inv.claim_action(p_actor, p_key, p_action, 'counts', p_id,
                         pg_catalog.jsonb_build_object('id', p_id, 'version', p_version, 'answers', p_answers));
@@ -790,7 +819,11 @@ BEGIN
     UPDATE inv.counts SET status = 'rejected', version = version + 1 WHERE id = p_id;
     RETURN inv.finish_action(a.log_id, p_id, was, inv.count_json(p_id));
   END IF;
-  FOR e IN SELECT x FROM pg_catalog.jsonb_array_elements(inv.count_entries(p_id)) x LOOP
+  IF pg_catalog.jsonb_typeof(v_answers) IS DISTINCT FROM 'object' THEN
+    RAISE EXCEPTION 'Answer "Was this item counted after this entry?" entry by entry.' USING ERRCODE = 'IV400';
+  END IF;
+  v_entries := inv.count_entries(p_id);
+  FOR e IN SELECT x FROM pg_catalog.jsonb_array_elements(v_entries) x LOOP
     IF pg_catalog.jsonb_typeof(v_answers -> (e ->> 'id')) IS DISTINCT FROM 'boolean' THEN
       RAISE EXCEPTION '%: answer "Was this item counted after this entry?" for the % of %.', e ->> 'item',
         CASE e ->> 'action' WHEN 'receive' THEN 'receipt' WHEN 'correct' THEN 'correction' ELSE e ->> 'action' END,
@@ -800,8 +833,9 @@ BEGIN
       INSERT INTO inv.count_reflected (count_id, ledger_id) VALUES (p_id, (e ->> 'id')::bigint);
     END IF;
   END LOOP;
+  -- Compared as text, so a key no entry could have is refused, never cast.
   IF EXISTS (SELECT FROM pg_catalog.jsonb_object_keys(v_answers) k
-              WHERE k !~ '^\d+$' OR NOT inv.count_entries(p_id) @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('id', k::bigint))) THEN
+              WHERE NOT EXISTS (SELECT FROM pg_catalog.jsonb_array_elements(v_entries) x WHERE x ->> 'id' = k)) THEN
     RAISE EXCEPTION 'Answer only for the entries listed.' USING ERRCODE = 'IV400';
   END IF;
   -- The app's number: on hand at the count's moment, plus the entries the
@@ -824,10 +858,8 @@ BEGIN
       RAISE EXCEPTION '% is Unmatched: counted %, the app had %. Pick a reason.', t.item, t.counted, t.expected
         USING ERRCODE = 'IV400';
     END IF;
-    IF NOT inv.is_whole_above_zero(v_reason)
-       OR NOT EXISTS (SELECT FROM inv.reasons WHERE id = (v_reason #>> '{}')::bigint AND active) THEN
-      RAISE EXCEPTION '%: pick the reason from Settings → Reasons.', t.item USING ERRCODE = 'IV400';
-    END IF;
+    -- One that is not a number is not on the list either.
+    PERFORM inv.checked_reason(CASE WHEN inv.is_whole_above_zero(v_reason) THEN (v_reason #>> '{}')::bigint END, t.item);
     UPDATE inv.count_lines SET reason_id = (v_reason #>> '{}')::bigint WHERE count_id = p_id AND item_id = t.item_id;
   END LOOP;
   -- Two approvals of the same family and month at the same moment both pass

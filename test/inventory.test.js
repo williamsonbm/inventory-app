@@ -707,10 +707,10 @@ test('a second person approves a waiting count from its review; the count-approv
   await goLive(ctx.db, 'hangers');
   await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
   const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
-  const waiting = async () => {
+  const waiting = async (loose = 5) => {
     const started = (await change(bob, '/api/counts/start', { family: 'hangers', kind: 'spot check' })).body.count;
     return (await change(bob, '/api/counts/submit',
-      { id: started.id, version: started.version, closes: null, lines: [{ item_id: hanger.id, loose: 5 }] })).body.count;
+      { id: started.id, version: started.version, closes: null, lines: [{ item_id: hanger.id, loose }] })).body.count;
   };
   const count = await waiting();
 
@@ -725,9 +725,8 @@ test('a second person approves a waiting count from its review; the count-approv
     { id: count.id, version: count.version, answers: { reasons: { [hanger.id]: reason } } });
   assert.equal(own.status, 422);
   assert.equal(own.body.error, 'You worked on this count, so a second person approves it.');
-  // LUS28 had nothing before the count, so its reason is optional (Q118).
-  const approved = await change(ctx, '/api/counts/approve',
-    { id: count.id, version: count.version, answers: { reasons: { [hanger.id]: reason } } });
+  // LUS28 had nothing before the count, so it needs no reason (Q118).
+  const approved = await change(ctx, '/api/counts/approve', { id: count.id, version: count.version, answers: {} });
   assert.equal(approved.status, 200, approved.body.error);
   assert.equal(approved.body.count.status, 'approved');
   assert.equal((await read(bob, '/api/items')).items[0].on_hand, 5);
@@ -743,15 +742,16 @@ test('a second person approves a waiting count from its review; the count-approv
   const denied = await post(ctx.base, '/api/count-approval/set', { key: crypto.randomUUID(), version: 1, on: false }, bob.cookie);
   assert.equal(denied.status, 403);
   assert.equal((await change(ctx, '/api/count-approval/set', { version: 1, on: false })).body.setting.value, false);
-  const third = await waiting();
-  const mine = await change(bob, '/api/counts/approve', { id: third.id, version: third.version, answers: {} });
+  const third = await waiting(4);
+  const mine = await change(bob, '/api/counts/approve',
+    { id: third.id, version: third.version, answers: { reasons: { [hanger.id]: reason } } });
   assert.equal(mine.status, 200, 'with the switch off, the counter approves');
 
   const { entries } = await read(ctx, '/api/activity');
   assert.deepEqual(entries.filter((e) => /^(approve|reject) count$/.test(e.action)).map((e) => [e.who, e.action, e.target, e.change]), [
-    ['Bob Ray', 'approve count', 'Hangers count', 'approved; lines: 5 LUS28'],
+    ['Bob Ray', 'approve count', 'Hangers count', 'approved; lines: 4 LUS28 (the app had 5; Damaged – scrapped)'],
     ['Ann Lee', 'reject count', 'Hangers count', 'rejected'],
-    ['Ann Lee', 'approve count', 'Hangers count', 'approved; lines: 5 LUS28 (the app had 0; Damaged – scrapped)'],
+    ['Ann Lee', 'approve count', 'Hangers count', 'approved; lines: 5 LUS28 (the app had 0)'],
   ]);
   assert.deepEqual(entries.filter((e) => e.action === 'set count approval').map((e) => [e.target, e.change]),
     [['Count approval', 'second person must approve: yes → no']]);

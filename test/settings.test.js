@@ -51,10 +51,13 @@ test('an admin sets the working-day window, logged was → now, and the window f
     ['0 days', () => set(2, 0), 'IV400'],
     ['a negative number of days', () => set(2, -1), 'IV400'],
     ['a fractional number of days', () => set(2, 1.5), 'IV400'],
+    ['a number past the database\'s whole numbers', () => set(2, 3000000000), 'IV400'],
     ['a stale version', () => set(1, 3), 'IV409'],
   ];
   for (const [label, attempt, code] of cases) await refused(attempt(), code, label);
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  assert.equal((await refused(set(2, 21), 'IV400', 'more than 20 days (Q126)')).message, 'The working-day window is a whole number of days, from 1 to 20.');
+  assert.equal((await set(2, 20)).value, 20, '20 is the most');
 });
 
 test('an admin switches off "a second person approves a count", logged was → now (owner, Q110, Q114)', async () => {

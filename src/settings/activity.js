@@ -186,11 +186,14 @@ const countLabel = (row) => (row.closes ? `${row.kind}, closes ${monthName(row.c
 // its lines as they now stand, when they changed: each with how it was
 // found when it was in packs ("157 LUS28 (3 cartons of 50 + 7 loose)"); a
 // line of loose pieces only is just its pieces ("0 HUS26").
+// An Unmatched count's number and reason, if it has one (Q118: some need none).
+const appHad = (c) => `the app had ${c.expected}${c.reason ? `; ${c.reason}` : ''}`;
+
 function describeCountChange(was, now) {
   const changes = [];
   if (now.status === 'rejected') return 'rejected';
   if (now.status === 'approved') {
-    const lines = now.lines.map((l) => `${l.quantity} ${l.item}${l.matched ? '' : ` (the app had ${l.expected}; ${l.reason})`}`);
+    const lines = now.lines.map((l) => `${l.quantity} ${l.item}${l.matched ? '' : ` (${appHad(l)})`}`);
     return `approved; lines: ${lines.join(', ')}`;
   }
   if (was.status !== now.status) changes.push('submitted for approval');
@@ -232,4 +235,4 @@ function describeChange(action, table, was, now) {
     .map((k) => `${k}: ${was[k]} → ${now[k]}`).join('; ');
 }
 
-module.exports = { readActivity, describeChange, howItCame, noted, countLabel, ENTRY_NAMES };
+module.exports = { readActivity, describeChange, howItCame, noted, countLabel, appHad, ENTRY_NAMES };

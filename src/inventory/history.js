@@ -9,7 +9,7 @@
 // per material (owner, 2026-10-04), one item likely gets well under a few
 // hundred rows a year.
 
-const { describeChange, howItCame, noted, countLabel, ENTRY_NAMES } = require('../settings/activity.js');
+const { describeChange, howItCame, noted, countLabel, appHad, ENTRY_NAMES } = require('../settings/activity.js');
 
 // Each ledger row of the item, with what its detail is made from. A trim's
 // other row (pair: a correction is one row, a trim two) gives the other length; a reversal's original (o), the
@@ -63,7 +63,7 @@ const COUNT_ROWS = `
 
 // A count's line in words: what was counted against the app's number.
 function describeCount(c) {
-  const result = c.counted === c.expected ? 'Matched' : `the app had ${c.expected}${c.reason ? `; ${c.reason}` : ''}`;
+  const result = c.counted === c.expected ? 'Matched' : appHad(c);
   return `${countLabel(c)}: counted ${c.counted}, ${result}; counted by ${c.counted_by}`;
 }
 

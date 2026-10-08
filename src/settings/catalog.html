@@ -201,7 +201,7 @@
       head: '<tr><th>Working day window</th></tr>',
       rows() {
         return [this.admin
-          ? '<tr><td>' + input('type="number" min="1" step="1" style="width:6em" data-days aria-label="Working day window, in days"', this.setting.value) + '</td></tr>'
+          ? '<tr><td>' + input('type="number" min="1" max="20" step="1" style="width:6em" data-days aria-label="Working day window, in days"', this.setting.value) + '</td></tr>'
           : '<tr><td>' + esc(String(this.setting.value)) + ' working day(s)</td></tr>'];
       },
       onChange(target) {

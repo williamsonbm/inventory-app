@@ -375,7 +375,7 @@
     const byItem = new Map();
     for (const l of review.count.lines) byItem.set(l.item_id, { id: l.item_id, name: l.item, counted: (byItem.get(l.item_id)?.counted ?? 0) + l.quantity });
     return [...byItem.values()].map((r) => {
-      const yes = review.entries.filter((en) => en.item_id === r.id && review.answers[en.id] === true).reduce((n, en) => n + en.quantity, 0);
+      const yes = review.entries.filter((en) => en.item_id === r.id && review.answers[en.id] === true).reduce((n, en) => n + en.net, 0);
       return { ...r, app: review.on_hand[r.id] + yes, matched: r.counted === review.on_hand[r.id] + yes,
         optional: review.nothing_before.includes(r.id) };
     });
@@ -455,7 +455,7 @@
     const body = { key: review.key ??= crypto.randomUUID(), id: count.id, version: count.version };
     if (kind === 'approve') body.answers = { counted_after: review.answers, reasons: reasonsFor };
     try {
-      const reply = (await send('/api/counts/' + kind, body)).count;
+      const reply = (await send(kind === 'approve' ? '/api/counts/approve' : '/api/counts/reject', body)).count;
       counts = counts.filter((c) => c.id !== count.id);
       closeReview();
       say('The ' + reply.family_name + ' count was ' + (kind === 'approve' ? 'approved by ' + reply.approved_by + '. On hand now starts from it.' : 'rejected.'), 'ok');
