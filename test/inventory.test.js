@@ -668,6 +668,39 @@ test('anyone starts, saves and submits a count; Count lists it, and the Activity
   assert.deepEqual((await read(ctx, '/api/activity?family=plates')).entries, [], 'a count shows under its own family only');
 });
 
+test('History lists each approved count of the item, with what it changed; a rejected one is not there (story 55; Q120)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Simpson' })).body.supplier;
+  await goLive(ctx.db, 'hangers');
+  await change(ctx, '/api/receipts/receive', { po_id: null, po_version: null, supplier_id: supplier.id,
+    lines: [{ item_id: hanger.id, quantity: 40 }] });
+  await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
+  const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
+  const counted = async (loose) => {
+    const started = (await change(bob, '/api/counts/start', { family: 'hangers', kind: 'spot check' })).body.count;
+    return (await change(bob, '/api/counts/submit',
+      { id: started.id, version: started.version, closes: null, lines: [{ item_id: hanger.id, loose }] })).body.count;
+  };
+  const { reasons } = await read(ctx, '/api/reasons');
+  const unmatched = await counted(38);
+  await change(ctx, '/api/counts/approve', { id: unmatched.id, version: unmatched.version,
+    answers: { reasons: { [hanger.id]: reasons.find((r) => r.text === 'Unexplained').id } } });
+  const rejected = await counted(1);
+  await change(ctx, '/api/counts/reject', { id: rejected.id, version: rejected.version });
+  const matched = await counted(38);
+  await change(ctx, '/api/counts/approve', { id: matched.id, version: matched.version, answers: {} });
+
+  const { entries } = await read(ctx, `/api/items/history?id=${hanger.id}`);
+  assert.deepEqual(entries.map((e) => [e.action, e.who, e.change, e.detail, e.id]), [
+    ['approve count', 'Ann Lee', 0, 'spot check: counted 38, Matched; counted by Bob Ray', undefined],
+    ['approve count', 'Ann Lee', -2, 'spot check: counted 38, the app had 40; Unexplained; counted by Bob Ray', undefined],
+    ['receive', 'Ann Lee', 40, 'Simpson, no PO', entries[2]?.id],
+    ['add item', 'Ann Lee', null, 'added: Special Order, no threshold', undefined],
+  ], 'a count has no id, so the page offers no Reverse on it');
+  assert.equal(Date.parse(entries[1].at), Date.parse(unmatched.counted_at), 'a count sits at its moment, when it was true');
+});
+
 test('a second person approves a waiting count from its review; the count-approval switch is the admin\'s, and the Activity Log says each step (stories 69–76; Q110, Q113)', async () => {
   const ctx = await withAdmin();
   const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;

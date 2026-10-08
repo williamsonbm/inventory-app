@@ -371,7 +371,8 @@
   // History: newest first. Change is the change to on hand in pieces; a
   // settings change has none. A receipt line, a correction or a trim not yet
   // reversed has "Reverse…" while its family is live; one reversed says so
-  // (stories 42, 49). A reversal itself is never reversed (Q44).
+  // (stories 42, 49). A reversal itself is never reversed (Q44), nor is an
+  // approved count (Q120): the server sends neither with an id.
   function historyTable(i) {
     const canReverse = (e) => e.id && !e.reversed && !e.reversal && family(i.family).live;
     const last = (e) => (e.reversed ? '<span class="chip">reversed</span>'

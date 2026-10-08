@@ -114,7 +114,7 @@ const ADDED = {
   receipts: describeReceipt,
   ledger: (row) => `on hand ${signed(row.quantity)}, ${row.reason}${noted(row)}`,
   reverse: (row) => `reversal of ${reversalLines(row)}${noted(row)}`,
-  counts: (row) => (row.closes ? `${row.kind}, closes ${monthName(row.closes)}` : row.kind),
+  counts: (row) => countLabel(row),
   trim: (row) => `${row.boards} trimmed to ${row.length_ft}′`
     + `${row.item_added ? ' (new item, Non-Stock)' : row.item_unretired ? ' (put back in use)' : ''}${noted(row)}`,
 };
@@ -178,6 +178,9 @@ function describePoChange(was, now) {
 const monthName = (month) => new Date(`${month}-01T00:00:00Z`)
   .toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
+// A count by its kind: "spot check", or "monthly, closes September 2026".
+const countLabel = (row) => (row.closes ? `${row.kind}, closes ${monthName(row.closes)}` : row.kind);
+
 // What a decision did to a count (approved: its lines with the app's number
 // and the reason where unmatched; or rejected), else what a save or submit did: submitted, the month it closes, and
 // its lines as they now stand, when they changed: each with how it was
@@ -229,4 +232,4 @@ function describeChange(action, table, was, now) {
     .map((k) => `${k}: ${was[k]} → ${now[k]}`).join('; ');
 }
 
-module.exports = { readActivity, describeChange, howItCame, noted, ENTRY_NAMES };
+module.exports = { readActivity, describeChange, howItCame, noted, countLabel, ENTRY_NAMES };
