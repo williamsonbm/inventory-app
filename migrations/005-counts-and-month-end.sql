@@ -104,7 +104,8 @@ GRANT EXECUTE ON FUNCTION inv.set_working_day_window(bigint, uuid, integer, nume
 -- (story 59, ADR 0002), so submitting or approving it later changes nothing
 -- about when it is true. closes is the month a monthly count closes, as its
 -- first day ("closes: September" is 2026-09-01); a spot check closes none
--- (Q104). Like a PO, the count and its lines share one version (S41).
+-- (Q104). Like a PO, the count and its lines share one version (S41). A
+-- rejected count records no approver: its log row says who rejected it.
 CREATE TABLE inv.counts (
   id           bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   family       text NOT NULL REFERENCES inv.families (code),
@@ -114,10 +115,14 @@ CREATE TABLE inv.counts (
   counted_at   timestamptz NOT NULL,
   submitted_at timestamptz,
   counted_by   bigint NOT NULL REFERENCES inv.users (id),
+  approved_at  timestamptz,
+  approved_by  bigint REFERENCES inv.users (id),
   version      integer NOT NULL DEFAULT 1,
   CHECK ((kind = 'monthly') = (closes IS NOT NULL)),
   CHECK ((status = 'draft') = (submitted_at IS NULL)),
-  CHECK (submitted_at >= counted_at)
+  CHECK (submitted_at >= counted_at),
+  CHECK ((status = 'approved') = (approved_at IS NOT NULL) AND (status = 'approved') = (approved_by IS NOT NULL)),
+  CHECK (approved_at >= submitted_at)
 );
 
 -- What was found for one item: packs × pack size + loose (story 62), which
@@ -125,6 +130,11 @@ CREATE TABLE inv.counts (
 -- item sitting in two pack sizes has a line for each (S74). Each line keeps
 -- its own copy of the pack size and its kind, as a receipt line does (Q13).
 -- A line with neither packs nor loose is a row left blank, never saved.
+-- expected is the app's number for the item at the count's moment, worked
+-- out at approval and then kept, as the record of what the approver saw
+-- (design table 13, story 70). Every line of one item keeps the same number:
+-- Matched is the item's lines added up against it. reason_id explains an
+-- Unmatched item, picked by the approver (story 71, Q111), on each of its lines.
 CREATE TABLE inv.count_lines (
   id        bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   count_id  bigint NOT NULL REFERENCES inv.counts (id),
@@ -134,9 +144,18 @@ CREATE TABLE inv.count_lines (
   pack_kind text,
   loose     integer CHECK (loose >= 0),
   quantity  integer NOT NULL GENERATED ALWAYS AS (coalesce(packs * pack_size, 0) + coalesce(loose, 0)) STORED,
+  expected  integer,
+  reason_id bigint REFERENCES inv.reasons (id),
+  CHECK (reason_id IS NULL OR expected IS NOT NULL),
   CHECK ((packs IS NULL) = (pack_size IS NULL) AND (packs IS NULL) = (pack_kind IS NULL)),
   CHECK (packs IS NOT NULL OR loose IS NOT NULL)
 );
+
+-- At most one approved monthly count per family per month (design, "Rules
+-- the database enforces"): the one that closes it. inv.decide_count gives
+-- the plain refusal; this is the guarantee.
+CREATE UNIQUE INDEX counts_one_approved_monthly ON inv.counts (family, closes)
+  WHERE status = 'approved' AND kind = 'monthly';
 
 CREATE INDEX count_lines_count_idx ON inv.count_lines (count_id);
 CREATE INDEX count_lines_item_idx ON inv.count_lines (item_id);
@@ -174,9 +193,12 @@ AS $$
 $$;
 
 -- A count with its lines, in the shape every count function returns and
--- logs. family_name and counted_by name the family and who started it, and
--- each line carries its item's name, so the Activity Log names them as they
--- were; closes is "YYYY-MM".
+-- logs. family_name, counted_by and approved_by name the family and the
+-- people, and each line carries its item's name, so the Activity Log names
+-- them as they were; closes is "YYYY-MM". Once approved, each line carries
+-- the app's number for its item (expected), whether the item's lines add
+-- up to it (matched), and the reason for an Unmatched item; before that all
+-- three are blank.
 -- Lines go without their ids: a draft save writes them anew, so a save that
 -- gives the same lines again is the same count, and inv.finish_action
 -- refuses it as changing nothing.
@@ -187,11 +209,15 @@ AS $$
   SELECT pg_catalog.jsonb_build_object(
     'id', c.id, 'version', c.version, 'family', c.family, 'family_name', f.name, 'kind', c.kind, 'status', c.status,
     'closes', pg_catalog.to_char(c.closes, 'YYYY-MM'), 'counted_at', c.counted_at, 'counted_by', u.name,
+    'approved_by', (SELECT name FROM inv.users WHERE id = c.approved_by),
     'lines', (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
                 'item_id', l.item_id, 'item', inv.item_label(i), 'packs', l.packs, 'pack_size', l.pack_size,
-                'pack_kind', l.pack_kind, 'loose', l.loose, 'quantity', l.quantity) ORDER BY l.id), '[]')
-                FROM inv.count_lines l JOIN inv.items i ON i.id = l.item_id
-               WHERE l.count_id = c.id))
+                'pack_kind', l.pack_kind, 'loose', l.loose, 'quantity', l.quantity,
+                'expected', l.expected, 'matched', l.item_quantity = l.expected,
+                'reason', (SELECT text FROM inv.reasons WHERE id = l.reason_id)) ORDER BY l.id), '[]')
+                FROM (SELECT x.*, pg_catalog.sum(x.quantity) OVER (PARTITION BY x.item_id) AS item_quantity
+                        FROM inv.count_lines x WHERE x.count_id = c.id) l
+                JOIN inv.items i ON i.id = l.item_id))
     FROM inv.counts c JOIN inv.users u ON u.id = c.counted_by JOIN inv.families f ON f.code = c.family
    WHERE c.id = p_id
 $$;
@@ -322,7 +348,10 @@ $$;
 
 -- A count line's item is of its count's family (Q103: one family's sheet),
 -- whatever writes the row, and a count's lines change only while it is a
--- draft: a submitted count is what its approver judges.
+-- draft: a submitted count is what its approver judges. The one change after
+-- that is approval's, while the count still waits: it writes the app's
+-- number and the reason on each line, and nothing else. An approved or rejected count's
+-- lines never change (S75): only a correction changes an approved count.
 CREATE FUNCTION inv.check_count_line() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp
@@ -333,6 +362,12 @@ DECLARE
   l inv.count_lines := CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 BEGIN
   SELECT * INTO c FROM inv.counts WHERE id = l.count_id;
+  -- quantity is left out: a BEFORE trigger sees a generated column blank.
+  IF c.status = 'waiting' AND TG_OP = 'UPDATE'
+     AND (pg_catalog.to_jsonb(NEW) - '{expected,reason_id,quantity}'::text[])
+       = (pg_catalog.to_jsonb(OLD) - '{expected,reason_id,quantity}'::text[]) THEN
+    RETURN NEW;
+  END IF;
   IF c.status <> 'draft' THEN
     RAISE EXCEPTION 'This count is already submitted, so its lines stay as they are.' USING ERRCODE = 'IV422';
   END IF;
@@ -506,3 +541,288 @@ $$;
 CREATE TRIGGER check_one_waiting_count AFTER UPDATE OF status ON inv.counts
   FOR EACH ROW WHEN (NEW.status = 'waiting' AND OLD.status <> 'waiting')
   EXECUTE FUNCTION inv.check_one_waiting_count();
+
+-- Group C (stories 69–76, 80): approve or reject a count, and on hand from
+-- approved counts. Source: docs/database-design.md tables 12–13, "How the
+-- numbers are calculated" (On hand), "Rules the database enforces"; ADR
+-- 0002 (a count is true at its moment, never at approval); owner, Q110–Q114
+-- (2026-10-08).
+
+-- The entries made during a count that its approver marked as already in
+-- it: "Was this item counted after this entry?" Yes (Q33, S63, S70). A
+-- table, not a column on count_lines: one item may have several such
+-- entries. On hand leaves them out, and the reversal of one with them.
+CREATE TABLE inv.count_reflected (
+  count_id  bigint NOT NULL REFERENCES inv.counts (id),
+  ledger_id bigint NOT NULL REFERENCES inv.ledger (id),
+  PRIMARY KEY (count_id, ledger_id)
+);
+
+-- An item's on hand at p_at (design, "How the numbers are calculated"): its
+-- figure on the latest approved count that includes it, by moment, plus
+-- every ledger row after that moment up to p_at, except the entries that
+-- count's approval marked as already in it, and their reversals (Q33). With
+-- no approved count, the sum of its ledger rows up to p_at. inv.item_figures asks for 'infinity';
+-- approval asks for the count's own moment (ADR 0002).
+CREATE FUNCTION inv.on_hand_at(p_item_id bigint, p_at timestamptz) RETURNS integer
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  WITH base AS (
+    SELECT c.id, c.counted_at, pg_catalog.sum(l.quantity) AS quantity
+      FROM inv.count_lines l JOIN inv.counts c ON c.id = l.count_id
+     WHERE l.item_id = p_item_id AND c.status = 'approved' AND c.counted_at <= p_at
+     GROUP BY c.id
+     ORDER BY c.counted_at DESC, c.id DESC
+     LIMIT 1)
+  SELECT (coalesce((SELECT quantity FROM base), 0)
+          + coalesce((SELECT pg_catalog.sum(g.quantity) FROM inv.ledger g
+                       WHERE g.item_id = p_item_id AND g.effective_at <= p_at
+                         AND g.effective_at > coalesce((SELECT counted_at FROM base), '-infinity')
+                         AND NOT EXISTS (SELECT FROM inv.count_reflected r
+                                          WHERE r.count_id = (SELECT id FROM base)
+                                            AND r.ledger_id IN (g.id, g.reverses_id))), 0))::integer
+$$;
+
+-- 004's view, with on hand from inv.on_hand_at (part 3 starts it from the
+-- latest approved count, as 004 said it would). Everything else as 004.
+CREATE OR REPLACE VIEW inv.item_figures AS
+SELECT d.item_id, d.incoming, d.on_hand, d.depth_lf,
+       CASE WHEN d.on_hand < 0 THEN 'Short'
+            WHEN d.on_hand <= d.threshold OR d.depth_lf <= t.threshold_lf THEN 'Low'
+            ELSE 'OK' END AS reorder
+  FROM (SELECT f.*,
+               CASE WHEN f.family = 'lvl'
+                    THEN pg_catalog.sum(f.on_hand * f.length_ft) OVER (PARTITION BY f.family, f.size)::integer END AS depth_lf
+          FROM (SELECT i.id AS item_id, i.family, i.size, i.length_ft, i.threshold,
+                       coalesce(pg_catalog.sum(GREATEST(l.ordered - inv.received(l.id), 0)), 0)::integer AS incoming,
+                       inv.on_hand_at(i.id, 'infinity') AS on_hand
+                  FROM inv.items i
+                  LEFT JOIN inv.po_lines l ON l.item_id = i.id AND l.closed_reason_id IS NULL
+                 GROUP BY i.id) f) d
+  LEFT JOIN inv.lvl_depth_thresholds t ON d.family = 'lvl' AND t.depth = d.size;
+
+-- inv.item_figures works out on hand with inv.on_hand_at, as the app's login.
+GRANT EXECUTE ON FUNCTION inv.on_hand_at(bigint, timestamptz) TO inv_app;
+
+INSERT INTO inv.actions (name, admin_only) VALUES ('approve count', false), ('reject count', false);
+
+-- Whether a count needs a second person to approve it (owner, Q110, Q114):
+-- on, nobody who started, saved or submitted the count approves it; off,
+-- anyone may, the counter included. Seeded on, the design's rule (S5).
+INSERT INTO inv.settings (name, value) VALUES ('count_approval_by_another', 'true');
+
+INSERT INTO inv.actions (name, admin_only) VALUES ('set count approval', true);
+
+-- Settings → Inventory → Count approval. Everyone reads it; only an admin
+-- changes it (owner, Q110).
+CREATE FUNCTION inv.set_count_approval_by_another(p_actor bigint, p_key uuid, p_version integer, p_on boolean)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  was inv.settings;
+  s inv.settings;
+BEGIN
+  a := inv.claim_action(p_actor, p_key, 'set count approval', 'settings', NULL,
+                        pg_catalog.jsonb_build_object('version', p_version, 'on', p_on));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  SELECT * INTO was FROM inv.settings WHERE name = 'count_approval_by_another' FOR UPDATE;
+  IF p_version IS DISTINCT FROM was.version THEN
+    RAISE EXCEPTION 'Someone else changed count approval since you opened this screen.'
+      USING ERRCODE = 'IV409', DETAIL = inv.setting_json(was)::text;
+  END IF;
+  IF p_on IS NULL THEN
+    RAISE EXCEPTION 'Count approval by a second person is on or off.' USING ERRCODE = 'IV400';
+  END IF;
+  UPDATE inv.settings SET value = pg_catalog.to_jsonb(p_on) WHERE name = 'count_approval_by_another'
+  RETURNING * INTO s;
+  RETURN inv.finish_action(a.log_id, NULL, inv.setting_json(was), inv.setting_json(s));
+END
+$$;
+
+GRANT EXECUTE ON FUNCTION inv.set_count_approval_by_another(bigint, uuid, integer, boolean) TO inv_app;
+
+-- Whatever writes the row (design, "Rules the database enforces"): while
+-- the setting is on, a count's approver is nobody who started, saved or
+-- submitted it (S5; owner, Q113); and every line of an approved count has
+-- the app's number, and a reason when its item is Unmatched (S9). Who worked
+-- on a count is in its log rows, and Matched spans an item's lines, so this
+-- is a trigger, not a CHECK. inv.approve_count gives the plain refusals.
+CREATE FUNCTION inv.check_count_approval() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF (SELECT (value)::boolean FROM inv.settings WHERE name = 'count_approval_by_another')
+     AND EXISTS (SELECT FROM inv.activity_log
+                  WHERE target_table = 'counts' AND target_id = NEW.id AND actor_id = NEW.approved_by
+                    AND action IN ('start count', 'save count', 'submit count')) THEN
+    RAISE EXCEPTION 'You worked on this count, so a second person approves it.' USING ERRCODE = 'IV422';
+  END IF;
+  IF EXISTS (SELECT FROM (SELECT l.expected, l.reason_id, pg_catalog.sum(l.quantity) OVER (PARTITION BY l.item_id) AS counted
+                            FROM inv.count_lines l WHERE l.count_id = NEW.id) x
+              WHERE x.expected IS NULL OR (x.counted <> x.expected AND x.reason_id IS NULL)) THEN
+    RAISE EXCEPTION 'Every line of an approved count has the app''s number, and a reason when Unmatched.'
+      USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_approval BEFORE UPDATE OF status ON inv.counts
+  FOR EACH ROW WHEN (NEW.status = 'approved') EXECUTE FUNCTION inv.check_count_approval();
+
+-- The entries made during a count for the items it counts (Q33): every
+-- ledger row after its moment, up to when it was submitted, but reversals,
+-- which follow the entry they undo. Oldest first, each naming its item and
+-- the action it came from. Approval asks of each one "Was this item counted
+-- after this entry?"; the approval screen lists them (/api/counts/entries).
+CREATE FUNCTION inv.count_entries(p_id bigint) RETURNS jsonb
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+           'id', g.id, 'item_id', g.item_id, 'item', inv.item_label(i), 'action', a.action,
+           'quantity', g.quantity, 'at', g.effective_at) ORDER BY g.effective_at, g.id), '[]')
+    FROM inv.counts c
+    JOIN inv.ledger g ON g.item_id IN (SELECT item_id FROM inv.count_lines WHERE count_id = c.id)
+                     AND g.effective_at > c.counted_at AND g.effective_at <= c.submitted_at AND g.kind <> 'reversal'
+    JOIN inv.items i ON i.id = g.item_id
+    JOIN inv.activity_log a ON a.id = g.action_id
+   WHERE c.id = p_id
+$$;
+
+GRANT EXECUTE ON FUNCTION inv.count_entries(bigint) TO inv_app;
+
+-- Approve and Reject, one decision each on a waiting count. Refused when the
+-- count changed since the screen read it (S41), or when it is not waiting.
+-- p_action 'approve count' (stories 69–73), final after the page's warning
+-- (S62), writes on each line the app's number for its
+-- item at the count's moment, which on hand then starts from (ADR 0002).
+-- An item whose lines do not add up to that number is Unmatched and needs a
+-- reason from Settings → Reasons (story 71, Q111); a Matched one takes none.
+-- 'reject count' (story 74) only ends the count: it never becomes on hand
+-- (S6), and the recount is a new count with its own moment (Q112).
+CREATE FUNCTION inv.decide_count(p_actor bigint, p_key uuid, p_action text, p_id bigint, p_version integer, p_answers jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  c inv.counts;
+  was jsonb;
+  t record;
+  e jsonb;
+  v_reason jsonb;
+  v_answers jsonb := coalesce(p_answers -> 'counted_after', '{}');
+BEGIN
+  a := inv.claim_action(p_actor, p_key, p_action, 'counts', p_id,
+                        pg_catalog.jsonb_build_object('id', p_id, 'version', p_version, 'answers', p_answers));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  SELECT * INTO c FROM inv.counts WHERE id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'That count is not on the list.' USING ERRCODE = 'IV400';
+  END IF;
+  was := inv.count_json(p_id);
+  IF p_version IS DISTINCT FROM c.version THEN
+    RAISE EXCEPTION 'Someone else changed this count since you opened this screen.'
+      USING ERRCODE = 'IV409', DETAIL = was::text;
+  END IF;
+  IF c.status <> 'waiting' THEN
+    RAISE EXCEPTION 'Only a count waiting for approval can be approved or rejected.' USING ERRCODE = 'IV422';
+  END IF;
+  IF p_action = 'approve count' AND EXISTS (
+       SELECT FROM inv.counts WHERE family = c.family AND closes = c.closes AND kind = 'monthly' AND status = 'approved') THEN
+    RAISE EXCEPTION '% already has an approved monthly count closing %.', was ->> 'family_name',
+      pg_catalog.to_char(c.closes, 'FMMonth YYYY') USING ERRCODE = 'IV422';
+  END IF;
+  IF p_action = 'reject count' THEN
+    UPDATE inv.counts SET status = 'rejected', version = version + 1 WHERE id = p_id;
+    RETURN inv.finish_action(a.log_id, p_id, was, inv.count_json(p_id));
+  END IF;
+  FOR e IN SELECT x FROM pg_catalog.jsonb_array_elements(inv.count_entries(p_id)) x LOOP
+    IF pg_catalog.jsonb_typeof(v_answers -> (e ->> 'id')) IS DISTINCT FROM 'boolean' THEN
+      RAISE EXCEPTION '%: answer "Was this item counted after this entry?" for the % of %.', e ->> 'item',
+        CASE e ->> 'action' WHEN 'receive' THEN 'receipt' WHEN 'correct' THEN 'correction' ELSE e ->> 'action' END,
+        e ->> 'quantity' USING ERRCODE = 'IV400';
+    END IF;
+    IF (v_answers ->> (e ->> 'id'))::boolean THEN
+      INSERT INTO inv.count_reflected (count_id, ledger_id) VALUES (p_id, (e ->> 'id')::bigint);
+    END IF;
+  END LOOP;
+  IF EXISTS (SELECT FROM pg_catalog.jsonb_object_keys(v_answers) k
+              WHERE k !~ '^\d+$' OR NOT inv.count_entries(p_id) @> pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('id', k::bigint))) THEN
+    RAISE EXCEPTION 'Answer only for the entries listed.' USING ERRCODE = 'IV400';
+  END IF;
+  -- The app's number: on hand at the count's moment, plus the entries the
+  -- item was counted after (and their reversals), which the count holds.
+  UPDATE inv.count_lines l SET expected = inv.on_hand_at(l.item_id, c.counted_at)
+         + coalesce((SELECT pg_catalog.sum(g.quantity) FROM inv.ledger g JOIN inv.count_reflected r
+                       ON r.count_id = p_id AND r.ledger_id IN (g.id, g.reverses_id)
+                      WHERE g.item_id = l.item_id), 0)
+   WHERE l.count_id = p_id;
+  FOR t IN SELECT l.item_id, inv.item_label(i) AS item, pg_catalog.sum(l.quantity) AS counted, pg_catalog.min(l.expected) AS expected
+             FROM inv.count_lines l JOIN inv.items i ON i.id = l.item_id
+            WHERE l.count_id = p_id GROUP BY l.item_id, i.id ORDER BY pg_catalog.min(l.id) LOOP
+    v_reason := p_answers -> 'reasons' -> t.item_id::text;
+    IF t.counted = t.expected AND inv.is_given(v_reason) THEN
+      RAISE EXCEPTION '% is Matched, so it takes no reason.', t.item USING ERRCODE = 'IV400';
+    END IF;
+    CONTINUE WHEN t.counted = t.expected;
+    IF NOT inv.is_given(v_reason) THEN
+      RAISE EXCEPTION '% is Unmatched: counted %, the app had %. Pick a reason.', t.item, t.counted, t.expected
+        USING ERRCODE = 'IV400';
+    END IF;
+    IF NOT inv.is_whole_above_zero(v_reason)
+       OR NOT EXISTS (SELECT FROM inv.reasons WHERE id = (v_reason #>> '{}')::bigint AND active) THEN
+      RAISE EXCEPTION '%: pick the reason from Settings → Reasons.', t.item USING ERRCODE = 'IV400';
+    END IF;
+    UPDATE inv.count_lines SET reason_id = (v_reason #>> '{}')::bigint WHERE count_id = p_id AND item_id = t.item_id;
+  END LOOP;
+  UPDATE inv.counts SET status = 'approved', approved_at = pg_catalog.now(), approved_by = p_actor, version = version + 1
+   WHERE id = p_id;
+  RETURN inv.finish_action(a.log_id, p_id, was, inv.count_json(p_id));
+END
+$$;
+
+-- Inventory → Count → a waiting count → Approve.
+--   p_answers  {"reasons": {item id: reason id}}, for each Unmatched item.
+CREATE FUNCTION inv.approve_count(p_actor bigint, p_key uuid, p_id bigint, p_version integer, p_answers jsonb)
+RETURNS jsonb
+LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$ SELECT inv.decide_count(p_actor, p_key, 'approve count', p_id, p_version, p_answers) $$;
+
+-- Inventory → Count → a waiting count → Reject.
+CREATE FUNCTION inv.reject_count(p_actor bigint, p_key uuid, p_id bigint, p_version integer)
+RETURNS jsonb
+LANGUAGE sql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$ SELECT inv.decide_count(p_actor, p_key, 'reject count', p_id, p_version, NULL) $$;
+
+GRANT EXECUTE ON FUNCTION inv.reject_count(bigint, uuid, bigint, integer) TO inv_app;
+GRANT EXECUTE ON FUNCTION inv.approve_count(bigint, uuid, bigint, integer, jsonb) TO inv_app;
+
+-- An approved or rejected count never changes, and no count is ever
+-- removed, whatever writes the row (S75; design, "Nothing is lost"): only a
+-- correction changes an approved count. Its lines are held by
+-- inv.check_count_line.
+CREATE FUNCTION inv.check_count_decided() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF TG_OP = 'DELETE' OR OLD.status IN ('approved', 'rejected') THEN
+    RAISE EXCEPTION 'This count is % and stays as it is.', CASE WHEN TG_OP = 'DELETE' THEN 'on the record' ELSE OLD.status END
+      USING ERRCODE = 'IV422';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_decided BEFORE UPDATE OR DELETE ON inv.counts
+  FOR EACH ROW EXECUTE FUNCTION inv.check_count_decided();

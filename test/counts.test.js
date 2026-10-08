@@ -11,7 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, as, firstUser, call, goLive, logRows, figure, refused } = require('./support/database.js');
+const { freshDatabase, as, firstUser, call, goLive, logRows, figure, reasonId, refused } = require('./support/database.js');
 
 // A database with Ann and one hanger, with hangers live.
 async function withHanger() {
@@ -48,7 +48,7 @@ test('starting a count makes a draft timed now, closing last month, and a draft 
   assert.ok(Math.abs(Date.now() - takenAt) < 60_000, `the moment is when the count started: ${count.counted_at}`);
   assert.deepEqual(count, {
     id: count.id, version: 1, family: 'hangers', family_name: 'Hangers', kind: 'monthly', status: 'draft',
-    closes: await monthBefore(db, count.counted_at), counted_at: count.counted_at, counted_by: 'Ann Lee', lines: [],
+    closes: await monthBefore(db, count.counted_at), counted_at: count.counted_at, counted_by: 'Ann Lee', approved_by: null, lines: [],
   });
   const last = (await logRows(db)).at(-1);
   assert.deepEqual([last.action, last.target_table, Number(last.target_id), last.new_value],
@@ -109,9 +109,9 @@ test('a draft keeps several lines per item, packs × pack size + loose, 0 for an
   assert.deepEqual(saved, {
     ...count, version: 2, closes: '2026-08',
     lines: [
-      { item_id: hanger.id, item: 'LUS28', packs: 3, pack_size: 50, pack_kind: 'carton', loose: null, quantity: 150 },
-      { item_id: hanger.id, item: 'LUS28', packs: 2, pack_size: 25, pack_kind: 'carton', loose: 7, quantity: 57 },
-      { item_id: other.id, item: 'HUS26', packs: null, pack_size: null, pack_kind: null, loose: 0, quantity: 0 },
+      { item_id: hanger.id, item: 'LUS28', packs: 3, pack_size: 50, pack_kind: 'carton', loose: null, quantity: 150, expected: null, matched: null, reason: null },
+      { item_id: hanger.id, item: 'LUS28', packs: 2, pack_size: 25, pack_kind: 'carton', loose: 7, quantity: 57, expected: null, matched: null, reason: null },
+      { item_id: other.id, item: 'HUS26', packs: null, pack_size: null, pack_kind: null, loose: 0, quantity: 0, expected: null, matched: null, reason: null },
     ],
   });
   const last = (await logRows(db)).at(-1);
@@ -179,7 +179,7 @@ test('submitting saves the lines and waits for approval, keeping the moment the 
   const waiting = await submit(db, ann, count, [{ item_id: hanger.id, loose: 40 }]);
   assert.deepEqual(waiting, {
     ...count, version: 2, status: 'waiting',
-    lines: [{ item_id: hanger.id, item: 'LUS28', packs: null, pack_size: null, pack_kind: null, loose: 40, quantity: 40 }],
+    lines: [{ item_id: hanger.id, item: 'LUS28', packs: null, pack_size: null, pack_kind: null, loose: 40, quantity: 40, expected: null, matched: null, reason: null }],
   });
   const last = (await logRows(db)).at(-1);
   assert.deepEqual([last.action, last.old_value, last.new_value], ['submit count', count, waiting]);
@@ -245,4 +245,185 @@ test('an item on a count keeps its name, so the count goes on naming it (story 1
   const err = await refused(call(db, 'rename_item', ann.id, crypto.randomUUID(), hanger.id, hanger.version, { sku: 'LUS28Z' }),
     'IV422', 'renaming a counted item');
   assert.equal(err.message, 'LUS28 is on a count, so its name stays.');
+});
+
+// Group C (stories 69–76, 80): approve or reject a count, and on hand from
+// approved counts. Ann counts; Bob, a second person, approves (S5).
+
+// withHanger, plus Bob, a supplier, and helpers to receive and to act on a count.
+async function withTwo() {
+  const ctx = await withHanger();
+  const { db, ann } = ctx;
+  ctx.bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
+  const supplier = await call(db, 'add_supplier', ann.id, crypto.randomUUID(), 'Simpson');
+  ctx.receive = (item, quantity) => call(db, 'receive', ann.id, crypto.randomUUID(), null, null, supplier.id, null,
+    JSON.stringify([{ item_id: item.id, quantity }]));
+  // Starts a count of `lines` and submits it, as `who` (Ann when omitted).
+  ctx.counted = async (lines, who = ann) =>
+    submit(db, who, await call(db, 'start_count', who.id, crypto.randomUUID(), 'hangers', 'spot check', null), lines);
+  ctx.approve = (who, count, answers = {}) =>
+    call(db, 'approve_count', who.id, crypto.randomUUID(), count.id, count.version, JSON.stringify(answers));
+  ctx.reject = (who, count) => call(db, 'reject_count', who.id, crypto.randomUUID(), count.id, count.version);
+  return ctx;
+}
+
+test('count 8:00, receipt 11:00, approval 14:00: on hand has the receipt once (story 76, S1)', async () => {
+  const { db, bob, hanger, receive, counted, approve } = await withTwo();
+  await receive(hanger, 40);
+  const count = await counted([{ item_id: hanger.id, loose: 40 }]);
+  await receive(hanger, 10);
+
+  const approved = await approve(bob, count);
+  assert.equal(approved.status, 'approved');
+  assert.equal(approved.approved_by, 'Bob Ray');
+  assert.deepEqual(approved.lines.map((l) => [l.item, l.quantity, l.expected, l.matched]), [['LUS28', 40, 40, true]]);
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 50 }, 'the count\'s 40 and the later receipt\'s 10');
+  const last = (await logRows(db)).at(-1);
+  assert.deepEqual([last.action, Number(last.actor_id), last.old_value, last.new_value], ['approve count', bob.id, count, approved]);
+});
+
+test('nobody who started, saved or submitted a count approves it, unless an admin switches that off (story 69, S5; Q110, Q113, Q114)', async () => {
+  const { db, ann, bob, hanger, approve } = await withTwo();
+  const cy = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'cy@example.com', 'Cy Fox', 'a stand-in for a password hash');
+  // Ann only starts it; Bob saves the draft, then Cy submits it.
+  const dee = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'dee@example.com', 'Dee Hart', 'a stand-in for a password hash');
+  const draft = await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'spot check', null);
+  const saved = await save(db, bob, draft, [{ item_id: hanger.id, loose: 0 }]);
+  const count = await submit(db, cy, saved, saved.lines);
+
+  const before = (await logRows(db)).length;
+  for (const [who, label] of [[ann, 'Ann started it'], [bob, 'Bob saved it'], [cy, 'Cy submitted it']]) {
+    const err = await refused(approve(who, count), 'IV422', label);
+    assert.equal(err.message, 'You worked on this count, so a second person approves it.', label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  assert.equal((await approve(dee, count)).approved_by, 'Dee Hart');
+
+  // With the rule switched off, Ann approves a count she worked on.
+  await call(db, 'set_count_approval_by_another', ann.id, crypto.randomUUID(), 1, false);
+  const own = await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'spot check', null);
+  const mine = await submit(db, ann, own, [{ item_id: hanger.id, loose: 0 }]);
+  assert.equal((await approve(ann, mine)).approved_by, 'Ann Lee');
+});
+
+test('an Unmatched item needs a reason from Settings → Reasons before approval; a Matched one takes none (stories 70, 71; S9; Q111)', async () => {
+  const { db, bob, hanger, receive, counted, approve } = await withTwo();
+  const other = await call(db, 'add_item', bob.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  await receive(hanger, 40);
+  await receive(other, 5);
+  // LUS28 in two pack sizes adds up to 38 against the app's 40; HUS26 matches.
+  const count = await counted([
+    { item_id: hanger.id, packs: 1, pack_size: 25, pack_kind: 'carton' },
+    { item_id: hanger.id, loose: 13 },
+    { item_id: other.id, loose: 5 },
+  ]);
+  const scrapped = await reasonId(db, 'Damaged – scrapped');
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['no reason', {}, 'IV400', 'LUS28 is Unmatched: counted 38, the app had 40. Pick a reason.'],
+    ['a reason for a Matched item', { reasons: { [hanger.id]: scrapped, [other.id]: scrapped } }, 'IV400', 'HUS26 is Matched, so it takes no reason.'],
+    ['a reason not on the list', { reasons: { [hanger.id]: 999999 } }, 'IV400', 'LUS28: pick the reason from Settings → Reasons.'],
+  ];
+  for (const [label, answers, code, message] of cases) {
+    const err = await refused(approve(bob, count, answers), code, label);
+    assert.equal(err.message, message, label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+
+  const approved = await approve(bob, count, { reasons: { [hanger.id]: scrapped } });
+  assert.deepEqual(approved.lines.map((l) => [l.item, l.quantity, l.expected, l.matched, l.reason]), [
+    ['LUS28', 25, 40, false, 'Damaged – scrapped'],
+    ['LUS28', 13, 40, false, 'Damaged – scrapped'],
+    ['HUS26', 5, 5, true, null],
+  ]);
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 38, [other.id]: 5 }, 'on hand starts from the count');
+});
+
+test('an approved count and its lines are locked, whatever writes them, and a rejected count changes no on hand (stories 74, 80; S6, S75)', async () => {
+  const { db, bob, hanger, receive, counted, approve, reject } = await withTwo();
+  await receive(hanger, 40);
+  const bad = await counted([{ item_id: hanger.id, loose: 3 }]);
+  const rejected = await reject(bob, bad);
+  assert.deepEqual([rejected.status, rejected.approved_by], ['rejected', null]);
+  assert.equal((await logRows(db)).at(-1).action, 'reject count');
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 40 }, 'a rejected count changes nothing (S6)');
+  await refused(approve(bob, rejected), 'IV422', 'approving a rejected count');
+
+  // The recount is a new count (Q112); with LUS28 freed, it can wait for approval.
+  const approved = await approve(bob, await counted([{ item_id: hanger.id, loose: 40 }]));
+  const again = await refused(reject(bob, approved), 'IV422', 'rejecting an approved count');
+  assert.equal(again.message, 'Only a count waiting for approval can be approved or rejected.');
+  await as(db, null, async (owner) => {
+    for (const [label, sql] of [
+      ['changing a line', 'UPDATE inv.count_lines SET loose = 41 WHERE count_id = $1'],
+      ['changing the app\'s number', 'UPDATE inv.count_lines SET expected = 41 WHERE count_id = $1'],
+      ['removing a line', 'DELETE FROM inv.count_lines WHERE count_id = $1'],
+      ['moving the moment', "UPDATE inv.counts SET counted_at = counted_at - interval '1 day' WHERE id = $1"],
+      ['un-approving', "UPDATE inv.counts SET status = 'waiting', approved_at = NULL, approved_by = NULL WHERE id = $1"],
+    ]) await refused(owner.query(sql, [approved.id]), 'IV422', label);
+  });
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 40 });
+});
+
+test('approval asks of each entry made during the count "Was this item counted after this entry?"; Yes leaves it out of on hand (story 72; S63, S70; Q33)', async () => {
+  const { db, ann, bob, hanger, receive, approve } = await withTwo();
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  await receive(hanger, 40);
+  await receive(other, 40);
+  const draft = await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'spot check', null);
+  // During the count, 10 of each arrive. LUS28 was counted after its
+  // receipt (50 on the rack), HUS26 before it (40).
+  await receive(hanger, 10);
+  await receive(other, 10);
+  const count = await submit(db, ann, draft, [{ item_id: hanger.id, loose: 50 }, { item_id: other.id, loose: 40 }]);
+  await receive(hanger, 1);  // after the count was submitted: not asked
+
+  const entries = await call(db, 'count_entries', count.id);
+  assert.deepEqual(entries.map((e) => [e.item, e.action, e.quantity]), [['LUS28', 'receive', 10], ['HUS26', 'receive', 10]]);
+  const [lus, hus] = entries.map((e) => e.id);
+
+  const cases = [
+    ['an entry left unanswered', { counted_after: { [lus]: true } }, 'HUS26: answer "Was this item counted after this entry?" for the receipt of 10.'],
+    ['an entry not on the list', { counted_after: { [lus]: true, [hus]: false, 999999: true } }, 'Answer only for the entries listed.'],
+  ];
+  for (const [label, answers, message] of cases) {
+    const err = await refused(approve(bob, count, answers), 'IV400', label);
+    assert.equal(err.message, message, label);
+  }
+
+  const approved = await approve(bob, count, { counted_after: { [lus]: true, [hus]: false } });
+  assert.deepEqual(approved.lines.map((l) => [l.item, l.quantity, l.expected, l.matched]),
+    [['LUS28', 50, 50, true], ['HUS26', 40, 40, true]], 'the app\'s number counts a Yes entry in');
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 51, [other.id]: 50 },
+    'LUS28: 50 counted + 1 after; HUS26: 40 counted + the 10 it was counted before');
+});
+
+test('a recount of one item changes only that item; an entry before the count, and its later reversal, change nothing (stories 75; S2, S4, S27)', async () => {
+  const { db, ann, bob, hanger, receive, counted, approve } = await withTwo();
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  await receive(other, 7);
+  const before = await receive(hanger, 40);  // before the count, so the count holds it (S2)
+  await approve(bob, await counted([{ item_id: hanger.id, loose: 40 }, { item_id: other.id, loose: 7 }]));
+  await receive(other, 3);
+
+  // A spot check of LUS28 alone leaves HUS26 on its earlier baseline (S4).
+  const recount = await approve(bob, await counted([{ item_id: hanger.id, loose: 38 }]),
+    { reasons: { [hanger.id]: await reasonId(db, 'Damaged – scrapped') } });
+  assert.equal(recount.lines[0].expected, 40);
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 38, [other.id]: 10 });
+
+  // Reversing the receipt from before both counts keeps its moment, so
+  // neither it nor its reversal touches on hand (S27).
+  await call(db, 'reverse', ann.id, crypto.randomUUID(), before.lines[0].id, 'entered twice');
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 38, [other.id]: 10 });
+});
+
+test('a family has at most one approved monthly count per month (design, "Rules the database enforces")', async () => {
+  const { db, ann, bob, hanger, approve } = await withTwo();
+  const monthly = async () => submit(db, ann,
+    await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'monthly', '2026-08'), [{ item_id: hanger.id, loose: 0 }]);
+  await approve(bob, await monthly());
+  const err = await refused(approve(bob, await monthly()), 'IV422', 'a second approved August count');
+  assert.equal(err.message, 'Hangers already has an approved monthly count closing August 2026.');
 });
