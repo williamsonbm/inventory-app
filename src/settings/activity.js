@@ -181,14 +181,14 @@ const monthName = (month) => new Date(`${month}-01T00:00:00Z`)
 // A count by its kind: "spot check", or "monthly, closes September 2026".
 const countLabel = (row) => (row.closes ? `${row.kind}, closes ${monthName(row.closes)}` : row.kind);
 
+// An Unmatched count's number and reason, if it has one (Q118: some need none).
+const appHad = (c) => `the app had ${c.expected}${c.reason ? `; ${c.reason}` : ''}`;
+
 // What a decision did to a count (approved: its lines with the app's number
 // and the reason where unmatched; or rejected), else what a save or submit did: submitted, the month it closes, and
 // its lines as they now stand, when they changed: each with how it was
 // found when it was in packs ("157 LUS28 (3 cartons of 50 + 7 loose)"); a
 // line of loose pieces only is just its pieces ("0 HUS26").
-// An Unmatched count's number and reason, if it has one (Q118: some need none).
-const appHad = (c) => `the app had ${c.expected}${c.reason ? `; ${c.reason}` : ''}`;
-
 function describeCountChange(was, now) {
   const changes = [];
   if (now.status === 'rejected') return 'rejected';
