@@ -27,6 +27,8 @@
   finished" shows the rest, so a line closed by mistake can be re-opened.
   Opened from an item's History with ?replaces= (Reverse and enter again,
   owner 2026-10-05), the next receipt saved replaces that receipt line.
+  An item the catalog lacks, typed on a row not on the PO, is offered in
+  one click ("Add 26′ of …", story 4) and joins that row.
 
   The family bar narrows the item choices and the PO list. Only items of a
   family that is live in Inventory can go on a PO: the database refuses the
@@ -49,7 +51,7 @@
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
     <span class="label" id="task-label">Task</span>
-    <nav class="seg" aria-labelledby="task-label"><a href="/inventory">Overview</a><a href="/inventory/receive" aria-current="page">Receive</a></nav>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory">Overview</a><a href="/inventory/receive" aria-current="page">Receive</a><a href="/inventory/count">Count</a></nav>
   </div>
 </header>
 
@@ -113,10 +115,11 @@
 
 <script src="/app-header.js"></script>
 <script src="/planner-ui.js"></script>
+<script src="/new-item.js"></script>
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, itemLabel, today, unitShort, inOrderUnit } = AppHeader;
+  const { send, getAll, say, itemLabel, today, unitShort, inOrderUnit } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -139,9 +142,7 @@
   // plate and a hanger with the same SKU stay two choices. Either form is
   // read back, so a line typed before the family bar changed still matches.
   const choiceLabel = (i) => (current === 'all' ? family(i.family).name + ' · ' : '') + itemLabel(i);
-  // Capitals and spaces aside, as the database names items ("lus28" is
-  // LUS28), and a typed ' or ’ is the foot mark ′ in "2x4 #2 16′".
-  const plain = (text) => text.trim().replace(/\s+/g, ' ').replace(/['’]/g, '′').toLowerCase();
+  const { plain } = NewItem;
   const isNamed = (i, text) => [itemLabel(i), family(i.family).name + ' · ' + itemLabel(i)].map(plain).includes(plain(text));
   // Why line n's item box names no item: nothing to pick from, or a name
   // not on the list.
@@ -151,15 +152,6 @@
   // The items a PO can order: in use, of a live family, in the family shown.
   const orderable = () => items.filter((i) => i.active && family(i.family).live && (current === 'all' || i.family === current));
   const itemById = (id) => items.find((i) => i.id === id);
-
-  // Reads every route at once; null, with the reason said, if any fails.
-  async function getAll(routes) {
-    const fail = { ok: false, error: 'The page did not load. Reload it to try again.' };
-    const bodies = await Promise.all(routes.map((route) => fetch(route).then((r) => r.json()).catch(() => fail)));
-    const bad = bodies.find((b) => !b.ok);
-    if (bad) { say(bad.error, 'bad'); return null; }
-    return bodies;
-  }
 
   // The items, POs and pack sizes as they are now: after a receipt, and
   // after a refusal because someone else changed a PO, whose lines may name
@@ -435,7 +427,8 @@
     const box = (f, w, min) => '<td><input data-f="' + f + '" type="number" min="' + min + '" step="1" style="width:' + w + '"></td>';
     tr.innerHTML = '<td class="sub" data-f="n">' + (line ? n : '') + '</td>' +
       '<td>' + (line ? esc(choiceLabel(item))
-        : '<input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…">') + '</td>' +
+        : '<input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…">' +
+          '<button type="button" class="ghost" data-f="add" hidden></button>') + '</td>' +
       '<td class="sub">' + (line ? 'Line ' + n + ' · ' + fmtInt(line.received) + ' of ' + amount(line.ordered, item) + ' in'
         + (split ? '' : '<div data-f="over" hidden></div>') : receiving.po ? 'not on the PO' : '') + '</td>' +
       box('quantity', '7em', 1) + box('packs', '5em', 0) + box('pack', '6em', 1) +
@@ -489,6 +482,7 @@
 
   el('receipt-lines').addEventListener('click', (e) => {
     const tr = e.target.closest('tr');
+    if (e.target.dataset.f === 'add') return addMissing(tr, { key: crypto.randomUUID(), ...JSON.parse(tr.dataset.offer) });
     if (e.target.dataset.f === 'remove') tr.remove();
     if (e.target.dataset.f === 'split') {
       const po = receiving.po;
@@ -508,6 +502,7 @@
       const item = orderable().find((i) => isNamed(i, e.target.value));
       tr.dataset.itemId = item ? item.id : '';
       fillPacking(tr, item, null);
+      offerMissing(tr, item ? '' : e.target.value);
     }
     if (f === 'kind') {
       const size = sizeOnFile(Number(tr.dataset.itemId), e.target.value);
@@ -518,6 +513,35 @@
     cell(tr, 'quantity').placeholder = packedPieces(tr) ?? '';
     warnOver();
   });
+
+  // Story 4: under a typed name the catalog lacks, the one-click offer to
+  // add it (src/inventory/new-item.js), in the PO's family on a PO (a PO
+  // holds one family), else in the family shown.
+  function offerMissing(tr, text) {
+    const po = receiving.po;
+    const fam = po ? itemById(po.lines[0].item_id).family : current;
+    const offered = NewItem.missingItem(families, items, fam, text, itemLabel);
+    cell(tr, 'add').hidden = !offered;
+    cell(tr, 'add').textContent = offered ? offered.offer : '';
+    tr.dataset.offer = offered ? JSON.stringify({ family: offered.family, identity: offered.identity }) : '';
+  }
+  // Adds the offered item to the catalog, and to row `tr`. A reply that never
+  // arrives keeps the same body, retry key included, so "Try again" acts once.
+  async function addMissing(tr, body) {
+    say('');
+    try {
+      const { item } = await send('/api/items/add', body);
+      items.push(item);
+      paintChoices();
+      cell(tr, 'item').value = choiceLabel(item);
+      tr.dataset.itemId = item.id;
+      fillPacking(tr, item, null);
+      offerMissing(tr, '');
+      say(itemLabel(item) + ' was added to the catalog as ' + item.stocking + ', and to this receipt.', 'ok');
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => addMissing(tr, body) : null);
+    }
+  }
 
   // Warns, without refusing, when the rows typed for a PO line bring it past
   // what it ordered (owner, Q53): a receipt entered twice by mistake looks

@@ -1,0 +1,402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Count · Inventory</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  count.html — Inventory → Count (#81 part 3, group B, stories 58–67 and
+  story 4's counting half). Start a count of one family, monthly or a spot
+  check: the start shows the family's PO lines still to arrive, so a
+  delivery already in the yard is received first (story 60; shown only,
+  never a gate: owner, Q105). Starting sets the count's moment (story 59,
+  ADR 0002) and opens its sheet: every item of the family in use, to print
+  with no time box (story 61) and to fill in, packs × pack size + loose, a
+  line per pack size (stories 62–64, S74). A row left blank is not counted;
+  0 is an empty rack (owner, Q103). Save draft keeps it and changes nothing
+  (story 66); Submit sends it for approval (story 67). An item the catalog
+  lacks is added in one click from the box under the sheet (story 4).
+
+  Glue, NOT UNIT-TESTED: the forms, the sheet and its print need a browser,
+  and this repo has no DOM harness. Every route it calls is tested in
+  test/inventory.test.js, the counts' rules in test/counts.test.js, and the
+  one-click offer in test/new-item.test.js. The layout and the print are
+  checked by hand (#81, Testing Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">RTW Inventory Tracker</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory" class="here" aria-current="page">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
+  <div class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+    <span class="label" id="task-label">Task</span>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory">Overview</a><a href="/inventory/receive">Receive</a><a href="/inventory/count" aria-current="page">Count</a></nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="message" role="status" class="no-print"></div>
+
+  <section id="start" class="no-print">
+    <h2 style="margin:8px 0">Start a count</h2>
+    <p class="sub" id="start-pick">Pick a family above to count it.</p>
+    <form id="start-form" hidden>
+      <div class="row" style="align-items:center">
+        <label><input type="radio" name="kind" value="monthly" checked> Monthly count</label>
+        <label><input type="radio" name="kind" value="spot check"> Spot check</label>
+        <button id="start-btn">Start count and open the sheet</button>
+      </div>
+      <p class="sub">The count is true as of the moment you start it, so start it when you are ready to count. A monthly count closes last month; you can change that on the sheet. A spot check prints the whole family too: count only the rows you need, and leave the rest blank.</p>
+      <div id="open-pos"></div>
+    </form>
+  </section>
+
+  <section id="sheet" hidden>
+    <div class="row" style="align-items:center;margin:8px 0">
+      <h2 style="margin:0" id="sheet-title"></h2>
+      <span id="sheet-closes"></span>
+      <button type="button" class="ghost" id="sheet-print">Print sheet</button>
+    </div>
+    <p class="sub" id="sheet-started"></p>
+    <form id="sheet-form">
+      <div class="tw"><table class="one-line">
+        <thead><tr><th style="width:34%">Item</th><th>Packs</th><th>Pack size</th><th>Kind</th><th>Loose</th><th>Pieces</th><th data-lf>LF</th><th class="no-print"></th></tr></thead>
+        <tbody id="sheet-lines"></tbody>
+      </table></div>
+      <div class="row no-print" style="margin-top:10px;align-items:flex-end">
+        <label class="field">An item not on the sheet <input id="missing" autocomplete="off" style="width:22em" placeholder="Type its SKU, or its name with the length"></label>
+        <button type="button" class="ghost" id="missing-add" hidden></button>
+        <span class="sub" id="missing-why"></span>
+      </div>
+      <div class="row no-print" style="margin-top:10px">
+        <button type="button" class="ghost" id="sheet-save">Save draft</button>
+        <button id="sheet-submit">Submit for approval</button>
+        <button type="button" class="ghost" id="sheet-close">Close sheet</button>
+      </div>
+      <p class="sub no-print">Fill in what you find: packs × pack size, plus loose pieces. A row left blank is not counted; type 0 for an empty rack. Use + to add a line for an item sitting in packs of another size. Save draft keeps your work and changes nothing; Submit sends the count for someone else to approve.</p>
+    </form>
+  </section>
+
+  <section class="no-print">
+    <h2 style="margin:20px 0 8px">Counts in progress</h2>
+    <div class="tw"><table class="one-line">
+      <thead><tr><th>Family</th><th>Kind</th><th>Closes</th><th>Started</th><th>By</th><th>Lines</th><th>Status</th><th></th></tr></thead>
+      <tbody id="counts"></tbody>
+    </table></div>
+    <p class="sub" id="counts-none" hidden>No drafts or counts waiting for approval.</p>
+  </section>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script src="/new-item.js"></script>
+<script>
+(async () => {
+  const { esc, fmtInt } = PlannerUI;
+  const { send, getAll, say, itemLabel, unitShort, showTime } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  const me = await AppHeader.me;
+  if (!me) return;
+
+  let families = [];
+  let items = [];
+  let gradeOrder = [];
+  let packSizes = [];
+  let pos = [];
+  let counts = [];
+  let current = null;  // the family the family bar shows, or 'all'
+  let open = null;     // the draft count whose sheet is open, or null
+
+  const family = (code) => families.find((f) => f.code === code);
+  const itemById = (id) => items.find((i) => i.id === id);
+  const sizeOnFile = (itemId, kind) => packSizes.find((p) => p.item_id === itemId && p.kind === kind)?.pieces;
+  // "2026-09" in words: "September 2026".
+  const monthName = (m) => new Date(m + '-01T00:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+  async function load() {
+    const got = await getAll(['/api/items', '/api/pack-sizes', '/api/pos', '/api/counts']);
+    if (!got) return;
+    [{ families, items, gradeOrder }, { pack_sizes: packSizes }, { pos }, { counts }] = got;
+    AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+      current = f;
+      paintStart();
+      paintCounts();
+    });
+  }
+
+  // ── Start (stories 58, 60) ───────────────────────────────────────────────
+  // The start form counts the family shown; under All there is none to count.
+  // The family's PO lines with something still to arrive are listed first
+  // (story 60), as advice: the Count button works either way (Q105).
+  function paintStart() {
+    const f = current === 'all' ? null : family(current);
+    el('start-form').hidden = !f || !!open;
+    el('start-pick').hidden = !!f && !open;
+    el('start-pick').textContent = open ? 'Finish or close the sheet below to start another count.'
+      : 'Pick a family above to count it.';
+    if (!f) return;
+    el('start-btn').textContent = 'Start ' + f.name + ' count and open the sheet';
+    if (!f.live) {
+      el('open-pos').innerHTML = '<p class="sub">' + esc(f.name) + ' is not live in Inventory yet, so it cannot be counted until the cutover.</p>';
+      return;
+    }
+    const due = [];
+    for (const po of pos) {
+      po.lines.forEach((l, n) => {
+        const item = itemById(l.item_id);
+        if (item.family !== f.code || l.closed_reason || l.received >= l.ordered) return;
+        due.push('<li>PO ' + esc(po.number) + ' · ' + esc(po.supplier) + ' · line ' + (n + 1) + ': ' + esc(itemLabel(item)) + ', ' +
+          fmtInt(l.received) + ' of ' + fmtInt(l.ordered) + ' ' + unitShort(f.order_unit) + ' in</li>');
+      });
+    }
+    el('open-pos').innerHTML = due.length
+      ? '<p><b>Before you count:</b> these ' + esc(f.name) + ' PO lines are still to arrive. If any of it is already in the yard, ' +
+        '<a href="/inventory/receive">receive it</a> first, so the count and the receipt agree.</p><ul>' + due.join('') + '</ul>'
+      : '<p class="sub">No ' + esc(f.name) + ' PO lines are still to arrive.</p>';
+  }
+
+  el('start-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const body = { key: crypto.randomUUID(), family: current, kind: el('start-form').querySelector('[name="kind"]:checked').value, closes: null };
+    el('start-btn').disabled = true;
+    try {
+      await startCount(body);
+    } finally {
+      el('start-btn').disabled = false;
+    }
+  });
+  async function startCount(body) {
+    say('');
+    try {
+      const { count } = await send('/api/counts/start', body);
+      counts = [count].concat(counts);
+      openSheet(count);
+      paintCounts();
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => startCount(body) : null);
+    }
+  }
+
+  // ── Counts in progress ───────────────────────────────────────────────────
+  function paintCounts() {
+    const shown = counts.filter((c) => current === 'all' || c.family === current);
+    el('counts-none').hidden = shown.length > 0;
+    el('counts').innerHTML = shown.map((c) => '<tr data-id="' + c.id + '">' +
+      '<td>' + esc(c.family_name) + '</td><td>' + (c.kind === 'monthly' ? 'Monthly' : 'Spot check') + '</td>' +
+      '<td>' + (c.closes ? monthName(c.closes) : '—') + '</td><td>' + showTime(c.counted_at) + '</td><td>' + esc(c.counted_by) + '</td>' +
+      '<td>' + c.lines.length + '</td>' +
+      '<td>' + (c.status === 'draft' ? 'Draft' : 'Waiting for approval') + '</td>' +
+      '<td>' + (c.status === 'draft' && !(open && open.id === c.id) ? '<button type="button" class="ghost" data-do="open">Open</button>' : '') + '</td></tr>').join('');
+  }
+  el('counts').addEventListener('click', (e) => {
+    if (e.target.dataset.do !== 'open') return;
+    say('');
+    openSheet(counts.find((c) => c.id === Number(e.target.closest('tr').dataset.id)));
+  });
+
+  // ── The sheet (stories 61–64, S74) ───────────────────────────────────────
+  // Items in the order the yard keeps them: lumber by size (the catalog's
+  // size order), grade (weakest first, as the Overview) and length; LVL by
+  // product, depth and length; the rest by SKU.
+  const depth = (d) => { const m = /^(\d+)(?:-(\d+)\/(\d+))?/.exec(d || ''); return m ? Number(m[1]) + (m[2] ? m[2] / m[3] : 0) : 0; };
+  const rank = (list, v) => { const n = (list || []).indexOf(v); return n < 0 ? Infinity : n; };
+  function sheetOrder(a, b) {
+    const f = family(a.family);
+    return rank(f.choices?.size, a.size) - rank(f.choices?.size, b.size)
+      || rank(gradeOrder, a.grade) - rank(gradeOrder, b.grade)
+      || String(a.product ?? '').localeCompare(String(b.product ?? ''))
+      || depth(a.size) - depth(b.size)
+      || (a.length_ft ?? 0) - (b.length_ft ?? 0)
+      || itemLabel(a).localeCompare(itemLabel(b), 'en', { numeric: true });
+  }
+
+  const cell = (tr, f) => tr.querySelector('[data-f="' + f + '"]');
+
+  // One row of the sheet for `item`: its first row names it and offers +
+  // for another pack size; a further row offers ✕. `line` fills it from a
+  // saved line; else a first row takes the pack size on file for the item's
+  // first kind that has one, and a further row, for another size, none.
+  function sheetRow(item, line, extra) {
+    const tr = document.createElement('tr');
+    tr.dataset.itemId = item.id;
+    const kinds = family(item.family).pack_kinds;
+    const kind = line?.pack_kind || kinds.find((k) => sizeOnFile(item.id, k)) || kinds[0];
+    const box = (f, w, min, v) => '<td><input data-f="' + f + '" type="number" min="' + min + '" step="1" style="width:' + w + '" value="' + (v ?? '') + '"></td>';
+    tr.innerHTML = '<td class="name">' + (extra ? '' : esc(itemLabel(item)) + (item.active ? '' : ' <span class="sub">(retired)</span>')) + '</td>' +
+      box('packs', '5em', 0, line?.packs) + box('pack', '6em', 1, line ? line.pack_size : extra ? null : sizeOnFile(item.id, kind)) +
+      '<td><select data-f="kind">' + kinds.map((k) => '<option' + (k === kind ? ' selected' : '') + '>' + esc(k) + '</option>').join('') + '</select></td>' +
+      box('loose', '5em', 0, line?.loose) +
+      '<td data-f="pieces"></td><td data-f="lf"' + (item.family === 'lumber' ? '' : ' hidden') + '></td>' +
+      '<td class="no-print">' + (extra ? '<button type="button" class="ghost" data-do="remove" aria-label="Remove this line">✕</button>'
+        : '<button type="button" class="ghost" data-do="split" title="Another line for this item, in packs of another size">+</button>') + '</td>';
+    paintPieces(tr);
+    return tr;
+  }
+
+  // Pieces for a row (packs × pack size + loose), and for lumber its linear
+  // feet (story 63); blank while the row is blank or packs lack a size.
+  function paintPieces(tr) {
+    const [packs, size, loose] = ['packs', 'pack', 'loose'].map((f) => cell(tr, f).value.trim());
+    const blank = (packs === '' && loose === '') || (packs !== '' && size === '');
+    const pieces = blank ? null : Number(packs) * (packs === '' ? 0 : Number(size)) + Number(loose);
+    const item = itemById(Number(tr.dataset.itemId));
+    cell(tr, 'pieces').textContent = pieces === null || !Number.isSafeInteger(pieces) ? '' : fmtInt(pieces);
+    cell(tr, 'lf').textContent = pieces === null || !item.length_ft ? '' : fmtInt(pieces * item.length_ft);
+  }
+
+  // Opens the sheet of draft `count`: every item of its family in use, and
+  // any item its lines name, each with its saved lines or one blank row.
+  function openSheet(count) {
+    open = count;
+    const f = family(count.family);
+    el('sheet').hidden = false;
+    el('sheet-title').textContent = count.family_name + (count.kind === 'monthly' ? ' monthly count' : ' spot check');
+    el('sheet-closes').innerHTML = count.kind === 'monthly'
+      ? '<label>closes: <input type="month" id="closes" value="' + esc(count.closes) + '" required></label>' : '';
+    el('sheet-started').textContent = 'Started ' + showTime(count.counted_at) + ' by ' + count.counted_by +
+      '. The count is true as of then; anything received or corrected after it counts on top.';
+    document.querySelector('th[data-lf]').hidden = f.code !== 'lumber';
+    const counted = new Set(count.lines.map((l) => l.item_id));
+    const onSheet = items.filter((i) => i.family === f.code && (i.active || counted.has(i.id))).sort(sheetOrder);
+    el('sheet-lines').replaceChildren(...onSheet.flatMap((item) => {
+      const lines = count.lines.filter((l) => l.item_id === item.id);
+      return lines.length ? lines.map((l, n) => sheetRow(item, l, n > 0)) : [sheetRow(item, null, false)];
+    }));
+    el('missing').value = '';
+    paintMissing();
+    paintStart();
+    paintCounts();
+  }
+  function closeSheet() {
+    open = null;
+    el('sheet').hidden = true;
+    paintStart();
+    paintCounts();
+  }
+  el('sheet-close').addEventListener('click', () => { say(''); closeSheet(); });
+  el('sheet-print').addEventListener('click', () => window.print());
+
+  el('sheet-lines').addEventListener('input', (e) => {
+    const tr = e.target.closest('tr');
+    if (e.target.dataset.f === 'kind') {
+      const size = sizeOnFile(Number(tr.dataset.itemId), e.target.value);
+      cell(tr, 'pack').value = size ?? '';
+    }
+    paintPieces(tr);
+  });
+  el('sheet-lines').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr');
+    if (e.target.dataset.do === 'remove') tr.remove();
+    if (e.target.dataset.do === 'split') {
+      let last = tr;
+      while (last.nextElementSibling && last.nextElementSibling.dataset.itemId === tr.dataset.itemId) last = last.nextElementSibling;
+      last.after(sheetRow(itemById(Number(tr.dataset.itemId)), null, true));
+    }
+  });
+
+  // ── An item not on the sheet (story 4) ────────────────────────────────────
+  // A retired item is put back in use on the Overview first, as on Receive;
+  // an item the catalog lacks is offered in one click, and joins the sheet.
+  let offered = null;
+  function paintMissing() {
+    const text = el('missing').value;
+    const known = text.trim() && items.find((i) => i.family === open.family && NewItem.plain(itemLabel(i)) === NewItem.plain(text));
+    offered = NewItem.missingItem(families, items, open.family, text, itemLabel);
+    el('missing-add').hidden = !offered;
+    el('missing-add').textContent = offered ? offered.offer : '';
+    el('missing-why').textContent = !known ? ''
+      : known.active ? itemLabel(known) + ' is on the sheet already.'
+        : itemLabel(known) + ' is retired. Un-retire it on the Overview to count it.';
+  }
+  el('missing').addEventListener('input', paintMissing);
+  el('missing-add').addEventListener('click', () => addMissing({ key: crypto.randomUUID(), family: offered.family, identity: offered.identity }));
+  async function addMissing(body) {
+    say('');
+    try {
+      const { item } = await send('/api/items/add', body);
+      items.push(item);
+      const rows = [...el('sheet-lines').children];
+      const after = rows.filter((tr) => sheetOrder(itemById(Number(tr.dataset.itemId)), item) < 0).at(-1);
+      const row = sheetRow(item, null, false);
+      if (after) after.after(row); else el('sheet-lines').prepend(row);
+      el('missing').value = '';
+      paintMissing();
+      cell(row, 'loose').focus();
+      say(itemLabel(item) + ' was added to the catalog as ' + item.stocking + ', and to this sheet.', 'ok');
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => addMissing(body) : null);
+    }
+  }
+
+  // ── Save draft and submit (stories 65–67) ─────────────────────────────────
+  // Every row goes as it is; the database skips a row with no packs and no
+  // loose (Q103). A pack size goes only with packs.
+  function sheetRequest() {
+    const lines = [...el('sheet-lines').children].map((tr) => {
+      const number = (f) => (cell(tr, f).value.trim() === '' ? null : Number(cell(tr, f).value));
+      const packs = number('packs');
+      return { item_id: Number(tr.dataset.itemId), packs, pack_size: packs === null ? null : number('pack'),
+        pack_kind: packs === null ? null : cell(tr, 'kind').value, loose: number('loose') };
+    });
+    return { key: crypto.randomUUID(), id: open.id, version: open.version, closes: el('closes')?.value || null, lines };
+  }
+
+  // Saves or submits the sheet. A reply that never arrives keeps the same
+  // body, retry key included, so "Try again" acts once. A stale screen opens
+  // the count as the other save left it.
+  async function saveSheet(route, body) {
+    say('');
+    try {
+      const { count } = await send(route, body);
+      counts = counts.map((c) => (c.id === count.id ? count : c));
+      if (count.status === 'waiting') {
+        closeSheet();
+        say('The ' + count.family_name + ' count was submitted for approval. Until it is approved, it changes no on hand.', 'ok');
+      } else {
+        open = count;
+        say('Draft saved. It changes nothing until it is submitted and approved.', 'ok');
+        paintCounts();
+      }
+    } catch (err) {
+      say(err.message + (err.current ? ' The sheet now shows the count as it was saved.' : ''), 'bad',
+        err.unconfirmed ? () => saveSheet(route, body) : null);
+      if (err.current) {
+        counts = counts.map((c) => (c.id === err.current.id ? err.current : c));
+        if (err.current.status === 'draft') openSheet(err.current); else closeSheet();
+      }
+    }
+  }
+  el('sheet-save').addEventListener('click', () => {
+    el('sheet-save').disabled = true;
+    saveSheet('/api/counts/save', sheetRequest()).finally(() => { el('sheet-save').disabled = false; });
+  });
+  el('sheet-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    el('sheet-submit').disabled = true;
+    saveSheet('/api/counts/submit', sheetRequest()).finally(() => { el('sheet-submit').disabled = false; });
+  });
+
+  load();
+})();
+</script>
+</body>
+</html>

@@ -59,6 +59,10 @@ async function listCatalog(database) {
   return { families, items, lvlDepths, gradeOrder: GRADE_STRENGTH_ORDER };
 }
 
+// A draft count's save and submit take the same arguments: the count, the
+// version the sheet read, the month it closes and the sheet's rows.
+const draftArgs = (b) => [b.id, b.version, b.closes ?? null, JSON.stringify(b.lines)];
+
 // Route → the database function it calls, its arguments after the actor and
 // the retry key, the name its answer goes back under, and whether only an
 // admin may make it (the database function checks that again).
@@ -112,6 +116,12 @@ const CATALOG_CHANGES = {
   '/api/lumber/redirect': {
     fn: 'set_grade_redirect', args: (b) => [b.size, b.from_grade, b.version, b.to_grade], as: 'redirect',
   },
+  // Inventory → Count (#81 part 3, stories 58–67). Everyone counts: only
+  // approval is guarded, by the second-person rule (group C). closes is
+  // YYYY-MM, or blank for last month; lines are the sheet's filled rows.
+  '/api/counts/start': { fn: 'start_count', args: (b) => [b.family, b.kind, b.closes ?? null], as: 'count' },
+  '/api/counts/save': { fn: 'save_count', args: draftArgs, as: 'count' },
+  '/api/counts/submit': { fn: 'submit_count', args: draftArgs, as: 'count' },
   // Settings → Inventory → Working day (#81 story 28). Admin-only: the
   // window decides when the app asks "before or after the count?" (design Q4).
   '/api/working-day/set': {
@@ -183,6 +193,14 @@ async function listPos(database) {
   return rows.map((r) => r.po);
 }
 
+// Inventory → Count: the drafts to carry on with and the counts waiting
+// for approval, newest first, each in the shape /api/counts/start answers with.
+async function listCounts(database) {
+  const rows = await database.read(
+    "SELECT inv.count_json(id) AS count FROM inv.counts WHERE status IN ('draft', 'waiting') ORDER BY id DESC");
+  return rows.map((r) => r.count);
+}
+
 async function listSettings(database, route) {
   const { as, sql } = SETTINGS_LISTS[route];
   return { [as]: await database.read(sql) };
@@ -197,5 +215,5 @@ async function saveCatalogChange(database, actor, route, body) {
 }
 
 module.exports = {
-  itemLabel, listCatalog, readFamilies, listPos, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
+  itemLabel, listCatalog, readFamilies, listPos, listCounts, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
 };

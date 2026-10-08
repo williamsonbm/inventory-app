@@ -50,6 +50,8 @@ async function readActivity(database, { person, action, family, from, to, before
              WHEN l.target_table IN ('lumber_purchasable_lengths', 'lumber_grade_redirects') THEN $7 = 'lumber'
              WHEN l.target_table = 'families'
                THEN EXISTS (SELECT FROM inv.families f WHERE f.code = $7 AND f.name = l.new_value ->> 'name')
+             WHEN l.target_table = 'counts'
+               THEN EXISTS (SELECT FROM inv.counts c WHERE c.id = l.target_id AND c.family = $7)
              WHEN l.target_table = 'purchase_orders'
                THEN EXISTS (SELECT FROM inv.po_lines pl JOIN inv.items i ON i.id = pl.item_id
                              WHERE pl.po_id = l.target_id AND i.family = $7)
@@ -89,6 +91,7 @@ const TARGET_NAMES = {
   receipts: (_item, row) => (row.po_number ? `PO ${row.po_number}` : `${row.supplier}, no PO`),
   ledger: (_item, row) => row.item ?? row.lines[0].item,  // a correction's item, a trim's long one, or a reversal's first
   families: (_item, row) => row.name,
+  counts: (_item, row) => `${row.family_name} count`,
 };
 const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
 
@@ -110,6 +113,7 @@ const ADDED = {
   receipts: describeReceipt,
   ledger: (row) => `on hand ${signed(row.quantity)}, ${row.reason}${noted(row)}`,
   reverse: (row) => `reversal of ${reversalLines(row)}${noted(row)}`,
+  counts: (row) => (row.closes ? `${row.kind}, closes ${monthName(row.closes)}` : row.kind),
   trim: (row) => `${row.boards} trimmed to ${row.length_ft}′`
     + `${row.item_added ? ' (new item, Non-Stock)' : row.item_unretired ? ' (put back in use)' : ''}${noted(row)}`,
 };
@@ -169,9 +173,28 @@ function describePoChange(was, now) {
   return changes.join('; ');
 }
 
+// The month a count closes, "2026-09", in words: "September 2026".
+const monthName = (month) => new Date(`${month}-01T00:00:00Z`)
+  .toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+
+// What a save or submit did to a count: submitted, the month it closes, and
+// its lines as they now stand, when they changed: each with how it was
+// found when it was in packs ("157 LUS28 (3 cartons of 50 + 7 loose)"); a
+// line of loose pieces only is just its pieces ("0 HUS26").
+function describeCountChange(was, now) {
+  const changes = [];
+  if (was.status !== now.status) changes.push('submitted for approval');
+  if (was.closes !== now.closes) changes.push(`closes: ${monthName(was.closes)} → ${monthName(now.closes)}`);
+  if (JSON.stringify(was.lines) !== JSON.stringify(now.lines)) {
+    changes.push(`lines: ${now.lines.map((l) => `${l.quantity} ${l.item}${l.packs === null ? '' : ` (${howItCame(l)})`}`)
+      .join(', ') || 'none'}`);
+  }
+  return changes.join('; ');
+}
+
 // A change told its own way, by the table it changed; any other table's
 // change lists each field that differs.
-const CHANGED = { purchase_orders: describePoChange };
+const CHANGED = { purchase_orders: describePoChange, counts: describeCountChange };
 
 // What a change did, in words, for the "Was → now" column: an addition (no
 // was) says what was added; a removal (no now) says so; a table in CHANGED

@@ -632,3 +632,38 @@ test('a receipt that replaces one on the wrong PO takes the original\'s time, an
   assert.equal(fixed.status, 200, fixed.body.error);
   assert.equal(fixed.body.correction.reversed.reverses, 'correct');
 });
+
+test('anyone starts, saves and submits a count; Count lists it, and the Activity Log says what each step did (stories 58–67)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  const other = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'HUS26' } })).body.item;
+  await goLive(ctx.db, 'hangers');
+  await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
+  const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
+
+  // Bob is not an admin: counting is everyone's work (#81, "Admin-only actions").
+  const started = await change(bob, '/api/counts/start', { family: 'hangers', kind: 'monthly', closes: '2026-08' });
+  assert.equal(started.status, 200, started.body.error);
+  const count = started.body.count;
+  assert.deepEqual([count.status, count.closes, count.counted_by], ['draft', '2026-08', 'Bob Ray']);
+
+  const lines = [{ item_id: hanger.id, packs: 3, pack_size: 50, pack_kind: 'carton', loose: 7 }, { item_id: other.id, loose: 0 }];
+  const saved = await change(bob, '/api/counts/save', { id: count.id, version: count.version, closes: '2026-09', lines });
+  assert.equal(saved.status, 200, saved.body.error);
+  assert.deepEqual(saved.body.count.lines.map((l) => [l.item, l.quantity]), [['LUS28', 157], ['HUS26', 0]]);
+  assert.deepEqual((await read(bob, '/api/counts')).counts, [saved.body.count], 'Count lists the draft to carry on with');
+
+  const submitted = await change(bob, '/api/counts/submit',
+    { id: count.id, version: saved.body.count.version, closes: '2026-09', lines: [lines[0]] });
+  assert.equal(submitted.status, 200, submitted.body.error);
+  assert.equal(submitted.body.count.status, 'waiting');
+  assert.deepEqual((await read(bob, '/api/counts')).counts, [submitted.body.count], 'and the count waiting for approval');
+
+  const { entries } = await read(ctx, '/api/activity?family=hangers');
+  assert.deepEqual(entries.slice(0, 3).map((e) => [e.who, e.action, e.target, e.change]), [
+    ['Bob Ray', 'submit count', 'Hangers count', 'submitted for approval; lines: 157 LUS28 (3 cartons of 50 + 7 loose)'],
+    ['Bob Ray', 'save count', 'Hangers count', 'closes: August 2026 → September 2026; lines: 157 LUS28 (3 cartons of 50 + 7 loose), 0 HUS26'],
+    ['Bob Ray', 'start count', 'Hangers count', 'added: monthly, closes August 2026'],
+  ]);
+  assert.deepEqual((await read(ctx, '/api/activity?family=plates')).entries, [], 'a count shows under its own family only');
+});
