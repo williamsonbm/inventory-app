@@ -47,7 +47,7 @@
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
     <span class="label" id="task-label">Task</span>
-    <nav class="seg" aria-labelledby="task-label"><a href="/inventory" aria-current="page">Overview</a><a href="/inventory/receive">Receive</a></nav>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory" aria-current="page">Overview</a><a href="/inventory/receive">Receive</a><a href="/inventory/count">Count</a></nav>
   </div>
 </header>
 
@@ -371,7 +371,8 @@
   // History: newest first. Change is the change to on hand in pieces; a
   // settings change has none. A receipt line, a correction or a trim not yet
   // reversed has "Reverse…" while its family is live; one reversed says so
-  // (stories 42, 49). A reversal itself is never reversed (Q44).
+  // (stories 42, 49). A reversal itself is never reversed (Q44), nor is an
+  // approved count (Q120): the server sends neither with an id.
   function historyTable(i) {
     const canReverse = (e) => e.id && !e.reversed && !e.reversal && family(i.family).live;
     const last = (e) => (e.reversed ? '<span class="chip">reversed</span>'

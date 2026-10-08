@@ -1,6 +1,7 @@
 // app-header.js — the header every signed-in page shares (#77): the theme
 // switch, the signed-in person's name, and Sign out. Also `send`, the one way
-// a page posts a change, `say`, its message area, `itemLabel`, `unitShort`,
+// a page posts a change, `getAll`, the way it reads its lists, `say`, its
+// message area, `itemLabel`, `unitShort`,
 // `inOrderUnit`,
 // `familyBar`, the family filter the Planner and Inventory share, and
 // `typingIn`, which keeps a box's typing through a repaint.
@@ -103,6 +104,16 @@ window.AppHeader = (() => {
     box.append(note);
   }
 
+  // Reads every route a page lists from at once; null, with the reason said
+  // in #message, if any fails.
+  async function getAll(routes) {
+    const fail = { ok: false, error: 'The page did not load. Reload it to try again.' };
+    const bodies = await Promise.all(routes.map((route) => fetch(route).then((r) => r.json()).catch(() => fail)));
+    const bad = bodies.find((b) => !b.ok);
+    if (bad) { say(bad.error, 'bad'); return null; }
+    return bodies;
+  }
+
   // An item as people name it: "LUS28", "2x4 #2 16′",
   // "2.1 RigidLam LVL 1-3/4 x 11-7/8 26′". The same words as inv.item_label.
   function itemLabel(i) {
@@ -192,5 +203,5 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, say, itemLabel, unitShort, inOrderUnit, showTime, today, familyBar, typingIn };
+  return { me, send, getAll, say, itemLabel, unitShort, inOrderUnit, showTime, today, familyBar, typingIn };
 })();

@@ -1,5 +1,6 @@
 // Inventory → Overview → an item → History (#81 story 55): every change to
-// one item's on hand, and every change to its settings, with who and when,
+// one item's on hand, each approved count of it (Q120), and every change to
+// its settings, with who and when,
 // newest first. The Activity Log lists every action in the app, one row per
 // action; History lists one item, one row per ledger row, so a receipt of
 // three items shows here as the one line about this item.
@@ -8,7 +9,7 @@
 // per material (owner, 2026-10-04), one item likely gets well under a few
 // hundred rows a year.
 
-const { describeChange, howItCame, noted, ENTRY_NAMES } = require('../settings/activity.js');
+const { describeChange, howItCame, noted, countLabel, appHad, ENTRY_NAMES } = require('../settings/activity.js');
 
 // Each ledger row of the item, with what its detail is made from. A trim's
 // other row (pair: a correction is one row, a trim two) gives the other length; a reversal's original (o), the
@@ -43,6 +44,29 @@ const SETTINGS_ROWS = `
    WHERE (l.target_table = 'items' AND l.target_id = $1)
       OR (l.target_table = 'pack_sizes' AND (COALESCE(l.new_value, l.old_value) ->> 'item_id')::bigint = $1)`;
 
+// Each approved count that includes the item (owner, Q120): on hand starts
+// from it, with no ledger row, so without this an item's number could have
+// nothing under it. It sits at its moment, when it was true (ADR 0002).
+// Rejected and draft counts change nothing, so they are not here.
+const COUNT_ROWS = `
+  SELECT c.counted_at AS at, l.id AS log_id, who.name AS who, c.kind, pg_catalog.to_char(c.closes, 'YYYY-MM') AS closes,
+         counter.name AS counted_by, pg_catalog.sum(cl.quantity)::integer AS counted, pg_catalog.min(cl.expected) AS expected,
+         pg_catalog.min(r.text) AS reason
+    FROM inv.counts c
+    JOIN inv.count_lines cl ON cl.count_id = c.id AND cl.item_id = $1
+    JOIN inv.users who ON who.id = c.approved_by
+    JOIN inv.users counter ON counter.id = c.counted_by
+    JOIN inv.activity_log l ON l.target_table = 'counts' AND l.target_id = c.id AND l.action = 'approve count'
+    LEFT JOIN inv.reasons r ON r.id = cl.reason_id
+   WHERE c.status = 'approved'
+   GROUP BY c.id, l.id, who.name, counter.name`;
+
+// A count's line in words: what was counted against the app's number.
+function describeCount(c) {
+  const result = c.counted === c.expected ? 'Matched' : appHad(c);
+  return `${countLabel(c)}: counted ${c.counted}, ${result}; counted by ${c.counted_by}`;
+}
+
 // What a ledger row was, in words, by the action that wrote it; a reversal
 // by its own words, whether a Reverse or a replacing entry wrote it.
 const DETAIL = {
@@ -64,7 +88,8 @@ const DETAIL = {
 async function readHistory(database, id) {
   const known = /^\d{1,18}$/.test(id ?? '') && (await database.read('SELECT 1 FROM inv.items WHERE id = $1', [id])).length;
   if (!known) return { error: 'That item is not in the catalog.' };
-  const [ledger, settings] = await Promise.all([database.read(LEDGER_ROWS, [id]), database.read(SETTINGS_ROWS, [id])]);
+  const [ledger, settings, counts] = await Promise.all(
+    [LEDGER_ROWS, SETTINGS_ROWS, COUNT_ROWS].map((sql) => database.read(sql, [id])));
   const entries = [
     ...ledger.map((g) => ({ at: g.at, log_id: g.log_id, id: Number(g.id), who: g.who, action: g.action, change: g.quantity,
       detail: DETAIL[g.reverses ? 'reverse' : g.action](g), reversed: g.reversed,
@@ -73,6 +98,9 @@ async function readHistory(database, id) {
       reversal: g.reverses !== null })),
     ...settings.map((s) => ({ at: s.at, log_id: s.log_id, who: s.who, action: s.action, change: null,
       detail: describeChange(s.action, s.target_table, s.was, s.now) })),
+    // No id: a count is never reversed; a new count replaces it.
+    ...counts.map((c) => ({ at: c.at, log_id: c.log_id, who: c.who, action: 'approve count', change: c.counted - c.expected,
+      detail: describeCount(c) })),
   ];
   // Newest first, then the latest action, then the row written last.
   entries.sort((a, b) => b.at - a.at || Number(b.log_id) - Number(a.log_id) || Number(b.id) - Number(a.id));

@@ -18,7 +18,7 @@ const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js
 const { readActivity } = require('./settings/activity.js');
 const { readHistory } = require('./inventory/history.js');
 const {
-  listCatalog, listPos, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
+  listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -41,14 +41,18 @@ const TEMPORARY_OPEN = new Set([
 const PAGE_FILES = {
   '/inventory': ['inventory/overview.html', 'text/html'],
   '/inventory/receive': ['inventory/receive.html', 'text/html'],
+  '/inventory/count': ['inventory/count.html', 'text/html'],
   '/settings/users': ['settings/users.html', 'text/html'],
   '/settings/pack-sizes': ['settings/catalog.html', 'text/html'],
   '/settings/suppliers': ['settings/catalog.html', 'text/html'],
   '/settings/reasons': ['settings/catalog.html', 'text/html'],
   '/settings/lvl-thresholds': ['settings/catalog.html', 'text/html'],
+  '/settings/working-day': ['settings/catalog.html', 'text/html'],
+  '/settings/count-approval': ['settings/catalog.html', 'text/html'],
   '/activity': ['settings/activity.html', 'text/html'],
   '/password': ['settings/password.html', 'text/html'],
   '/app-header.js': ['settings/app-header.js', 'application/javascript'],
+  '/new-item.js': ['inventory/new-item.js', 'application/javascript'],
 };
 
 // Express 4 does not catch a rejected promise: without this, an async
@@ -151,6 +155,14 @@ function createApp({ database, sessionSecret }) {
   }));
   app.get('/api/pos', catchAsync(async (_req, res) => {
     res.json({ ok: true, pos: await listPos(database) });
+  }));
+  app.get('/api/counts', catchAsync(async (_req, res) => {
+    res.json({ ok: true, counts: await listCounts(database) });
+  }));
+  app.get('/api/counts/review', catchAsync(async (req, res) => {
+    const review = await readCountReview(database, req.query.id);
+    if (!review) return res.status(404).json({ ok: false, error: 'That count is not on the list.' });
+    res.json({ ok: true, ...review });
   }));
   // An item's History (story 55).
   app.get('/api/items/history', catchAsync(async (req, res) => {
