@@ -28,7 +28,8 @@
   with no time box (story 61) and to fill in, packs × pack size + loose, a
   line per pack size (stories 62–64, S74). A row left blank is not counted;
   0 is an empty rack (owner, Q103). Save draft keeps it and changes nothing
-  (story 66); Submit sends it for approval (story 67). An item the catalog
+  (story 66); Submit sends it for approval (story 67); Discard draft ends a
+  draft nobody will finish, after a warning (owner, Q149). An item the catalog
   lacks is added in one click from the box under the sheet (story 4).
 
   Group C (stories 69–76, 80): a count waiting for approval opens Review.
@@ -98,12 +99,17 @@
         <button type="button" class="ghost" id="missing-add" hidden></button>
         <span class="sub" id="missing-why"></span>
       </div>
-      <div class="row no-print" style="margin-top:10px">
+      <div class="row no-print" style="margin-top:10px" id="sheet-buttons">
         <button type="button" class="ghost" id="sheet-save">Save draft</button>
         <button id="sheet-submit">Submit for approval</button>
         <button type="button" class="ghost" id="sheet-close">Close sheet</button>
+        <button type="button" class="ghost" id="sheet-discard">Discard draft</button>
       </div>
-      <p class="sub no-print">Fill in what you find: packs × pack size, plus loose pieces. A row left blank is not counted; type 0 for an empty rack. Use + to add a line for an item sitting in packs of another size. Save draft keeps your work and changes nothing; Submit sends the count for someone else to approve.</p>
+      <div class="no-print" id="sheet-warning" hidden role="alert">
+        <p>Discarding is final. The draft stays on the record but is never counted, and it no longer asks entries "before or after the count?".</p>
+        <div class="row"><button type="button" id="sheet-discard-yes">Yes, discard this draft</button><button type="button" class="ghost" id="sheet-keep">Go back</button></div>
+      </div>
+      <p class="sub no-print">Fill in what you find: packs × pack size, plus loose pieces. A row left blank is not counted; type 0 for an empty rack. Use + to add a line for an item sitting in packs of another size. Save draft keeps your work and changes nothing; Submit sends the count for approval.</p>
     </form>
   </section>
 
@@ -306,6 +312,7 @@
   // any item its lines name, each with its saved lines or one blank row.
   function openSheet(count) {
     open = count;
+    keepDraft();
     const f = family(count.family);
     el('sheet').hidden = false;
     el('sheet-title').textContent = count.family_name + (count.kind === 'monthly' ? ' monthly count' : ' spot check');
@@ -518,7 +525,7 @@
     return { key: crypto.randomUUID(), id: open.id, version: open.version, closes: el('closes')?.value || null, lines };
   }
 
-  // Saves or submits the sheet. A reply that never arrives keeps the same
+  // Saves, submits or discards the sheet. A reply that never arrives keeps the same
   // body, retry key included, so "Try again" acts once. A stale screen opens
   // the count as the other save left it.
   async function saveSheet(route, body) {
@@ -529,6 +536,10 @@
       if (count.status === 'waiting') {
         closeSheet();
         say('The ' + count.family_name + ' count was submitted for approval. Until it is approved, it changes no on hand.', 'ok');
+      } else if (count.status === 'discarded') {
+        counts = counts.filter((c) => c.id !== count.id);
+        closeSheet();
+        say('The ' + count.family_name + ' draft was discarded. It stays on the record and changes nothing.', 'ok');
       } else {
         open = count;
         say('Draft saved. It changes nothing until it is submitted and approved.', 'ok');
@@ -537,6 +548,7 @@
     } catch (err) {
       say(err.message + (err.current ? ' The sheet now shows the count as it was saved.' : ''), 'bad',
         err.unconfirmed ? () => saveSheet(route, body) : null);
+      keepDraft();
       if (err.current) {
         counts = counts.map((c) => (c.id === err.current.id ? err.current : c));
         if (err.current.status === 'draft') openSheet(err.current); else closeSheet();
@@ -551,6 +563,24 @@
     e.preventDefault();
     el('sheet-submit').disabled = true;
     saveSheet('/api/counts/submit', sheetRequest()).finally(() => { el('sheet-submit').disabled = false; });
+  });
+
+  // ── Discard a draft (owner, Q149) ─────────────────────────────────────────
+  // Asks once more first, in the page, as Approve does. The database says who
+  // may: the person who started it, or an admin.
+  function keepDraft() {
+    el('sheet-warning').hidden = true;
+    el('sheet-buttons').hidden = false;
+  }
+  el('sheet-discard').addEventListener('click', () => {
+    el('sheet-buttons').hidden = true;
+    el('sheet-warning').hidden = false;
+  });
+  el('sheet-keep').addEventListener('click', keepDraft);
+  el('sheet-discard-yes').addEventListener('click', () => {
+    el('sheet-discard-yes').disabled = true;
+    saveSheet('/api/counts/discard', { key: crypto.randomUUID(), id: open.id, version: open.version })
+      .finally(() => { el('sheet-discard-yes').disabled = false; });
   });
 
   load();

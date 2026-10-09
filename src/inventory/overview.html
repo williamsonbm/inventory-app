@@ -86,7 +86,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, itemLabel, unitShort, inOrderUnit, showTime } = AppHeader;
+  const { send, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -504,6 +504,8 @@
     try {
       say(done(await apply(await send(route, body))), 'ok');
     } catch (err) {
+      // Not painted again: the form keeps what was typed, for Cancel.
+      if (askTiming(err, (timing) => save(route, { ...body, timing }, done, apply))) return;
       if (err.current) items = items.map((i) => (i.id === err.current.id ? { ...i, ...err.current } : i));   // keeps its figures
       say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done, apply) : null);
     }

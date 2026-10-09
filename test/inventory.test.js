@@ -701,12 +701,18 @@ test('History lists each approved count of the item, with what it changed; a rej
   assert.equal(Date.parse(entries[1].at), Date.parse(unmatched.counted_at), 'a count sits at its moment, when it was true');
 });
 
-test('a second person approves a waiting count from its review; the count-approval switch is the admin\'s, and the Activity Log says each step (stories 69–76; Q110, Q113)', async () => {
+test('a second person approves a waiting count from its review; the count-approval switch is the admin\'s, and the Activity Log says each step (stories 69–76; Q110, Q113, Q148)', async () => {
   const ctx = await withAdmin();
   const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
   await goLive(ctx.db, 'hangers');
   await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
   const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
+  // The switch starts off (Q148): everyone reads it, only an admin changes it.
+  const seen = await read(bob, '/api/count-approval');
+  assert.deepEqual(seen.setting, [{ name: 'count_approval_by_another', value: false, version: 2 }]);
+  const denied = await post(ctx.base, '/api/count-approval/set', { key: crypto.randomUUID(), version: 2, on: true }, bob.cookie);
+  assert.equal(denied.status, 403);
+  assert.equal((await change(ctx, '/api/count-approval/set', { version: 2, on: true })).body.setting.value, true);
   const waiting = async (loose = 5) => {
     const started = (await change(bob, '/api/counts/start', { family: 'hangers', kind: 'spot check' })).body.count;
     return (await change(bob, '/api/counts/submit',
@@ -736,12 +742,7 @@ test('a second person approves a waiting count from its review; the count-approv
   assert.equal(rejected.body.count.status, 'rejected');
   assert.deepEqual((await read(bob, '/api/counts')).counts, [], 'nothing waits any more');
 
-  // The switch: everyone reads it, only an admin changes it.
-  const seen = await read(bob, '/api/count-approval');
-  assert.deepEqual(seen.setting, [{ name: 'count_approval_by_another', value: true, version: 1 }]);
-  const denied = await post(ctx.base, '/api/count-approval/set', { key: crypto.randomUUID(), version: 1, on: false }, bob.cookie);
-  assert.equal(denied.status, 403);
-  assert.equal((await change(ctx, '/api/count-approval/set', { version: 1, on: false })).body.setting.value, false);
+  assert.equal((await change(ctx, '/api/count-approval/set', { version: 3, on: false })).body.setting.value, false);
   const third = await waiting(4);
   const mine = await change(bob, '/api/counts/approve',
     { id: third.id, version: third.version, answers: { reasons: { [hanger.id]: reason } } });
@@ -754,5 +755,42 @@ test('a second person approves a waiting count from its review; the count-approv
     ['Ann Lee', 'approve count', 'Hangers count', 'approved; lines: 5 LUS28 (the app had 0)'],
   ]);
   assert.deepEqual(entries.filter((e) => e.action === 'set count approval').map((e) => [e.target, e.change]),
-    [['Count approval', 'second person must approve: yes → no']]);
+    [['Count approval', 'second person must approve: yes → no'], ['Count approval', 'second person must approve: no → yes']]);
+});
+
+test('an entry near a count is refused with the counts to pick from, then saved with the answer; History and the Activity Log say how it was timed (stories 77, 78; Q146, Q149)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  await goLive(ctx.db, 'hangers');
+  const started = (await change(ctx, '/api/counts/start', { family: 'hangers', kind: 'spot check' })).body.count;
+  const count = (await change(ctx, '/api/counts/submit',
+    { id: started.id, version: started.version, closes: null, lines: [{ item_id: hanger.id, loose: 3 }] })).body.count;
+  await change(ctx, '/api/counts/approve', { id: count.id, version: count.version, answers: {} });
+
+  const { reasons } = await read(ctx, '/api/reasons');
+  const scrap = (timing) => change(ctx, '/api/items/correct',
+    { item_id: hanger.id, quantity: -2, reason_id: reasons.find((r) => r.text === 'Damaged – scrapped').id, note: null, timing });
+  const asked = await scrap(undefined);
+  assert.equal(asked.status, 409);
+  assert.equal(asked.body.error, 'Was this before or after the count? Pick one, then save again.');
+  assert.deepEqual(asked.body.current, { counts: [{ id: count.id, family_name: 'Hangers', kind: 'spot check', counted_at: count.counted_at }] });
+  const saved = await scrap({ before: count.id });
+  assert.equal(saved.status, 200, saved.body.error);
+  assert.equal((await read(ctx, '/api/items')).items[0].on_hand, 3, 'the count held the 2 scrapped before it');
+
+  // Saved after the count was approved, the entry still sits below it: it came first.
+  const { entries } = await read(ctx, `/api/items/history?id=${hanger.id}`);
+  const timedWords = /^Damaged – scrapped; timed before the count of [A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2}\s[AP]M$/;
+  assert.deepEqual(entries.slice(0, 2).map((e) => e.action), ['approve count', 'correct']);
+  assert.match(entries[1].detail, timedWords);
+  assert.equal(Date.parse(entries[1].at), Date.parse(count.counted_at), 'the entry\'s time is the count\'s moment');
+
+  const draft = (await change(ctx, '/api/counts/start', { family: 'hangers', kind: 'monthly' })).body.count;
+  const discarded = await change(ctx, '/api/counts/discard', { id: draft.id, version: draft.version });
+  assert.equal(discarded.body.count.status, 'discarded', discarded.body.error);
+  assert.deepEqual((await read(ctx, '/api/counts')).counts, [], 'a discarded draft leaves the Counts list');
+
+  const log = (await read(ctx, '/api/activity')).entries;
+  assert.match(log.find((e) => e.action === 'correct').change.replace(/^added: on hand −2, /, ''), timedWords);
+  assert.deepEqual(log.filter((e) => e.action === 'discard count').map((e) => [e.target, e.change]), [['Hangers count', 'discarded']]);
 });

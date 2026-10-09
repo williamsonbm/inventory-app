@@ -63,6 +63,9 @@ async function listCatalog(database) {
 // version the sheet read, the month it closes and the sheet's rows.
 const draftArgs = (b) => [b.id, b.version, b.closes ?? null, JSON.stringify(b.lines)];
 
+// { before: count id } or { after: count id }, or nothing when the page was not asked.
+const timing = (b) => (b.timing == null ? null : JSON.stringify(b.timing));
+
 // Route → the database function it calls, its arguments after the actor and
 // the retry key, the name its answer goes back under, and whether only an
 // admin may make it (the database function checks that again).
@@ -95,18 +98,20 @@ const CATALOG_CHANGES = {
   // A delivery against a PO (po_id and the version the screen read) or
   // without one (supplier_id). replaces: a receipt line it replaces, from
   // History → Reverse → Reverse and enter again; likewise for a correction
-  // and a trim.
+  // and a trim. timing: the answer to "before or after the count?", for
+  // each of the three (group D).
   '/api/receipts/receive': {
-    fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines), b.replaces ?? null], as: 'receipt',
+    fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines), b.replaces ?? null, timing(b)],
+    as: 'receipt',
   },
   // Inventory → Overview → an item → Correct on hand: a change in pieces, + or −.
   '/api/items/correct': {
-    fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note, b.replaces ?? null], as: 'correction',
+    fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note, b.replaces ?? null, timing(b)], as: 'correction',
   },
   // Inventory → Overview → an LVL item → Trim: boards cut down to a shorter length;
   // unretire: the page said a retired length comes back into use (Q39).
   '/api/items/trim': {
-    fn: 'trim', args: (b) => [b.item_id, b.length_ft, b.boards, b.note, b.unretire === true, b.replaces ?? null], as: 'trim',
+    fn: 'trim', args: (b) => [b.item_id, b.length_ft, b.boards, b.note, b.unretire === true, b.replaces ?? null, timing(b)], as: 'trim',
   },
   // Inventory → Overview → an item → History → Reverse: a receipt line, a
   // correction or a trim entered by mistake (stories 42, 43, 49).
@@ -127,6 +132,8 @@ const CATALOG_CHANGES = {
   // approves a count they did not work on; the database says who may.
   '/api/counts/approve': { fn: 'approve_count', args: (b) => [b.id, b.version, JSON.stringify(b.answers ?? {})], as: 'count' },
   '/api/counts/reject': { fn: 'reject_count', args: (b) => [b.id, b.version], as: 'count' },
+  // A draft nobody will finish (Q149): its starter or an admin; the database says who.
+  '/api/counts/discard': { fn: 'discard_count', args: (b) => [b.id, b.version], as: 'count' },
   // Settings → Inventory → Count approval. Admin-only (owner, Q110).
   '/api/count-approval/set': {
     fn: 'set_count_approval_by_another', args: (b) => [b.version, b.on], as: 'setting', adminOnly: true,

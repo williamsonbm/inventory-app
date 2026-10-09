@@ -104,6 +104,35 @@ window.AppHeader = (() => {
     box.append(note);
   }
 
+  // "Was this before or after the count?" (stories 77, 78): a receipt,
+  // correction or trim saved soon after a count is refused with the counts
+  // to pick from, oldest first (err.current.counts). Shows the question in
+  // #message, one button per answer: before the first count, between each
+  // two, after the last. `resend(timing)` saves the same entry again with
+  // the answer. Cancel saves nothing and leaves the form as typed. With no
+  // count left to ask about (one was rejected meanwhile), the one button
+  // saves without an answer. Answers whether `err` was that refusal.
+  function askTiming(err, resend) {
+    const counts = err.current && err.current.counts;
+    if (!Array.isArray(counts)) return false;
+    say(err.message, 'bad');
+    const note = el('message').firstChild;
+    const count = (c) => 'the ' + c.family_name + ' count of ' + showTime(c.counted_at);
+    const last = counts[counts.length - 1];
+    const answers = !last ? [['Save', null]] : counts.map((c, n) =>
+      [n ? 'Between ' + count(counts[n - 1]) + ' and ' + count(c) : 'Before ' + count(c), { before: c.id }])
+      .concat([['After ' + count(last), { after: last.id }]]);
+    const button = (label, className, onClick) => {
+      const pick = document.createElement('button');
+      Object.assign(pick, { type: 'button', className, textContent: label });
+      pick.addEventListener('click', onClick);
+      note.append(' ', pick);
+    };
+    for (const [label, timing] of answers) button(label, '', () => resend(timing));
+    button('Cancel', 'ghost', () => say(''));
+    return true;
+  }
+
   // Reads every route a page lists from at once; null, with the reason said
   // in #message, if any fails.
   async function getAll(routes) {
@@ -203,5 +232,5 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, getAll, say, itemLabel, unitShort, inOrderUnit, showTime, today, familyBar, typingIn };
+  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, today, familyBar, typingIn };
 })();

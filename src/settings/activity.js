@@ -127,6 +127,12 @@ const replaced = (row) => (row.reversed ? `; reverses ${reversalLines(row.revers
 
 const noted = (row) => (row.note ? `; note: ${row.note}` : '');
 
+// How an entry saved soon after a count was timed, by the person's answer
+// (stories 77, 78; Q146): "; timed before the count of Oct 9, 2026, 8:00 AM".
+const officeTime = new Intl.DateTimeFormat('en-US', { timeZone: OFFICE_TIME_ZONE, dateStyle: 'medium', timeStyle: 'short' });
+const timed = (row) => (row.timed
+  ? `; timed ${row.timed.before ? 'before' : 'after'} the count of ${officeTime.format(new Date(row.timed.counted_at))}` : '');
+
 // The entry a reversal undoes, by the action that wrote it.
 const ENTRY_NAMES = { receive: 'the receipt', correct: 'the correction', trim: 'the trim' };
 
@@ -191,7 +197,7 @@ const appHad = (c) => `the app had ${c.expected}${c.reason ? `; ${c.reason}` : '
 // line of loose pieces only is just its pieces ("0 HUS26").
 function describeCountChange(was, now) {
   const changes = [];
-  if (now.status === 'rejected') return 'rejected';
+  if (now.status === 'rejected' || now.status === 'discarded') return now.status;
   if (now.status === 'approved') {
     const lines = now.lines.map((l) => `${l.quantity} ${l.item}${l.matched ? '' : ` (${appHad(l)})`}`);
     return `approved; lines: ${lines.join(', ')}`;
@@ -228,11 +234,11 @@ function describeChange(action, table, was, now) {
   if (!now) return 'removed';
   if (!was) {
     const added = (ADDED[action] ?? ADDED[table])?.(now);
-    return added ? `added: ${added}${replaced(now)}` : 'added';
+    return added ? `added: ${added}${replaced(now)}${timed(now)}` : 'added';
   }
   if (CHANGED[table]) return CHANGED[table](was, now);
   return Object.keys(now).filter((k) => k !== 'version' && JSON.stringify(was[k]) !== JSON.stringify(now[k]))
     .map((k) => `${k}: ${was[k]} → ${now[k]}`).join('; ');
 }
 
-module.exports = { readActivity, describeChange, howItCame, noted, countLabel, appHad, ENTRY_NAMES };
+module.exports = { readActivity, describeChange, howItCame, noted, timed, countLabel, appHad, ENTRY_NAMES };

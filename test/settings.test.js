@@ -60,24 +60,24 @@ test('an admin sets the working-day window, logged was → now, and the window f
   assert.equal((await set(2, 20)).value, 20, '20 is the most');
 });
 
-test('an admin switches off "a second person approves a count", logged was → now (owner, Q110, Q114)', async () => {
+test('an admin switches on "a second person approves a count", off to start with, logged was → now (owner, Q110, Q114, Q148)', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', HASH);
   const set = (who, version, on) => call(db, 'set_count_approval_by_another', who.id, crypto.randomUUID(), version, on);
 
-  const off = await set(ann, 1, false);
-  assert.deepEqual(off, { name: 'count_approval_by_another', value: false, version: 2 });
+  const on = await set(ann, 2, true);
+  assert.deepEqual(on, { name: 'count_approval_by_another', value: true, version: 3 });
   const last = (await logRows(db)).at(-1);
   assert.deepEqual([last.action, last.old_value, last.new_value],
-    ['set count approval', { name: 'count_approval_by_another', value: true, version: 1 }, off]);
+    ['set count approval', { name: 'count_approval_by_another', value: false, version: 2 }, on]);
 
   const before = (await logRows(db)).length;
   const cases = [
-    ['a non-admin', () => set(bob, 2, true), 'IV403'],
-    ['neither on nor off', () => set(ann, 2, null), 'IV400'],
-    ['a stale version', () => set(ann, 1, true), 'IV409'],
-    ['no change', () => set(ann, 2, false), 'IV422'],
+    ['a non-admin', () => set(bob, 3, false), 'IV403'],
+    ['neither on nor off', () => set(ann, 3, null), 'IV400'],
+    ['a stale version', () => set(ann, 2, false), 'IV409'],
+    ['no change', () => set(ann, 3, true), 'IV422'],
   ];
   for (const [label, attempt, code] of cases) await refused(attempt(), code, label);
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');

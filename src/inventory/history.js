@@ -9,7 +9,7 @@
 // per material (owner, 2026-10-04), one item likely gets well under a few
 // hundred rows a year.
 
-const { describeChange, howItCame, noted, countLabel, appHad, ENTRY_NAMES } = require('../settings/activity.js');
+const { describeChange, howItCame, noted, timed, countLabel, appHad, ENTRY_NAMES } = require('../settings/activity.js');
 
 // Each ledger row of the item, with what its detail is made from. A trim's
 // other row (pair: a correction is one row, a trim two) gives the other length; a reversal's original (o), the
@@ -20,7 +20,8 @@ const LEDGER_ROWS = `
          r.text AS reason, rc.bol, po.number AS po_number, s.name AS supplier,
          inv.po_line_number(g.po_line_id) AS po_line, g.packs, g.pack_size, g.pack_kind, g.loose,
          l.new_value -> 'pack_sizes_added' AS pack_sizes_added, inv.item_label(i) AS item, other.length_ft AS other_length,
-         (l.new_value ->> 'item_added')::boolean AS added, (l.new_value ->> 'item_unretired')::boolean AS unretired
+         (l.new_value ->> 'item_added')::boolean AS added, (l.new_value ->> 'item_unretired')::boolean AS unretired,
+         l.new_value -> 'timed' AS timed
     FROM inv.ledger g
     JOIN inv.items i ON i.id = g.item_id
     JOIN inv.activity_log l ON l.id = g.action_id
@@ -92,7 +93,7 @@ async function readHistory(database, id) {
     [LEDGER_ROWS, SETTINGS_ROWS, COUNT_ROWS].map((sql) => database.read(sql, [id])));
   const entries = [
     ...ledger.map((g) => ({ at: g.at, log_id: g.log_id, id: Number(g.id), who: g.who, action: g.action, change: g.quantity,
-      detail: DETAIL[g.reverses ? 'reverse' : g.action](g), reversed: g.reversed,
+      detail: DETAIL[g.reverses ? 'reverse' : g.action](g) + timed(g), reversed: g.reversed,
       // A reversal row, whether Reverse or a replacing entry wrote it: never
       // reversed again (Q44), so the page offers no Reverse on it.
       reversal: g.reverses !== null })),
@@ -102,8 +103,11 @@ async function readHistory(database, id) {
     ...counts.map((c) => ({ at: c.at, log_id: c.log_id, who: c.who, action: 'approve count', change: c.counted - c.expected,
       detail: describeCount(c) })),
   ];
-  // Newest first, then the latest action, then the row written last.
-  entries.sort((a, b) => b.at - a.at || Number(b.log_id) - Number(a.log_id) || Number(b.id) - Number(a.id));
+  // Newest first, then the latest action, then the row written last. An
+  // entry timed before a count sits at the count's moment, under it, even
+  // when saved after the count was approved (story 77).
+  const isCount = (e) => (e.action === 'approve count' ? 1 : 0);
+  entries.sort((a, b) => b.at - a.at || isCount(b) - isCount(a) || Number(b.log_id) - Number(a.log_id) || Number(b.id) - Number(a.id));
   return { entries: entries.map(({ log_id: _, ...e }) => e) };
 }
 

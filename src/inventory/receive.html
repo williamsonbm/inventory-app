@@ -119,7 +119,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, getAll, say, itemLabel, today, unitShort, inOrderUnit } = AppHeader;
+  const { send, getAll, say, askTiming, itemLabel, today, unitShort, inOrderUnit } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -606,6 +606,7 @@
       paintReplacing();
       await refresh();
     } catch (err) {
+      if (askTiming(err, (timing) => saveReceipt({ ...body, timing }))) return;
       const restart = err.current ? ' Click Receive to start again from it as it is now.' : '';
       say(err.message + restart, 'bad', err.unconfirmed ? () => saveReceipt(body) : null);
       if (err.current) {
