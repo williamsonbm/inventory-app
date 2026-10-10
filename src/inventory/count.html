@@ -61,7 +61,7 @@
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
     <span class="label" id="task-label">Task</span>
-    <nav class="seg" aria-labelledby="task-label"><a href="/inventory">Overview</a><a href="/inventory/receive">Receive</a><a href="/inventory/count" aria-current="page">Count</a></nav>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory">Overview</a><a href="/inventory/receive">Receive</a><a href="/inventory/count" aria-current="page">Count</a><a href="/inventory/month-end">Month-end</a></nav>
   </div>
 </header>
 
@@ -88,6 +88,7 @@
       <span id="sheet-closes"></span>
       <button type="button" class="ghost" id="sheet-print">Print sheet</button>
     </div>
+    <p class="note no-print" id="sheet-closed" hidden role="alert"></p>
     <p class="sub" id="sheet-started"></p>
     <form id="sheet-form">
       <div class="tw"><table class="one-line">
@@ -164,6 +165,7 @@
   let current = null;  // the family the family bar shows, or 'all'
   let open = null;     // the draft count whose sheet is open, or null
   let reasons = [];    // the reasons an Unmatched item may take
+  let closed = new Set();  // "family YYYY-MM" for each month that has a month-end record
   let review = null;   // { count, entries, on_hand, nothing_before, answers, picks } for the waiting count under review, or null
 
   const family = (code) => families.find((f) => f.code === code);
@@ -171,9 +173,11 @@
   const sizeOnFile = (itemId, kind) => packSizes.find((p) => p.item_id === itemId && p.kind === kind)?.pieces;
 
   async function load() {
-    const got = await getAll(['/api/items', '/api/pack-sizes', '/api/pos', '/api/counts', '/api/reasons']);
+    const got = await getAll(['/api/items', '/api/pack-sizes', '/api/pos', '/api/counts', '/api/reasons', '/api/month-end']);
     if (!got) return;
-    [{ families, items, gradeOrder }, { pack_sizes: packSizes }, { pos }, { counts }, { reasons }] = got;
+    let records;
+    [{ families, items, gradeOrder }, { pack_sizes: packSizes }, { pos }, { counts }, { reasons }, { records }] = got;
+    closed = new Set(records.map((r) => r.family + ' ' + r.closes));
     reasons = reasons.filter((r) => r.active && !r.entry);
     // Review on the Overview opens here with ?review=<count id>, on that
     // count's family (story 68). Approved or rejected since, it is gone.
@@ -322,6 +326,7 @@
     el('sheet-title').textContent = count.family_name + ' ' + countKind(count.kind);
     el('sheet-closes').innerHTML = count.kind === 'monthly'
       ? '<label>closes: <input type="month" id="closes" value="' + esc(count.closes) + '" required></label>' : '';
+    paintClosed();
     el('sheet-started').textContent = 'Started ' + showTime(count.counted_at) + ' by ' + count.counted_by +
       '. The count is true as of then; anything received or corrected after it counts on top.';
     document.querySelector('th[data-lf]').hidden = f.code !== 'lumber';
@@ -336,6 +341,18 @@
     paintStart();
     paintCounts();
   }
+  // A monthly count for a month that already has a month-end record is
+  // refused at Submit (owner, Q142); the sheet says so from the start, while
+  // the month can still be changed.
+  function paintClosed() {
+    const month = el('closes')?.value;
+    const taken = open && month && closed.has(open.family + ' ' + month);
+    el('sheet-closed').hidden = !taken;
+    el('sheet-closed').textContent = taken ? open.family_name + ' already has a month-end record for ' + monthName(month) +
+      '. Change the month this count closes, or it will be refused at Submit.' : '';
+  }
+  el('sheet-closes').addEventListener('input', paintClosed);
+
   function closeSheet() {
     open = null;
     el('sheet').hidden = true;

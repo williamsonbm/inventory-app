@@ -556,10 +556,13 @@ test('a recount of one item changes only that item; an entry before the count, a
 
 test('a family has at most one approved monthly count per month (design, "Rules the database enforces")', async () => {
   const { db, ann, bob, hanger, approve } = await withTwo();
-  const monthly = async () => submit(db, ann,
-    await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'monthly', '2026-08'), [{ item_id: hanger.id, loose: 0 }]);
-  await approve(bob, await monthly());
-  const err = await refused(approve(bob, await monthly()), 'IV422', 'a second approved August count');
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  const monthly = async (item) => submit(db, ann,
+    await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'monthly', '2026-08'), [{ item_id: item.id, loose: 0 }]);
+  // Both waiting before either is approved: Submit cannot refuse the second (Q142).
+  const [first, second] = [await monthly(hanger), await monthly(other)];
+  await approve(bob, first);
+  const err = await refused(approve(bob, second), 'IV422', 'a second approved August count');
   assert.equal(err.message, 'Hangers already has an approved monthly count closing August 2026.');
 });
 
@@ -736,4 +739,117 @@ test('a draft is discarded by the person who started it or an admin; it stays on
     'IV422', 'a discarded count stays as it is'));
   await call(db, 'reject_count', ann.id, crypto.randomUUID(), waiting.id, waiting.version);
   assert.equal((await scrap(db, ann, hanger, 1)).timed, undefined, 'a discarded draft is not asked about');
+});
+
+// Group F (stories 83–88; design S11): the month-end record and its
+// revisions, and last counted in the one calculation (#81 "Database").
+
+test('last counted is in the one calculation: the moment of the item\'s latest approved count that includes it (story 81)', async () => {
+  const { db, ann, bob, hanger, counted, approve, reject } = await withTwo();
+  const other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  assert.deepEqual(await figure(db, 'counted_at'), { [hanger.id]: null, [other.id]: null }, 'never counted');
+
+  const first = await approve(bob, await counted([{ item_id: hanger.id, loose: 4 }]));
+  await reject(bob, await counted([{ item_id: hanger.id, loose: 5 }]));
+  assert.deepEqual(await figure(db, 'counted_at'), { [hanger.id]: new Date(first.counted_at), [other.id]: null },
+    'a rejected count, and a count leaving an item out, change nothing');
+});
+
+// withTwo, plus an approved August monthly count of LUS28 (10) and HUS26 (5),
+// and a helper to correct its month-end record as `who`.
+async function withAugust() {
+  const ctx = await withTwo();
+  const { db, ann, bob, hanger, approve } = ctx;
+  ctx.other = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HUS26' });
+  const draft = await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'monthly', '2026-08');
+  ctx.august = await approve(bob, await submit(db, ann, draft, [{ item_id: hanger.id, loose: 10 }, { item_id: ctx.other.id, loose: 5 }]));
+  ctx.record = (id = ctx.august.id) => as(db, APP, async (app) =>
+    (await app.query('SELECT inv.month_end_json($1) AS r', [id])).rows[0].r);
+  ctx.correct = (who, record, why, lines) => call(db, 'correct_month_end', who.id, crypto.randomUUID(), record.id, record.revision, why,
+    JSON.stringify(lines));
+  return ctx;
+}
+
+test('an admin corrects a month-end record as a new revision: who, when, why, was → now; the original stays (stories 83, 85, 87; S11)', async () => {
+  const { db, ann, hanger, other, august, record, correct } = await withAugust();
+  const original = await record();
+  assert.deepEqual(original, {
+    id: august.id, family: 'hangers', family_name: 'Hangers', closes: '2026-08', counted_at: august.counted_at,
+    identity: ['sku'], revision: 1, revisions: [],
+    lines: [{ item_id: hanger.id, item: 'LUS28', sku: 'LUS28', quantity: 10 }, { item_id: other.id, item: 'HUS26', sku: 'HUS26', quantity: 5 }],
+  });
+
+  const second = await correct(ann, original, ' Rack 3 was counted twice ', [{ item_id: hanger.id, quantity: 7 }, { item_id: other.id, quantity: 5 }]);
+  const last = (await logRows(db)).at(-1);
+  assert.deepEqual([last.action, Number(last.actor_id), last.target_table, Number(last.target_id), last.old_value, last.new_value],
+    ['correct month-end', ann.id, 'counts', august.id, original, second]);
+  assert.deepEqual(second, {
+    ...original, revision: 2,
+    lines: [{ ...original.lines[0], quantity: 7 }, original.lines[1]],
+    revisions: [{ revision: 2, by: 'Ann Lee', at: second.revisions[0]?.at, why: 'Rack 3 was counted twice',
+                  changes: [{ item_id: hanger.id, item: 'LUS28', was: 10, now: 7 }] }],
+  }, 'an unchanged line is not part of the revision');
+  assert.equal(Date.parse(second.revisions[0].at), last.at.getTime(), 'when is the log row\'s moment');
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 7, [other.id]: 5 }, 'the latest count decides, at its newest revision');
+
+  const third = await correct(ann, second, 'Found 2 more', [{ item_id: hanger.id, quantity: 9 }]);
+  assert.deepEqual(third.revisions.map((r) => [r.revision, r.changes.map((c) => [c.was, c.now])]), [[2, [[10, 7]]], [3, [[7, 9]]]],
+    'was is the previous revision\'s figure');
+  const counted = await as(db, APP, async (app) => (await app.query('SELECT inv.count_json($1) AS c', [august.id])).rows[0].c);
+  assert.equal(counted.lines[0].quantity, 10, 'the approved count keeps what was counted');
+});
+
+test('a correction adds an item the count missed, counted at the count\'s moment; only an admin corrects a month-end record (stories 86, 85; #81 "Admin-only actions")', async () => {
+  const { db, ann, bob, hanger, other, august, record, correct, counted, approve } = await withAugust();
+  const missed = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HGUS26' });
+  const plate = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'plates', { sku: 'MP24' });
+  const original = await record();
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['Bob is not an admin', () => correct(bob, original, 'Missed one', [{ item_id: missed.id, quantity: 3 }]), 'IV403'],
+    ['no why', () => correct(ann, original, '  ', [{ item_id: missed.id, quantity: 3 }]), 'IV400'],
+    ['an item of another family', () => correct(ann, original, 'Missed one', [{ item_id: plate.id, quantity: 3 }]), 'IV400'],
+    ['an item listed twice', () => correct(ann, original, 'Missed one', [{ item_id: missed.id, quantity: 3 }, { item_id: missed.id, quantity: 4 }]), 'IV400'],
+    ['a quantity below 0', () => correct(ann, original, 'Missed one', [{ item_id: missed.id, quantity: -1 }]), 'IV400'],
+    ['a part of a piece', () => correct(ann, original, 'Missed one', [{ item_id: missed.id, quantity: 1.5 }]), 'IV400'],
+    ['nothing changed', () => correct(ann, original, 'Missed one', [{ item_id: hanger.id, quantity: 10 }]), 'IV422'],
+    ['a stale screen', () => correct(ann, { ...original, revision: 2 }, 'Missed one', [{ item_id: missed.id, quantity: 3 }]), 'IV409'],
+  ];
+  for (const [label, attempt, code] of cases) await refused(attempt(), code, label);
+  const spot = await approve(bob, await counted([{ item_id: hanger.id, loose: 10 }]));
+  const err = await refused(correct(ann, { id: spot.id, revision: 1 }, 'Missed one', [{ item_id: missed.id, quantity: 3 }]), 'IV422', 'a spot check');
+  assert.equal(err.message, 'Only an approved monthly count is a month-end record.');
+  assert.equal((await logRows(db)).length, before + 3, 'no refusal leaves a log row; the spot check left three');
+
+  const added = await correct(ann, original, 'Missed the top shelf', [{ item_id: missed.id, quantity: 3 }]);
+  assert.deepEqual(added.lines.map((l) => [l.item, l.quantity]), [['LUS28', 10], ['HUS26', 5], ['HGUS26', 3]], 'added after the count\'s lines');
+  assert.deepEqual(added.revisions[0].changes, [{ item_id: missed.id, item: 'HGUS26', was: null, now: 3 }]);
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 10, [other.id]: 5, [missed.id]: 3, [plate.id]: 0 });
+  assert.equal((await figure(db, 'counted_at'))[missed.id].getTime(), Date.parse(august.counted_at),
+    'the added item was counted when the count was');
+});
+
+test('a correction to a past month leaves on hand alone when a later count includes the item; the later count still decides (story 88; S11)', async () => {
+  const { db, ann, bob, hanger, other, august, record, correct, counted, approve, receive } = await withAugust();
+  await receive(other, 6, null, { after: august.id });
+  const later = await approve(bob, await counted([{ item_id: hanger.id, loose: 20 }]),
+    { reasons: { [hanger.id]: await reasonId(db, 'Unexplained') } });
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 20, [other.id]: 11 });
+
+  await correct(ann, await record(), 'Two bins were missed', [{ item_id: hanger.id, quantity: 7 }, { item_id: other.id, quantity: 4 }]);
+  assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 20, [other.id]: 10 },
+    'LUS28: the later count decides; HUS26: August, corrected, and the receipt after it');
+  assert.deepEqual(await figure(db, 'counted_at'), { [hanger.id]: new Date(later.counted_at), [other.id]: new Date(august.counted_at) });
+});
+
+test('a monthly count for a month that already has a month-end record is refused at Submit; its month can be changed first (Q142; story 83)', async () => {
+  const { db, ann, hanger } = await withAugust();
+  const draft = await save(db, ann, await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'monthly', '2026-08'),
+    [{ item_id: hanger.id, loose: 10 }]);
+  const before = (await logRows(db)).length;
+  const err = await refused(submit(db, ann, draft, draft.lines), 'IV422', 'August is already closed');
+  assert.equal(err.message, 'Hangers already has an approved monthly count closing August 2026. Change the month before you submit.');
+  assert.equal((await logRows(db)).length, before, 'the refusal leaves no log row');
+  assert.equal((await submit(db, ann, draft, draft.lines, '2026-07')).status, 'waiting', 'closing July instead');
 });

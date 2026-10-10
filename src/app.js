@@ -17,6 +17,7 @@ const { signIn, loadPerson, changePassword } = require('./auth/sign-in.js');
 const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js');
 const { readActivity } = require('./settings/activity.js');
 const { readHistory } = require('./inventory/history.js');
+const { listMonthEnd, readMonthEnd, monthEndCsv } = require('./inventory/month-end.js');
 const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
@@ -42,6 +43,7 @@ const PAGE_FILES = {
   '/inventory': ['inventory/overview.html', 'text/html'],
   '/inventory/receive': ['inventory/receive.html', 'text/html'],
   '/inventory/count': ['inventory/count.html', 'text/html'],
+  '/inventory/month-end': ['inventory/month-end.html', 'text/html'],
   '/settings/users': ['settings/users.html', 'text/html'],
   '/settings/pack-sizes': ['settings/catalog.html', 'text/html'],
   '/settings/suppliers': ['settings/catalog.html', 'text/html'],
@@ -163,6 +165,21 @@ function createApp({ database, sessionSecret }) {
     const review = await readCountReview(database, req.query.id);
     if (!review) return res.status(404).json({ ok: false, error: 'That count is not on the list.' });
     res.json({ ok: true, ...review });
+  }));
+  // Inventory → Month-end (stories 83–87): everyone reads the records and
+  // their CSVs; an admin corrects one (CATALOG_CHANGES).
+  app.get('/api/month-end', catchAsync(async (_req, res) => {
+    res.json({ ok: true, records: await listMonthEnd(database) });
+  }));
+  app.get('/api/month-end/record', catchAsync(async (req, res) => {
+    const record = await readMonthEnd(database, req.query.id);
+    if (!record) return res.status(404).json({ ok: false, error: 'That month-end record is not on the list.' });
+    res.json({ ok: true, record });
+  }));
+  app.get('/api/month-end/csv', catchAsync(async (req, res) => {
+    const csv = await monthEndCsv(database, req.query.id);
+    if (!csv) return res.status(404).json({ ok: false, error: 'That month-end record is not on the list.' });
+    res.attachment(csv.fileName).send(csv.text);
   }));
   // An item's History (story 55).
   app.get('/api/items/history', catchAsync(async (req, res) => {

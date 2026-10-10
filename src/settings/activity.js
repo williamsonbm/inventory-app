@@ -69,7 +69,7 @@ async function readActivity(database, { person, action, family, from, to, before
   const actions = actionRows.map((r) => r.name);
   const entries = page.map(({ id, target_table: table, item, target, was, now, ...entry }) => ({
     ...entry,
-    target: target ?? targetName(table, item, now || was),
+    target: target ?? targetName(entry.action, table, item, now || was),
     change: describeChange(entry.action, table, was, now),
   }));
   return { entries, before: nextBefore, actions, families };
@@ -92,9 +92,14 @@ const TARGET_NAMES = {
   ledger: (_item, row) => row.item ?? row.lines[0].item,  // a correction's item, a trim's long one, or a reversal's first
   families: (_item, row) => row.name,
   counts: (_item, row) => `${row.family_name} count`,
+  'correct month-end': (_item, row) => `${row.family_name} month-end, ${monthName(row.closes)}`,
   settings: (_item, row) => SETTINGS[row.name].label,
 };
-const targetName = (table, item, row) => TARGET_NAMES[table]?.(item, row) ?? null;
+const targetName = (action, table, item, row) => byAction(TARGET_NAMES, action, table)?.(item, row) ?? null;
+
+// A map's entry for an action where two actions write one table, else for
+// the table: a month-end correction writes a count's record, not the count.
+const byAction = (map, action, table) => map[action] ?? map[table];
 
 // What an addition added, beyond the name the row already shows, by its
 // action where two actions write one table (a trim and a correction both
@@ -211,6 +216,17 @@ function describeCountChange(was, now) {
   return changes.join('; ');
 }
 
+// One item's month-end correction: "10 → 7", or "added 3" for an item the
+// count missed (stories 85, 86).
+const correctionWords = (c) => (c.was === null ? `added ${c.now}` : `${c.was} → ${c.now}`);
+
+// What a month-end correction changed: "revision 2: LUS28 10 → 7, HGUS26
+// added 3; why: …".
+function describeMonthEndChange(_was, now) {
+  const { revision, changes, why } = now.revisions.at(-1);
+  return `revision ${revision}: ${changes.map((c) => `${c.item} ${correctionWords(c)}`).join(', ')}; why: ${why}`;
+}
+
 // Each setting: its name on the Settings page, and its change in words.
 const yesNo = (v) => (v ? 'yes' : 'no');
 const SETTINGS = {
@@ -221,24 +237,30 @@ const SETTINGS = {
 };
 const describeSettingChange = (was, now) => SETTINGS[now.name].describe(was, now);
 
-// A change told its own way, by the table it changed; any other table's
-// change lists each field that differs.
-const CHANGED = { purchase_orders: describePoChange, counts: describeCountChange, settings: describeSettingChange };
+// A change told its own way, by its action or the table it changed; any
+// other change lists each field that differs.
+const CHANGED = {
+  purchase_orders: describePoChange, counts: describeCountChange, settings: describeSettingChange,
+  'correct month-end': describeMonthEndChange,
+};
 
 // What a change did, in words, for the "Was → now" column: an addition (no
-// was) says what was added; a removal (no now) says so; a table in CHANGED
-// tells its own; any other change lists each field that differs, was → now.
+// was) says what was added; a removal (no now) says so; an action or a table
+// in CHANGED tells its own; any other change lists each field that differs, was → now.
 // A password action shows nothing: the log keeps no password.
 function describeChange(action, table, was, now) {
   if (action.includes('password')) return '';
   if (!now) return 'removed';
   if (!was) {
-    const added = (ADDED[action] ?? ADDED[table])?.(now);
+    const added = byAction(ADDED, action, table)?.(now);
     return added ? `added: ${added}${replaced(now)}${timed(now)}` : 'added';
   }
-  if (CHANGED[table]) return CHANGED[table](was, now);
+  const told = byAction(CHANGED, action, table);
+  if (told) return told(was, now);
   return Object.keys(now).filter((k) => k !== 'version' && JSON.stringify(was[k]) !== JSON.stringify(now[k]))
     .map((k) => `${k}: ${was[k]} → ${now[k]}`).join('; ');
 }
 
-module.exports = { readActivity, describeChange, howItCame, noted, timed, countLabel, appHad, ENTRY_NAMES };
+module.exports = {
+  readActivity, describeChange, howItCame, noted, timed, countLabel, appHad, correctionWords, monthName, ENTRY_NAMES, OFFICE_TIME_ZONE,
+};

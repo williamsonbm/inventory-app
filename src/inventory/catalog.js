@@ -49,12 +49,9 @@ async function listCatalog(database) {
     readFamilies(database),
     database.read(`
       SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
-             i.active, i.version, f.incoming, f.on_hand, f.reorder, c.counted_at,
-             coalesce(c.counted_at < pg_catalog.now() - interval '65 days', false) AS counted_long_ago
+             i.active, i.version, f.incoming, f.on_hand, f.reorder, f.counted_at,
+             coalesce(f.counted_at < pg_catalog.now() - interval '65 days', false) AS counted_long_ago
         FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
-        LEFT JOIN LATERAL (SELECT pg_catalog.max(n.counted_at) AS counted_at
-                             FROM inv.count_lines l JOIN inv.counts n ON n.id = l.count_id
-                            WHERE l.item_id = i.id AND n.status = 'approved') c ON true
        ORDER BY i.family, i.sku, i.product, i.size, i.grade, i.length_ft`),
     database.read('SELECT depth, available_lf, threshold_lf, reorder FROM inv.lvl_depth_figures ORDER BY depth'),
   ]);
@@ -141,6 +138,9 @@ const CATALOG_CHANGES = {
   '/api/counts/reject': { fn: 'reject_count', args: (b) => [b.id, b.version], as: 'count' },
   // A draft nobody will finish (Q149): its starter or an admin; the database says who.
   '/api/counts/discard': { fn: 'discard_count', args: (b) => [b.id, b.version], as: 'count' },
+  '/api/month-end/correct': {
+    fn: 'correct_month_end', args: (b) => [b.id, b.revision, b.why, JSON.stringify(b.lines)], as: 'record', adminOnly: true,
+  },
   // Settings → Inventory → Count approval. Admin-only (owner, Q110).
   '/api/count-approval/set': {
     fn: 'set_count_approval_by_another', args: (b) => [b.version, b.on], as: 'setting', adminOnly: true,

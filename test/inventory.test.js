@@ -829,3 +829,58 @@ test('the Overview list carries when each item was last counted, flagged when th
   ], 'LUS28: the monthly count 66 days ago, flagged; HUS26: the later spot check, 64 days ago, not flagged; '
     + 'HUS410: a rejected and a waiting count are not counts yet; LUS210: a discarded count and a draft are not counts');
 });
+
+test('Month-end lists each family\'s records; an admin corrects one; its CSV names the revision (stories 83–87)', async () => {
+  const ctx = await withAdmin();
+  const add = async (sku) => (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku } })).body.item;
+  const [hanger, odd, missed] = [await add('LUS28'), await add('HUS"26, Z'), await add('HGUS26')];
+  await goLive(ctx.db, 'hangers');
+  await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
+  const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
+  const started = (await change(bob, '/api/counts/start', { family: 'hangers', kind: 'monthly', closes: '2026-08' })).body.count;
+  await as(ctx.db, null, (owner) => owner.query(
+    "UPDATE inv.counts SET counted_at = '2026-09-01 08:00:00-04' WHERE id = $1", [started.id]));
+  const submitted = (await change(bob, '/api/counts/submit', { id: started.id, version: started.version, closes: '2026-08',
+    lines: [{ item_id: hanger.id, loose: 10 }, { item_id: odd.id, loose: 5 }] })).body.count;
+  await change(ctx, '/api/counts/approve', { id: submitted.id, version: submitted.version, answers: {} });
+
+  const { records: [listed], ...rest } = await read(bob, '/api/month-end');
+  assert.deepEqual([rest, listed.id, listed.family_name, listed.closes, listed.revision, listed.items],
+    [{ ok: true }, submitted.id, 'Hangers', '2026-08', 1, 2], 'everyone reads the list, without each record\'s items');
+  const { record } = await read(bob, `/api/month-end/record?id=${listed.id}`);
+  assert.deepEqual(record.lines.map((l) => [l.item, l.quantity]), [['LUS28', 10], ['HUS"26, Z', 5]], 'and opens one record');
+  const body = { id: record.id, revision: 1, why: 'Missed the top shelf', lines: [{ item_id: hanger.id, quantity: 7 }, { item_id: missed.id, quantity: 3 }] };
+  const res = await post(ctx.base, '/api/month-end/correct', { key: crypto.randomUUID(), ...body }, bob.cookie);
+  assert.equal(res.status, 403, 'only an admin corrects a month-end record');
+  const corrected = await change(ctx, '/api/month-end/correct', body);
+  assert.equal(corrected.status, 200, corrected.body.error);
+  assert.equal(corrected.body.record.revision, 2);
+  assert.deepEqual((await read(bob, '/api/month-end')).records.map((r) => [r.revision, r.items]), [[2, 3]]);
+
+  const csv = await get(ctx.base, `/api/month-end/csv?id=${record.id}`, bob.cookie);
+  assert.equal(csv.status, 200);
+  assert.match(csv.headers.get('content-type'), /^text\/csv/);
+  assert.equal(csv.headers.get('content-disposition'), 'attachment; filename="Hangers month-end August 2026 revision 2.csv"');
+  assert.equal(await csv.text(), [
+    'SKU,Name,Quantity,Date counted',
+    'LUS28,LUS28,7,2026-09-01',
+    '"HUS""26, Z","HUS""26, Z",5,2026-09-01',
+    'HGUS26,HGUS26,3,2026-09-01',
+    '',
+  ].join('\r\n'), 'a comma or a quote is kept inside its cell');
+  for (const route of ['/api/month-end/csv', '/api/month-end/record']) {
+    assert.equal((await get(ctx.base, `${route}?id=${submitted.id + 99}`, bob.cookie)).status, 404, route);
+  }
+
+  const [entry] = (await read(ctx, '/api/activity?family=hangers')).entries;
+  assert.deepEqual([entry.who, entry.action, entry.target, entry.change], ['Ann Lee', 'correct month-end', 'Hangers month-end, August 2026',
+    'revision 2: LUS28 10 → 7, HGUS26 added 3; why: Missed the top shelf']);
+  const history = async (item) => (await read(ctx, `/api/items/history?id=${item.id}`)).entries
+    .filter((e) => e.action !== 'add item').map((e) => [Date.parse(e.at), e.who, e.action, e.change, e.detail]);
+  const counted = Date.parse('2026-09-01T12:00:00Z');
+  assert.deepEqual(await history(hanger), [
+    [counted, 'Ann Lee', 'correct month-end', -3, 'August 2026, revision 2: 10 → 7; why: Missed the top shelf'],
+    [counted, 'Ann Lee', 'approve count', 10, 'monthly, closes August 2026: counted 10, the app had 0; counted by Bob Ray'],
+  ], 'a correction sits at the count\'s moment, above the count it corrects');
+  assert.deepEqual(await history(missed), [[counted, 'Ann Lee', 'correct month-end', 3, 'August 2026, revision 2: added 3; why: Missed the top shelf']]);
+});
