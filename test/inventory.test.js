@@ -12,7 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { get, post, signInAndChoose, withAdmin } = require('./support/app.js');
-const { connect, goLive, reasonId, urlFor } = require('./support/database.js');
+const { as, connect, goLive, reasonId, urlFor } = require('./support/database.js');
 
 // Posts one change as the signed-in admin and returns the status and parsed answer.
 async function change(ctx, route, body) {
@@ -44,8 +44,8 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   assert.equal(back.body.item.active, true);
 
   const { families, items } = await read(ctx, '/api/items');
-  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0, reorder: 'Low' }],
-    'a list row also carries the item\'s figures: none on hand is at or below its threshold of 40');
+  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0, reorder: 'Low', counted_at: null, counted_long_ago: false }],
+    'a list row also carries the item\'s figures: none on hand is at or below its threshold of 40, never counted');
   // EWP stays out of Inventory until step 5, so the family bar leaves it out.
   // The Planner's order, so the two family bars match (owner, 2026-10-02).
   // pack_kinds: what Settings → Pack sizes offers for each family's items.
@@ -793,4 +793,39 @@ test('an entry near a count is refused with the counts to pick from, then saved 
   const log = (await read(ctx, '/api/activity')).entries;
   assert.match(log.find((e) => e.action === 'correct').change.replace(/^added: on hand −2, /, ''), timedWords);
   assert.deepEqual(log.filter((e) => e.action === 'discard count').map((e) => [e.target, e.change]), [['Hangers count', 'discarded']]);
+});
+
+test('the Overview list carries when each item was last counted, flagged when that is more than 65 days ago (story 81; Q154)', async () => {
+  const ctx = await withAdmin();
+  const add = async (sku) => (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku } })).body.item;
+  const [old, recent, refusedOnly, never] = [await add('LUS28'), await add('HUS26'), await add('HUS410'), await add('LUS210')];
+  await goLive(ctx.db, 'hangers');
+  // A count's moment is when it was started; it can be moved only while it
+  // is a draft. `to` is the route that ends the step: save or submit.
+  const counted = async (kind, item, to, daysAgo = 0) => {
+    const count = (await change(ctx, '/api/counts/start', { family: 'hangers', kind })).body.count;
+    await as(ctx.db, null, (owner) => owner.query(
+      "UPDATE inv.counts SET counted_at = counted_at - $2 * interval '1 day' WHERE id = $1", [count.id, daysAgo]));
+    const lines = [].concat(item).map((i) => ({ item_id: i.id, loose: 3 }));
+    return (await change(ctx, to, { id: count.id, version: count.version, closes: null, lines })).body.count;
+  };
+  const decide = (route, count) => change(ctx, route, { id: count.id, version: count.version, answers: {} });
+
+  const monthly = await counted('monthly', [old, recent], '/api/counts/submit', 66);
+  await decide('/api/counts/approve', monthly);
+  const spot = await counted('spot check', recent, '/api/counts/submit', 64);
+  await decide('/api/counts/approve', spot);
+  await decide('/api/counts/reject', await counted('spot check', refusedOnly, '/api/counts/submit'));
+  await counted('spot check', refusedOnly, '/api/counts/submit');
+  await decide('/api/counts/discard', await counted('spot check', never, '/api/counts/save'));
+  await counted('spot check', never, '/api/counts/save');
+
+  const { items } = await read(ctx, '/api/items');
+  assert.deepEqual(items.map((i) => [i.sku, i.counted_at && Date.parse(i.counted_at), i.counted_long_ago]), [
+    ['HUS26', Date.parse(spot.counted_at), false],
+    ['HUS410', null, false],
+    ['LUS210', null, false],
+    ['LUS28', Date.parse(monthly.counted_at), true],
+  ], 'LUS28: the monthly count 66 days ago, flagged; HUS26: the later spot check, 64 days ago, not flagged; '
+    + 'HUS410: a rejected and a waiting count are not counts yet; LUS210: a discarded count and a draft are not counts');
 });

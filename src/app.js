@@ -233,14 +233,17 @@ function createApp({ database, sessionSecret }) {
 }
 
 // The page the person tried to open before signing in, if it is an address
-// on this site; else the Planner. Deliberately resolved the way a browser
+// on this site; else Inventory → Overview (story 82). The bare home address
+// is where a signed-out visit to the site starts, not a page the person
+// chose, so it lands there too (Q152). Deliberately resolved the way a browser
 // resolves it, not matched by a pattern: a browser drops tabs and line breaks
 // and reads "\" as "/", so "/\t/evil.example" passed a pattern and still
 // went to another site.
+const LANDING = '/inventory';
 function pathOnThisSite(next) {
-  if (typeof next !== 'string' || !next.startsWith('/')) return '/';
-  const url = new URL(next, 'http://this.site');
-  return url.origin === 'http://this.site' ? url.pathname + url.search + url.hash : '/';
+  const url = typeof next === 'string' && next.startsWith('/') ? new URL(next, 'http://this.site') : null;
+  const path = url?.origin === 'http://this.site' ? url.pathname + url.search + url.hash : '/';
+  return path === '/' ? LANDING : path;
 }
 
 function adminOnly(req, res, next) {

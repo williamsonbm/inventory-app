@@ -150,7 +150,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, getAll, say, itemLabel, unitShort, showTime } = AppHeader;
+  const { send, getAll, say, itemLabel, unitShort, showTime, monthName, countKind } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -169,19 +169,23 @@
   const family = (code) => families.find((f) => f.code === code);
   const itemById = (id) => items.find((i) => i.id === id);
   const sizeOnFile = (itemId, kind) => packSizes.find((p) => p.item_id === itemId && p.kind === kind)?.pieces;
-  // "2026-09" in words: "September 2026".
-  const monthName = (m) => new Date(m + '-01T00:00:00Z').toLocaleDateString('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
 
   async function load() {
     const got = await getAll(['/api/items', '/api/pack-sizes', '/api/pos', '/api/counts', '/api/reasons']);
     if (!got) return;
     [{ families, items, gradeOrder }, { pack_sizes: packSizes }, { pos }, { counts }, { reasons }] = got;
     reasons = reasons.filter((r) => r.active && !r.entry);
+    // Review on the Overview opens here with ?review=<count id>, on that
+    // count's family (story 68). Approved or rejected since, it is gone.
+    const asked = new URLSearchParams(location.search).get('review');
+    const waiting = asked && counts.find((c) => c.status === 'waiting' && String(c.id) === asked);
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
       current = f;
       paintStart();
       paintCounts();
-    });
+    }, waiting?.family);
+    if (waiting) openReview(waiting);
+    else if (asked) say('That count is no longer waiting for approval.');
   }
 
   // ── Start (stories 58, 60) ───────────────────────────────────────────────
@@ -315,7 +319,7 @@
     keepDraft();
     const f = family(count.family);
     el('sheet').hidden = false;
-    el('sheet-title').textContent = count.family_name + (count.kind === 'monthly' ? ' monthly count' : ' spot check');
+    el('sheet-title').textContent = count.family_name + ' ' + countKind(count.kind);
     el('sheet-closes').innerHTML = count.kind === 'monthly'
       ? '<label>closes: <input type="month" id="closes" value="' + esc(count.closes) + '" required></label>' : '';
     el('sheet-started').textContent = 'Started ' + showTime(count.counted_at) + ' by ' + count.counted_by +
@@ -372,7 +376,7 @@
     review = { count, entries: got.entries, on_hand: got.on_hand, nothing_before: got.nothing_before, answers: {}, picks: {} };
     closeSheet();
     el('review').hidden = false;
-    el('review-title').textContent = 'Review the ' + count.family_name + (count.kind === 'monthly' ? ' monthly count' : ' spot check');
+    el('review-title').textContent = 'Review the ' + count.family_name + ' ' + countKind(count.kind);
     el('review-started').textContent = 'Counted by ' + count.counted_by + '. The count is true as of ' + showTime(count.counted_at) + '.';
     paintReview();
     paintCounts();

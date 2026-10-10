@@ -49,11 +49,18 @@ async function listCatalog(database) {
     readFamilies(database),
     database.read(`
       SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
-             i.active, i.version, f.incoming, f.on_hand, f.reorder
+             i.active, i.version, f.incoming, f.on_hand, f.reorder, c.counted_at,
+             coalesce(c.counted_at < pg_catalog.now() - interval '65 days', false) AS counted_long_ago
         FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
+        LEFT JOIN LATERAL (SELECT pg_catalog.max(n.counted_at) AS counted_at
+                             FROM inv.count_lines l JOIN inv.counts n ON n.id = l.count_id
+                            WHERE l.item_id = i.id AND n.status = 'approved') c ON true
        ORDER BY i.family, i.sku, i.product, i.size, i.grade, i.length_ft`),
     database.read('SELECT depth, available_lf, threshold_lf, reorder FROM inv.lvl_depth_figures ORDER BY depth'),
   ]);
+  // counted_long_ago: 65 days is two 31-day months and three days for a late
+  // count, so an item two monthly counts missed stands out (story 81; #72).
+  // Never counted is null and not flagged (Q154).
   // gradeOrder: lumber grades weakest first, the engine's own ranking, so the
   // Overview sorts 2x4 #2 ahead of 2x4 #1 (owner, 2026-10-01).
   return { families, items, lvlDepths, gradeOrder: GRADE_STRENGTH_ORDER };

@@ -169,6 +169,15 @@ window.AppHeader = (() => {
   const OFFICE_ZONE = 'America/New_York';
   const officeTime = new Intl.DateTimeFormat('en-US', { timeZone: OFFICE_ZONE, dateStyle: 'medium', timeStyle: 'short' });
   const showTime = (iso) => (iso ? officeTime.format(new Date(iso)) : '—');
+  // The office date alone, for a column of dates: "Aug 1, 2026".
+  const officeDate = new Intl.DateTimeFormat('en-US', { timeZone: OFFICE_ZONE, dateStyle: 'medium' });
+  const showDate = (iso) => officeDate.format(new Date(iso));
+  // The month a count closes, YYYY-MM, in words: "September 2026". The
+  // Activity Log words it the same way on the server (src/settings/activity.js).
+  const monthWords = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const monthName = (m) => monthWords.format(new Date(m + '-01T00:00:00Z'));
+  // A count's kind as a title says it: "monthly count" or "spot check".
+  const countKind = (kind) => (kind === 'monthly' ? 'monthly count' : 'spot check');
   // Today's office date as a date box writes it, YYYY-MM-DD.
   const officeDay = new Intl.DateTimeFormat('en-CA', { timeZone: OFFICE_ZONE });
   const today = () => officeDay.format(new Date());
@@ -232,5 +241,5 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, today, familyBar, typingIn };
+  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, monthName, countKind, today, familyBar, typingIn };
 })();
