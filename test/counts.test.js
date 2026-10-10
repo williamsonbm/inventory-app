@@ -830,6 +830,16 @@ test('a correction adds an item the count missed, counted at the count\'s moment
     'the added item was counted when the count was');
 });
 
+test('an item a correction added has a figure on record, so its next Unmatched count needs a reason (stories 86, 71; Q118)', async () => {
+  const { db, ann, bob, record, correct, counted, approve } = await withAugust();
+  const missed = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HGUS26' });
+  await correct(ann, await record(), 'Missed the top shelf', [{ item_id: missed.id, quantity: 3 }]);
+
+  const recount = await counted([{ item_id: missed.id, loose: 2 }]);
+  assert.deepEqual((await call(db, 'count_review', recount.id)).nothing_before, []);
+  await refused(approve(bob, recount), 'IV400', 'HGUS26 has August\'s corrected figure');
+});
+
 test('a correction to a past month leaves on hand alone when a later count includes the item; the later count still decides (story 88; S11)', async () => {
   const { db, ann, bob, hanger, other, august, record, correct, counted, approve, receive } = await withAugust();
   await receive(other, 6, null, { after: august.id });

@@ -137,10 +137,11 @@
   }
 
   // One item's row on the correction form; quantity null for an item the
-  // count missed, added from the box.
+  // count missed, added from the box. Every box is required: a cleared box
+  // would otherwise save 0 (Number('') is 0).
   const correctionRow = (id, nameHtml, quantity) => '<tr data-item="' + id + '"><td class="name">' + nameHtml + '</td>' +
     '<td><input type="number" min="0" step="1" style="width:7em" data-was="' + (quantity ?? '') + '" value="' + (quantity ?? '') + '"' +
-    (quantity === null ? ' required' : '') + '></td></tr>';
+    ' required></td></tr>';
 
   // Opens a record with its items, or closes the one open.
   async function toggle(tr) {

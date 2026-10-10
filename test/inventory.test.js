@@ -838,8 +838,9 @@ test('Month-end lists each family\'s records; an admin corrects one; its CSV nam
   await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
   const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
   const started = (await change(bob, '/api/counts/start', { family: 'hangers', kind: 'monthly', closes: '2026-08' })).body.count;
+  // Late in the evening, so the office's day (September 1) is not the UTC day.
   await as(ctx.db, null, (owner) => owner.query(
-    "UPDATE inv.counts SET counted_at = '2026-09-01 08:00:00-04' WHERE id = $1", [started.id]));
+    "UPDATE inv.counts SET counted_at = '2026-09-01 23:30:00-04' WHERE id = $1", [started.id]));
   const submitted = (await change(bob, '/api/counts/submit', { id: started.id, version: started.version, closes: '2026-08',
     lines: [{ item_id: hanger.id, loose: 10 }, { item_id: odd.id, loose: 5 }] })).body.count;
   await change(ctx, '/api/counts/approve', { id: submitted.id, version: submitted.version, answers: {} });
@@ -861,8 +862,10 @@ test('Month-end lists each family\'s records; an admin corrects one; its CSV nam
   assert.equal(csv.status, 200);
   assert.match(csv.headers.get('content-type'), /^text\/csv/);
   assert.equal(csv.headers.get('content-disposition'), 'attachment; filename="Hangers month-end August 2026 revision 2.csv"');
-  assert.equal(await csv.text(), [
-    'SKU,Name,Quantity,Date counted',
+  const text = Buffer.from(await csv.arrayBuffer()).toString('utf8');
+  assert.ok(text.startsWith('\uFEFF'), 'a UTF-8 byte-order mark, so Excel shows ′ in a name');
+  assert.equal(text.slice(1), [
+    'SKU,Name,Quantity (pieces),Date counted',
     'LUS28,LUS28,7,2026-09-01',
     '"HUS""26, Z","HUS""26, Z",5,2026-09-01',
     'HGUS26,HGUS26,3,2026-09-01',
@@ -877,7 +880,7 @@ test('Month-end lists each family\'s records; an admin corrects one; its CSV nam
     'revision 2: LUS28 10 → 7, HGUS26 added 3; why: Missed the top shelf']);
   const history = async (item) => (await read(ctx, `/api/items/history?id=${item.id}`)).entries
     .filter((e) => e.action !== 'add item').map((e) => [Date.parse(e.at), e.who, e.action, e.change, e.detail]);
-  const counted = Date.parse('2026-09-01T12:00:00Z');
+  const counted = Date.parse('2026-09-02T03:30:00Z'); // 2026-09-01 23:30 -04:00, as set above
   assert.deepEqual(await history(hanger), [
     [counted, 'Ann Lee', 'correct month-end', -3, 'August 2026, revision 2: 10 → 7; why: Missed the top shelf'],
     [counted, 'Ann Lee', 'approve count', 10, 'monthly, closes August 2026: counted 10, the app had 0; counted by Bob Ray'],

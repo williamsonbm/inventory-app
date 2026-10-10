@@ -41,20 +41,21 @@ const cell = (v) => (/[",\r\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '"
 // One record's CSV (story 84): one row per item, with its identity fields,
 // its name, its quantity in pieces at the newest revision, and the office
 // day it was counted. The file name names the revision, so an old copy is
-// never taken for the current one (story 87; owner, Q158). null when `id`
-// is no month-end record.
+// never taken for the current one (story 87; owner, Q158). It starts with a
+// UTF-8 byte-order mark: without one, Excel on Windows garbles the ′ in a
+// lumber or LVL name. null when `id` is no month-end record.
 async function monthEndCsv(database, id) {
   const record = await readMonthEnd(database, id);
   if (!record) return null;
   const headings = { ...HEADINGS, ...FAMILY_HEADINGS[record.family] };
   const day = officeDay.format(new Date(record.counted_at));
   const rows = [
-    [...record.identity.map((f) => headings[f]), 'Name', 'Quantity', 'Date counted'],
+    [...record.identity.map((f) => headings[f]), 'Name', 'Quantity (pieces)', 'Date counted'],
     ...record.lines.map((l) => [...record.identity.map((f) => l[f]), l.item, l.quantity, day]),
   ];
   return {
     fileName: `${record.family_name} month-end ${monthName(record.closes)} revision ${record.revision}.csv`,
-    text: rows.map((r) => `${r.map(cell).join(',')}\r\n`).join(''),
+    text: '\uFEFF' + rows.map((r) => `${r.map(cell).join(',')}\r\n`).join(''),
   };
 }
 
