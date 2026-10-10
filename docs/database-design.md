@@ -71,7 +71,7 @@ Sources: #72 stories, the schema review's §8, ADR 0001/0002, #9, and this grill
 | S2 | Build 7:00, count 8:00: the build is not deducted twice | Now | ledger, counts |
 | S3 | Built 10:00, counted 11:00, entered 15:00: the before/after question | Now | ledger, settings |
 | S4 | Recount of one item changes only that item; uncounted items are not zeroed | Now | counts |
-| S5 | Counter cannot approve their own count | Now | counts |
+| S5 | Counter cannot approve their own count, when an admin switches that rule on (off to start with: Q148) | Now | counts |
 | S6 | A rejected count never affects on hand | Now | counts |
 | S7 | A draft count has no effect until approved | Now | counts |
 | S8 | Same count submitted twice, or two waiting counts of one item | Now | counts, action keys |
@@ -165,7 +165,7 @@ Schema name is chosen at slice time (never a `*_dev` name). Every object is full
 9. **po_lines** — item, amount ordered (lumber in LF; everything else in eaches), optional pack size, closed + reason (required when closed), re-openable, version. *S12, S14, S15.*
 10. **receipts** — optional PO, supplier, Bill of Lading or tracking number. Who received it comes from the activity log. Its lines are ledger rows. *S13, S14, S16.*
 11. **ledger** — one row per change in quantity. Item and its family (tied to the item's family, so family rules can be checked); signed whole-number quantity (never 0; above 0 for receipts and returns); kind (receipt, build, ship, return, correction, reversal); **effective_at**; the action it belongs to (who entered it and when come from the activity log, not repeated here); reason (required for corrections); links to the receipt and PO line, the job and item, or the row it reverses; for receipt lines, packs × pack size + loose, which must add up to the quantity. One item may have several receipt lines, one per pack size. A trim or a swap is two correction rows in one action. *S1–S3, S16, S17, S23, S26, S27, S46, S55, S56, S60.*
-12. **counts** — family, kind (monthly or spot check), status (draft, waiting, approved, rejected), month label (at most one approved monthly count per family per month), **counted_at** (when counting started), **submitted_at**, **approved_at**, counted by, approved by (≠ counted by). Times must be in order. Once approved, the count and its lines cannot be edited. *S1–S8, S10, S63, S75.*
+12. **counts** — family, kind (monthly or spot check), status (draft, waiting, approved, rejected, discarded: a draft nobody will finish, Q149), month label (at most one approved monthly count per family per month), **counted_at** (when counting started), **submitted_at**, **approved_at**, counted by, approved by (≠ counted by while the second-person rule is on, Q148). Times must be in order. Once approved, the count and its lines cannot be edited. *S1–S8, S10, S63, S75.*
 13. **count_lines** — item, packs × pack size + loose = counted quantity (0 allowed: an empty rack), reason when unmatched, and the entries during the count confirmed as already reflected (Q33). One item may have several lines, one per pack size; they add up. The app's expected number is **calculated at approval** and then **kept**, as the record of what the approver saw; an entry marked "before" later does not change it. *S4, S9, S63, S74, story 79.*
 14. **count_corrections** — a corrected quantity for an item on an approved count: revision number (one per correction of the count, shared by every item it changes: "June 2026, revision 2"), item (may be an item not on the original count), new quantity, why, and the action it belongs to (who and when come from the activity log). *Was* is the previous revision's figure. *S11.*
 15. **reasons** — text, retired flag, version. Never deleted once used. *S9, S15, S42, S46, S56.*
@@ -263,7 +263,7 @@ CREATE TABLE inv.ledger (
 CREATE TABLE inv.counts (
   id            bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   family        text NOT NULL REFERENCES inv.families(code),
-  status        text NOT NULL CHECK (status IN ('draft','waiting','approved','rejected')),
+  status        text NOT NULL CHECK (status IN ('draft','waiting','approved','rejected','discarded')),
   closes_month  date CHECK (closes_month = date_trunc('month', closes_month)),
   counted_at    timestamptz NOT NULL,
   submitted_at  timestamptz,

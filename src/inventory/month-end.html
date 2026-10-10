@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Month-end · Inventory</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+</head>
+<body>
+<!--
+  month-end.html — Inventory → Month-end (#81 part 3, group F, stories
+  83–88). Each approved monthly count is the record of the month it closes
+  (story 83), newest month first, for the family the bar shows. A click
+  opens a record: its items at the newest revision, each revision's who,
+  when, why and was → now (story 85), and its CSV for the accountant (story
+  84), whose name carries the revision (story 87). An admin corrects a
+  record as its next revision, with one why, and may add an item the count
+  missed (story 86); the original stays. Everyone else reads.
+
+  Glue, NOT UNIT-TESTED: the list and the correction form need a browser,
+  and this repo has no DOM harness. Its routes and the CSV are tested in
+  test/inventory.test.js, the record's rules in test/counts.test.js. The
+  layout is checked by hand (#81, Testing Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">RTW Inventory Tracker</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/inventory" class="here" aria-current="page">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
+  <div class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+    <span class="label" id="task-label">Task</span>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory">Overview</a><a href="/inventory/receive">Receive</a><a href="/inventory/count">Count</a><a href="/inventory/month-end" aria-current="page">Month-end</a></nav>
+  </div>
+</header>
+
+<div class="wrap">
+  <div id="message" role="status"></div>
+  <h2 style="margin:8px 0">Month-end records</h2>
+  <p class="sub">Each approved monthly count is the record of the month it closes. Click a record to see its items, download its CSV, or see its corrections.</p>
+  <div class="tw"><table class="one-line catalog">
+    <thead><tr><th>Family</th><th>Month</th><th>Revision</th><th>Counted</th><th>Items</th></tr></thead>
+    <tbody id="records"></tbody>
+  </table></div>
+  <p class="sub" id="records-none" hidden></p>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+(async () => {
+  const { esc, fmtInt } = PlannerUI;
+  const { send, getAll, say, itemLabel, showTime, showDate, monthName } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  const me = await AppHeader.me;
+  if (!me) return;
+
+  let families = [];
+  let items = [];
+  let records = [];     // every record, without its items (the list)
+  let current = null;   // the family the family bar shows, or 'all'
+  let open = null;      // the record shown open, with its items, or null
+  let fixing = false;   // whether the open record shows the correction form
+
+  const label = (r) => r.family_name + ' · ' + monthName(r.closes) + ', revision ' + r.revision;
+
+  async function load() {
+    const got = await getAll(['/api/items', '/api/month-end']);
+    if (!got) return;
+    [{ families, items }, { records }] = got;
+    AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+      current = f;
+      paint();
+    });
+  }
+
+  function paint() {
+    const shown = records.filter((r) => current === 'all' || r.family === current);
+    el('records-none').hidden = shown.length > 0;
+    el('records-none').textContent = 'No month-end records' + (current === 'all' ? '' : ' for ' +
+      (families.find((f) => f.code === current)?.name ?? '')) + ' yet. A monthly count becomes one when it is approved.';
+    el('records').innerHTML = shown.map((r) =>
+      '<tr class="item' + (r.id === open?.id ? ' open' : '') + '" data-id="' + r.id + '" tabindex="0" aria-expanded="' + (r.id === open?.id) + '">' +
+      '<td class="name">' + esc(r.family_name) + '</td><td>' + monthName(r.closes) + '</td><td>' + r.revision + '</td>' +
+      '<td>' + showTime(r.counted_at) + '</td><td>' + r.items + '</td></tr>' +
+      (r.id === open?.id ? '<tr class="detail"><td colspan="5">' + (fixing ? correctionForm(open) : detail(open)) + '</td></tr>' : '')).join('');
+  }
+
+  // An open record: its items at the newest revision, its CSV, and each
+  // correction with who, when, why and was → now.
+  function detail(r) {
+    const revisions = r.revisions.map((v) => '<li>Revision ' + v.revision + ', ' + showTime(v.at) + ', ' + esc(v.by) + ': ' +
+      v.changes.map((c) => esc(c.item) + ' ' + (c.was === null ? 'added ' + fmtInt(c.now) : fmtInt(c.was) + ' → ' + fmtInt(c.now))).join(', ') +
+      '. Why: ' + esc(v.why) + '</li>').join('');
+    return '<p><b>' + esc(label(r)) + '</b>. Counted ' + showDate(r.counted_at) + '. ' +
+      (r.revision === 1 ? 'Never corrected.' : 'Revision 1 is the approved count; each later revision is a correction.') + '</p>' +
+      '<div class="tw"><table class="one-line"><thead><tr><th>Item</th><th>Pieces</th></tr></thead><tbody>' +
+      r.lines.map((l) => '<tr><td class="name">' + esc(l.item) + '</td><td>' + fmtInt(l.quantity) + '</td></tr>').join('') +
+      '</tbody></table></div>' +
+      (revisions ? '<h3 style="margin:12px 0 4px">Corrections</h3><ul>' + revisions + '</ul>' : '') +
+      '<div class="row" style="margin-top:10px">' +
+      '<a href="/api/month-end/csv?id=' + r.id + '" download>Download CSV (revision ' + r.revision + ')</a>' +
+      (me.admin ? '<button type="button" class="ghost" data-do="correct">Correct…</button>' : '') + '</div>';
+  }
+
+  // The correction form (admin): each item's pieces, ready to change, a box
+  // for an item the count missed, and why. Saving makes the next revision.
+  function correctionForm(r) {
+    const onRecord = new Set(r.lines.map((l) => l.item_id));
+    const missed = items.filter((i) => i.family === r.family && i.active && !onRecord.has(i.id))
+      .sort((a, b) => itemLabel(a).localeCompare(itemLabel(b), 'en', { numeric: true }));
+    return '<form id="correct-form"><p><b>Correct ' + esc(label(r)) + '</b>. Saving makes revision ' + (r.revision + 1) +
+      '; revision ' + r.revision + ' stays on the record. Change only the pieces that were wrong.</p>' +
+      '<div class="tw"><table class="one-line"><thead><tr><th>Item</th><th>Pieces</th></tr></thead><tbody id="correct-lines">' +
+      r.lines.map((l) => correctionRow(l.item_id, esc(l.item), l.quantity)).join('') + '</tbody></table></div>' +
+      (missed.length ? '<p class="row" style="margin-top:10px"><label class="field">An item the count missed <select id="correct-missed">' +
+        '<option value="">Pick an item…</option>' + missed.map((i) => '<option value="' + i.id + '">' + esc(itemLabel(i)) + '</option>').join('') +
+        '</select></label></p>' : '') +
+      '<p class="row"><label class="field">Why <input id="correct-why" required style="width:30em" placeholder="For example: rack 3 was counted twice"></label></p>' +
+      '<div class="row"><button>Save revision ' + (r.revision + 1) + '</button>' +
+      '<button type="button" class="ghost" data-do="cancel">Cancel</button></div></form>';
+  }
+
+  // One item's row on the correction form; quantity null for an item the
+  // count missed, added from the box. Every box is required: a cleared box
+  // would otherwise save 0 (Number('') is 0).
+  const correctionRow = (id, nameHtml, quantity) => '<tr data-item="' + id + '"><td class="name">' + nameHtml + '</td>' +
+    '<td><input type="number" min="0" step="1" style="width:7em" data-was="' + (quantity ?? '') + '" value="' + (quantity ?? '') + '"' +
+    ' required></td></tr>';
+
+  // Opens a record with its items, or closes the one open.
+  async function toggle(tr) {
+    const id = Number(tr.dataset.id);
+    fixing = false;
+    say('');
+    if (open?.id === id) {
+      open = null;
+    } else {
+      const got = await getAll(['/api/month-end/record?id=' + id]);
+      if (!got) return;
+      open = got[0].record;
+    }
+    paint();
+  }
+  el('records').addEventListener('click', (e) => {
+    const what = e.target.dataset.do;
+    if (what === 'correct' || what === 'cancel') {
+      fixing = what === 'correct';
+      say('');
+      paint();
+      return;
+    }
+    const tr = e.target.closest('tr.item');
+    if (tr) toggle(tr);
+  });
+  el('records').addEventListener('keydown', (e) => {
+    const tr = e.target.closest('tr.item');
+    if (tr && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); toggle(tr); }
+  });
+  // A missed item picked joins the table, ready for its pieces.
+  el('records').addEventListener('change', (e) => {
+    if (e.target.id !== 'correct-missed' || !e.target.value) return;
+    const option = e.target.selectedOptions[0];
+    el('correct-lines').insertAdjacentHTML('beforeend',
+      correctionRow(option.value, esc(option.textContent) + ' <span class="sub">(added)</span>', null));
+    option.remove();
+    e.target.value = '';
+    el('correct-lines').lastElementChild.querySelector('input').focus();
+  });
+
+  el('records').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const r = open;
+    const lines = [...el('correct-lines').querySelectorAll('tr')]
+      .filter((tr) => tr.querySelector('input').value !== tr.querySelector('input').dataset.was)
+      .map((tr) => ({ item_id: Number(tr.dataset.item), quantity: Number(tr.querySelector('input').value) }));
+    correct({ key: crypto.randomUUID(), id: r.id, revision: r.revision, why: el('correct-why').value, lines });
+  });
+  // A reply that never arrives keeps the same body, retry key included, so
+  // "Try again" acts once. A stale screen shows the record as it is now.
+  async function correct(body) {
+    say('');
+    try {
+      const { record } = await send('/api/month-end/correct', body);
+      showRecord(record);
+      say('Saved as ' + label(record) + '. Download the CSV again: an older copy is out of date.', 'ok');
+    } catch (err) {
+      say(err.message + (err.current ? ' The record now shows it as it is; correct it again from there.' : ''), 'bad',
+        err.unconfirmed ? () => correct(body) : null);
+      if (err.current) showRecord(err.current);
+    }
+  }
+  // Shows `record` open, as it now stands, and its revision and items in the list.
+  function showRecord(record) {
+    open = record;
+    fixing = false;
+    records = records.map((x) => (x.id === record.id ? { ...x, revision: record.revision, items: record.lines.length } : x));
+    paint();
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

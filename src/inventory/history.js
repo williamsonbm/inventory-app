@@ -1,5 +1,6 @@
 // Inventory → Overview → an item → History (#81 story 55): every change to
-// one item's on hand, each approved count of it (Q120), and every change to
+// one item's on hand, each approved count of it (Q120) and each month-end
+// correction of it (story 85), and every change to
 // its settings, with who and when,
 // newest first. The Activity Log lists every action in the app, one row per
 // action; History lists one item, one row per ledger row, so a receipt of
@@ -9,7 +10,9 @@
 // per material (owner, 2026-10-04), one item likely gets well under a few
 // hundred rows a year.
 
-const { describeChange, howItCame, noted, countLabel, appHad, ENTRY_NAMES } = require('../settings/activity.js');
+const {
+  describeChange, howItCame, noted, timed, countLabel, appHad, correctionWords, monthName, ENTRY_NAMES,
+} = require('../settings/activity.js');
 
 // Each ledger row of the item, with what its detail is made from. A trim's
 // other row (pair: a correction is one row, a trim two) gives the other length; a reversal's original (o), the
@@ -20,7 +23,8 @@ const LEDGER_ROWS = `
          r.text AS reason, rc.bol, po.number AS po_number, s.name AS supplier,
          inv.po_line_number(g.po_line_id) AS po_line, g.packs, g.pack_size, g.pack_kind, g.loose,
          l.new_value -> 'pack_sizes_added' AS pack_sizes_added, inv.item_label(i) AS item, other.length_ft AS other_length,
-         (l.new_value ->> 'item_added')::boolean AS added, (l.new_value ->> 'item_unretired')::boolean AS unretired
+         (l.new_value ->> 'item_added')::boolean AS added, (l.new_value ->> 'item_unretired')::boolean AS unretired,
+         l.new_value -> 'timed' AS timed
     FROM inv.ledger g
     JOIN inv.items i ON i.id = g.item_id
     JOIN inv.activity_log l ON l.id = g.action_id
@@ -61,6 +65,20 @@ const COUNT_ROWS = `
    WHERE c.status = 'approved'
    GROUP BY c.id, l.id, who.name, counter.name`;
 
+// Each month-end correction of the item (stories 85, 86). It sits at its
+// count's moment, as the count does: it changes what the count found.
+const CORRECTION_ROWS = `
+  SELECT c.counted_at AS at, l.id AS log_id, who.name AS who, pg_catalog.to_char(c.closes, 'YYYY-MM') AS closes,
+         x.revision, x.why, inv.count_found(c.id, x.item_id, x.revision)::integer AS was, x.quantity AS now
+    FROM inv.count_corrections x
+    JOIN inv.counts c ON c.id = x.count_id
+    JOIN inv.activity_log l ON l.id = x.action_id
+    JOIN inv.users who ON who.id = l.actor_id
+   WHERE x.item_id = $1`;
+
+// A correction's line in words: "August 2026, revision 2: 10 → 7; why: …".
+const describeCorrection = (k) => `${monthName(k.closes)}, revision ${k.revision}: ${correctionWords(k)}; why: ${k.why}`;
+
 // A count's line in words: what was counted against the app's number.
 function describeCount(c) {
   const result = c.counted === c.expected ? 'Matched' : appHad(c);
@@ -88,23 +106,28 @@ const DETAIL = {
 async function readHistory(database, id) {
   const known = /^\d{1,18}$/.test(id ?? '') && (await database.read('SELECT 1 FROM inv.items WHERE id = $1', [id])).length;
   if (!known) return { error: 'That item is not in the catalog.' };
-  const [ledger, settings, counts] = await Promise.all(
-    [LEDGER_ROWS, SETTINGS_ROWS, COUNT_ROWS].map((sql) => database.read(sql, [id])));
+  const [ledger, settings, counts, corrections] = await Promise.all(
+    [LEDGER_ROWS, SETTINGS_ROWS, COUNT_ROWS, CORRECTION_ROWS].map((sql) => database.read(sql, [id])));
   const entries = [
     ...ledger.map((g) => ({ at: g.at, log_id: g.log_id, id: Number(g.id), who: g.who, action: g.action, change: g.quantity,
-      detail: DETAIL[g.reverses ? 'reverse' : g.action](g), reversed: g.reversed,
+      detail: DETAIL[g.reverses ? 'reverse' : g.action](g) + timed(g), reversed: g.reversed,
       // A reversal row, whether Reverse or a replacing entry wrote it: never
       // reversed again (Q44), so the page offers no Reverse on it.
       reversal: g.reverses !== null })),
     ...settings.map((s) => ({ at: s.at, log_id: s.log_id, who: s.who, action: s.action, change: null,
       detail: describeChange(s.action, s.target_table, s.was, s.now) })),
     // No id: a count is never reversed; a new count replaces it.
-    ...counts.map((c) => ({ at: c.at, log_id: c.log_id, who: c.who, action: 'approve count', change: c.counted - c.expected,
+    ...counts.map((c) => ({ at: c.at, log_id: c.log_id, atCount: 1, who: c.who, action: 'approve count', change: c.counted - c.expected,
       detail: describeCount(c) })),
+    ...corrections.map((k) => ({ at: k.at, log_id: k.log_id, atCount: 1, who: k.who, action: 'correct month-end',
+      change: k.now - (k.was ?? 0), detail: describeCorrection(k) })),
   ];
-  // Newest first, then the latest action, then the row written last.
-  entries.sort((a, b) => b.at - a.at || Number(b.log_id) - Number(a.log_id) || Number(b.id) - Number(a.id));
-  return { entries: entries.map(({ log_id: _, ...e }) => e) };
+  // Newest first, then the latest action, then the row written last. An
+  // entry timed before a count sits at the count's moment, under it and its
+  // corrections, even when saved after the count was approved (story 77).
+  entries.sort((a, b) => b.at - a.at || (b.atCount ?? 0) - (a.atCount ?? 0) || Number(b.log_id) - Number(a.log_id)
+    || Number(b.id) - Number(a.id));
+  return { entries: entries.map(({ log_id: _, atCount: __, ...e }) => e) };
 }
 
 module.exports = { readHistory };

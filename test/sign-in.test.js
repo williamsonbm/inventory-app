@@ -50,19 +50,22 @@ test('the right password sets a cookie the next request accepts', async () => {
   assert.deepEqual((await me.json()).user, { name: 'Ann Lee', admin: true, passwordTemporary: true });
 });
 
-test('after sign-in the page goes where the person meant to go, never to another site', async () => {
+test('after sign-in the page goes where the person meant to go, never to another site; otherwise to Inventory → Overview (story 82)', async () => {
   const { base, db } = await startApp();
   await addFirstUser(db);
   for (const [next, expected] of [
     ['/?family=plates', '/?family=plates'],
-    [undefined, '/'],
-    ['//evil.example/', '/'],
-    ['/\\evil.example/', '/'],
-    ['https://evil.example/', '/'],
+    ['/inventory/count', '/inventory/count'],
+    [undefined, '/inventory'],
+    // The home address is where a signed-out visit to the site starts, not a page the person chose (Q152).
+    ['/', '/inventory'],
+    ['//evil.example/', '/inventory'],
+    ['/\\evil.example/', '/inventory'],
+    ['https://evil.example/', '/inventory'],
     // A browser drops tabs and line breaks from an address, so each of these is "//evil.example".
-    ['/\t/evil.example', '/'],
-    ['/\n/evil.example', '/'],
-    ['/\r\\evil.example', '/'],
+    ['/\t/evil.example', '/inventory'],
+    ['/\n/evil.example', '/inventory'],
+    ['/\r\\evil.example', '/inventory'],
   ]) {
     const res = await post(base, '/api/sign-in', { email: 'ann@example.com', password: 'temporary password 1', next });
     assert.equal((await res.json()).next, expected, `next: ${next}`);
