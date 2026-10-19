@@ -213,7 +213,7 @@
 
     'count-approval': {
       title: 'Count approval',
-      help: 'When this is on, a count is approved by someone who did not start, save or submit it. When it is off, anyone may approve a count, the person who counted included. Everyone can see this; only an admin can change it.',
+      help: 'When this is on, a count is approved by someone who did not start, save or submit it. When it is off, as it starts, anyone may approve a count, the person who counted included. Everyone can see this; only an admin can change it.',
       async load() {
         const [got, me] = await Promise.all([get('/api/count-approval'), AppHeader.me]);
         this.setting = got.setting[0];

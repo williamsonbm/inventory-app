@@ -27,8 +27,10 @@
   later in part 2. "Correct on hand…" in the panel changes an item's on hand
   with a reason (stories 44–46); "Trim…" on an LVL item cuts weathered boards
   down to a shorter length (stories 47–48). "History" lists every change to
-  the item's on hand and settings (story 55). The tasks sit in the grey bar, right of Family
-  (#81, entry 7); Count and Month-end join them with part 3.
+  the item's on hand and settings (story 55). Counts waiting for approval
+  show at the top (story 68); Counted, story 81. Signing in lands here
+  (story 82). The tasks sit in the grey bar, right of Family (#81, entry 7);
+  Count and Month-end join them with part 3.
 
   Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
   repo has no DOM harness. Every route it calls is tested in
@@ -47,12 +49,13 @@
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
     <span class="label" id="task-label">Task</span>
-    <nav class="seg" aria-labelledby="task-label"><a href="/inventory" aria-current="page">Overview</a><a href="/inventory/receive">Receive</a><a href="/inventory/count">Count</a></nav>
+    <nav class="seg" aria-labelledby="task-label"><a href="/inventory" aria-current="page">Overview</a><a href="/inventory/receive">Receive</a><a href="/inventory/count">Count</a><a href="/inventory/month-end">Month-end</a></nav>
   </div>
 </header>
 
 <div class="wrap">
   <div id="message" role="status"></div>
+  <div id="waiting" class="note" hidden></div>
 
   <div class="row" style="align-items:flex-end">
     <label class="field">Search <input id="search" type="search" autocomplete="off" placeholder="Name or note…"></label>
@@ -78,7 +81,7 @@
     <tbody id="rows"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
-  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Incoming is what open POs still bring. Threshold, On Hand and Incoming are in linear feet (LF) for lumber, pieces for the rest. Reorder is Short below zero, Low at or below the threshold, otherwise OK; LVL is Low by its depth's linear feet, shown above its lengths.</p>
+  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Incoming is what open POs still bring. Threshold, On Hand and Incoming are in linear feet (LF) for lumber, pieces for the rest. Reorder is Short below zero, Low at or below the threshold, otherwise OK; LVL is Low by its depth's linear feet, shown above its lengths. Counted is the date of the item's last approved count, monthly or spot check; amber when more than 65 days ago.</p>
 </div>
 
 <script src="/app-header.js"></script>
@@ -86,7 +89,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, itemLabel, unitShort, inOrderUnit, showTime } = AppHeader;
+  const { send, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, monthName, countKind } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -183,6 +186,12 @@
       if (i.reorder === 'Short') return reorderChip('Short', (VIEWS[i.family] || {}).perDepth ? ' (' + signed(i.on_hand) + ')' : '');
       return depthLine() ? '' : reorderChip(i.reorder);
     } },
+    // The last approved count's date; amber when the server says it is more
+    // than 65 days ago (story 81).
+    counted: { head: 'Counted', width: 16, sort: (i) => (i.counted_at ? Date.parse(i.counted_at) : null), cell: (i) => {
+      if (!i.counted_at) return '<span class="sub">Never</span>';
+      return i.counted_long_ago ? '<span class="chip warn">' + showDate(i.counted_at) + '</span>' : showDate(i.counted_at);
+    } },
     // A marker only: the note itself shows when the row is open.
     note: { head: '', width: 10, cell: (i) => (i.note ? '<span class="chip" title="' + esc(i.note) + '">note</span>' : '') },
   };
@@ -190,12 +199,14 @@
   // nobody has clicked a header. Lumber: weakest grade first, then shortest.
   // LVL calls its size the depth, in inches (″), and its thresholds are per
   // depth (Settings → LVL thresholds), so LVL rows have no Threshold column.
+  // Every view ends with the same figures.
+  const FIGURES = ['onHand', 'incoming', 'reorder', 'counted', 'note'];
   const VIEWS = {
-    plates: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['sku'] },
-    hangers: { cols: ['sku', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['sku'] },
-    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['grade', 'length'] },
+    plates: { cols: ['sku', 'stocking', 'threshold', ...FIGURES], order: ['sku'] },
+    hangers: { cols: ['sku', 'stocking', 'threshold', ...FIGURES], order: ['sku'] },
+    lumber: { tab: 'size', cols: ['grade', 'length', 'stocking', 'threshold', ...FIGURES], order: ['grade', 'length'] },
     lvl: {
-      tab: 'size', cols: ['product', 'length', 'stocking', 'onHand', 'incoming', 'reorder', 'note'], order: ['product', 'length'],
+      tab: 'size', cols: ['product', 'length', 'stocking', ...FIGURES], order: ['product', 'length'],
       labels: { size: 'Depth' }, tabUnit: '″', perDepth: true,
     },
   };
@@ -203,8 +214,8 @@
   // item in full instead of leaving the size to the tab.
   // A family with no view of its own (EWP, once step 5 names its items) lists
   // its items by name. All lists every family's items by family, then name.
-  const PLAIN = { cols: ['item', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['item'] };
-  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', 'onHand', 'incoming', 'reorder', 'note'], order: ['family', 'item'] };
+  const PLAIN = { cols: ['item', 'stocking', 'threshold', ...FIGURES], order: ['item'] };
+  const ALL = { cols: ['family', 'item', 'stocking', 'threshold', ...FIGURES], order: ['family', 'item'] };
   const view = () => {
     if (current === 'all') return ALL;
     const v = VIEWS[current] || PLAIN;
@@ -215,7 +226,9 @@
   const fetchItems = () => fetch('/api/items').then((r) => r.json())
     .catch(() => ({ ok: false, error: 'The catalog did not load. Reload the page to try again.' }));
   async function load() {
-    const [body, reasonList] = await Promise.all([fetchItems(), fetch('/api/reasons').then((r) => r.json()).catch(() => ({ ok: false }))]);
+    const [body, reasonList, countList] = await Promise.all([fetchItems(), fetch('/api/reasons').then((r) => r.json()).catch(() => ({ ok: false })),
+      fetch('/api/counts').then((r) => r.json()).catch(() => ({ ok: false }))]);
+    paintWaiting(countList);
     if (!body.ok) return say(body.error, 'bad');
     ({ families, items, lvlDepths, gradeOrder } = body);
     reasons = reasonList.ok ? reasonList.reasons.filter((r) => r.active && !r.entry) : [];
@@ -234,6 +247,20 @@
       el('add-open').title = f === 'all' ? 'Pick a family to add an item.' : '';
       paint();
     });
+  }
+
+  // Counts waiting for approval, at the top so approvals do not wait (story
+  // 68): every family's, whatever the family bar shows, newest first. Review
+  // opens the count on Count.
+  function paintWaiting(countList) {
+    if (!countList.ok) return say('The counts waiting for approval did not load. Reload the page to try again.', 'bad');
+    const box = el('waiting');
+    const waiting = countList.counts.filter((c) => c.status === 'waiting');
+    box.hidden = !waiting.length;
+    box.innerHTML = '<strong>Waiting for approval</strong>' + waiting.map((c) => '<div>' +
+      esc(c.family_name) + ' ' + countKind(c.kind) + (c.closes ? ', ' + esc(monthName(c.closes)) : '') +
+      ' · counted by ' + esc(c.counted_by) + ', ' + esc(showTime(c.counted_at)) +
+      ' · <a href="/inventory/count?review=' + c.id + '">Review</a></div>').join('');
   }
 
   function paintReorder() {
@@ -504,6 +531,8 @@
     try {
       say(done(await apply(await send(route, body))), 'ok');
     } catch (err) {
+      // Not painted again: the form keeps what was typed, for Cancel.
+      if (askTiming(err, (timing) => save(route, { ...body, timing }, done, apply))) return;
       if (err.current) items = items.map((i) => (i.id === err.current.id ? { ...i, ...err.current } : i));   // keeps its figures
       say(err.message, 'bad', err.unconfirmed ? () => save(route, body, done, apply) : null);
     }

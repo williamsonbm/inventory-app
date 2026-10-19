@@ -12,7 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { get, post, signInAndChoose, withAdmin } = require('./support/app.js');
-const { connect, goLive, reasonId, urlFor } = require('./support/database.js');
+const { as, connect, goLive, reasonId, urlFor } = require('./support/database.js');
 
 // Posts one change as the signed-in admin and returns the status and parsed answer.
 async function change(ctx, route, body) {
@@ -44,8 +44,8 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   assert.equal(back.body.item.active, true);
 
   const { families, items } = await read(ctx, '/api/items');
-  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0, reorder: 'Low' }],
-    'a list row also carries the item\'s figures: none on hand is at or below its threshold of 40');
+  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0, reorder: 'Low', counted_at: null, counted_long_ago: false }],
+    'a list row also carries the item\'s figures: none on hand is at or below its threshold of 40, never counted');
   // EWP stays out of Inventory until step 5, so the family bar leaves it out.
   // The Planner's order, so the two family bars match (owner, 2026-10-02).
   // pack_kinds: what Settings → Pack sizes offers for each family's items.
@@ -701,12 +701,18 @@ test('History lists each approved count of the item, with what it changed; a rej
   assert.equal(Date.parse(entries[1].at), Date.parse(unmatched.counted_at), 'a count sits at its moment, when it was true');
 });
 
-test('a second person approves a waiting count from its review; the count-approval switch is the admin\'s, and the Activity Log says each step (stories 69–76; Q110, Q113)', async () => {
+test('a second person approves a waiting count from its review; the count-approval switch is the admin\'s, and the Activity Log says each step (stories 69–76; Q110, Q113, Q148)', async () => {
   const ctx = await withAdmin();
   const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
   await goLive(ctx.db, 'hangers');
   await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
   const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
+  // The switch starts off (Q148): everyone reads it, only an admin changes it.
+  const seen = await read(bob, '/api/count-approval');
+  assert.deepEqual(seen.setting, [{ name: 'count_approval_by_another', value: false, version: 2 }]);
+  const denied = await post(ctx.base, '/api/count-approval/set', { key: crypto.randomUUID(), version: 2, on: true }, bob.cookie);
+  assert.equal(denied.status, 403);
+  assert.equal((await change(ctx, '/api/count-approval/set', { version: 2, on: true })).body.setting.value, true);
   const waiting = async (loose = 5) => {
     const started = (await change(bob, '/api/counts/start', { family: 'hangers', kind: 'spot check' })).body.count;
     return (await change(bob, '/api/counts/submit',
@@ -736,12 +742,7 @@ test('a second person approves a waiting count from its review; the count-approv
   assert.equal(rejected.body.count.status, 'rejected');
   assert.deepEqual((await read(bob, '/api/counts')).counts, [], 'nothing waits any more');
 
-  // The switch: everyone reads it, only an admin changes it.
-  const seen = await read(bob, '/api/count-approval');
-  assert.deepEqual(seen.setting, [{ name: 'count_approval_by_another', value: true, version: 1 }]);
-  const denied = await post(ctx.base, '/api/count-approval/set', { key: crypto.randomUUID(), version: 1, on: false }, bob.cookie);
-  assert.equal(denied.status, 403);
-  assert.equal((await change(ctx, '/api/count-approval/set', { version: 1, on: false })).body.setting.value, false);
+  assert.equal((await change(ctx, '/api/count-approval/set', { version: 3, on: false })).body.setting.value, false);
   const third = await waiting(4);
   const mine = await change(bob, '/api/counts/approve',
     { id: third.id, version: third.version, answers: { reasons: { [hanger.id]: reason } } });
@@ -754,5 +755,135 @@ test('a second person approves a waiting count from its review; the count-approv
     ['Ann Lee', 'approve count', 'Hangers count', 'approved; lines: 5 LUS28 (the app had 0)'],
   ]);
   assert.deepEqual(entries.filter((e) => e.action === 'set count approval').map((e) => [e.target, e.change]),
-    [['Count approval', 'second person must approve: yes → no']]);
+    [['Count approval', 'second person must approve: yes → no'], ['Count approval', 'second person must approve: no → yes']]);
+});
+
+test('an entry near a count is refused with the counts to pick from, then saved with the answer; History and the Activity Log say how it was timed (stories 77, 78; Q146, Q149)', async () => {
+  const ctx = await withAdmin();
+  const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
+  await goLive(ctx.db, 'hangers');
+  const started = (await change(ctx, '/api/counts/start', { family: 'hangers', kind: 'spot check' })).body.count;
+  const count = (await change(ctx, '/api/counts/submit',
+    { id: started.id, version: started.version, closes: null, lines: [{ item_id: hanger.id, loose: 3 }] })).body.count;
+  await change(ctx, '/api/counts/approve', { id: count.id, version: count.version, answers: {} });
+
+  const { reasons } = await read(ctx, '/api/reasons');
+  const scrap = (timing) => change(ctx, '/api/items/correct',
+    { item_id: hanger.id, quantity: -2, reason_id: reasons.find((r) => r.text === 'Damaged – scrapped').id, note: null, timing });
+  const asked = await scrap(undefined);
+  assert.equal(asked.status, 409);
+  assert.equal(asked.body.error, 'Was this before or after the count? Pick one, then save again.');
+  assert.deepEqual(asked.body.current, { counts: [{ id: count.id, family_name: 'Hangers', kind: 'spot check', counted_at: count.counted_at }] });
+  const saved = await scrap({ before: count.id });
+  assert.equal(saved.status, 200, saved.body.error);
+  assert.equal((await read(ctx, '/api/items')).items[0].on_hand, 3, 'the count held the 2 scrapped before it');
+
+  // Saved after the count was approved, the entry still sits below it: it came first.
+  const { entries } = await read(ctx, `/api/items/history?id=${hanger.id}`);
+  const timedWords = /^Damaged – scrapped; timed before the count of [A-Z][a-z]{2} \d{1,2}, \d{4}, \d{1,2}:\d{2}\s[AP]M$/;
+  assert.deepEqual(entries.slice(0, 2).map((e) => e.action), ['approve count', 'correct']);
+  assert.match(entries[1].detail, timedWords);
+  assert.equal(Date.parse(entries[1].at), Date.parse(count.counted_at), 'the entry\'s time is the count\'s moment');
+
+  const draft = (await change(ctx, '/api/counts/start', { family: 'hangers', kind: 'monthly' })).body.count;
+  const discarded = await change(ctx, '/api/counts/discard', { id: draft.id, version: draft.version });
+  assert.equal(discarded.body.count.status, 'discarded', discarded.body.error);
+  assert.deepEqual((await read(ctx, '/api/counts')).counts, [], 'a discarded draft leaves the Counts list');
+
+  const log = (await read(ctx, '/api/activity')).entries;
+  assert.match(log.find((e) => e.action === 'correct').change.replace(/^added: on hand −2, /, ''), timedWords);
+  assert.deepEqual(log.filter((e) => e.action === 'discard count').map((e) => [e.target, e.change]), [['Hangers count', 'discarded']]);
+});
+
+test('the Overview list carries when each item was last counted, flagged when that is more than 65 days ago (story 81; Q154)', async () => {
+  const ctx = await withAdmin();
+  const add = async (sku) => (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku } })).body.item;
+  const [old, recent, refusedOnly, never] = [await add('LUS28'), await add('HUS26'), await add('HUS410'), await add('LUS210')];
+  await goLive(ctx.db, 'hangers');
+  // A count's moment is when it was started; it can be moved only while it
+  // is a draft. `to` is the route that ends the step: save or submit.
+  const counted = async (kind, item, to, daysAgo = 0) => {
+    const count = (await change(ctx, '/api/counts/start', { family: 'hangers', kind })).body.count;
+    await as(ctx.db, null, (owner) => owner.query(
+      "UPDATE inv.counts SET counted_at = counted_at - $2 * interval '1 day' WHERE id = $1", [count.id, daysAgo]));
+    const lines = [].concat(item).map((i) => ({ item_id: i.id, loose: 3 }));
+    return (await change(ctx, to, { id: count.id, version: count.version, closes: null, lines })).body.count;
+  };
+  const decide = (route, count) => change(ctx, route, { id: count.id, version: count.version, answers: {} });
+
+  const monthly = await counted('monthly', [old, recent], '/api/counts/submit', 66);
+  await decide('/api/counts/approve', monthly);
+  const spot = await counted('spot check', recent, '/api/counts/submit', 64);
+  await decide('/api/counts/approve', spot);
+  await decide('/api/counts/reject', await counted('spot check', refusedOnly, '/api/counts/submit'));
+  await counted('spot check', refusedOnly, '/api/counts/submit');
+  await decide('/api/counts/discard', await counted('spot check', never, '/api/counts/save'));
+  await counted('spot check', never, '/api/counts/save');
+
+  const { items } = await read(ctx, '/api/items');
+  assert.deepEqual(items.map((i) => [i.sku, i.counted_at && Date.parse(i.counted_at), i.counted_long_ago]), [
+    ['HUS26', Date.parse(spot.counted_at), false],
+    ['HUS410', null, false],
+    ['LUS210', null, false],
+    ['LUS28', Date.parse(monthly.counted_at), true],
+  ], 'LUS28: the monthly count 66 days ago, flagged; HUS26: the later spot check, 64 days ago, not flagged; '
+    + 'HUS410: a rejected and a waiting count are not counts yet; LUS210: a discarded count and a draft are not counts');
+});
+
+test('Month-end lists each family\'s records; an admin corrects one; its CSV names the revision (stories 83–87)', async () => {
+  const ctx = await withAdmin();
+  const add = async (sku) => (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku } })).body.item;
+  const [hanger, odd, missed] = [await add('LUS28'), await add('HUS"26, Z'), await add('HGUS26')];
+  await goLive(ctx.db, 'hangers');
+  await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
+  const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
+  const started = (await change(bob, '/api/counts/start', { family: 'hangers', kind: 'monthly', closes: '2026-08' })).body.count;
+  // Late in the evening, so the office's day (September 1) is not the UTC day.
+  await as(ctx.db, null, (owner) => owner.query(
+    "UPDATE inv.counts SET counted_at = '2026-09-01 23:30:00-04' WHERE id = $1", [started.id]));
+  const submitted = (await change(bob, '/api/counts/submit', { id: started.id, version: started.version, closes: '2026-08',
+    lines: [{ item_id: hanger.id, loose: 10 }, { item_id: odd.id, loose: 5 }] })).body.count;
+  await change(ctx, '/api/counts/approve', { id: submitted.id, version: submitted.version, answers: {} });
+
+  const { records: [listed], ...rest } = await read(bob, '/api/month-end');
+  assert.deepEqual([rest, listed.id, listed.family_name, listed.closes, listed.revision, listed.items],
+    [{ ok: true }, submitted.id, 'Hangers', '2026-08', 1, 2], 'everyone reads the list, without each record\'s items');
+  const { record } = await read(bob, `/api/month-end/record?id=${listed.id}`);
+  assert.deepEqual(record.lines.map((l) => [l.item, l.quantity]), [['LUS28', 10], ['HUS"26, Z', 5]], 'and opens one record');
+  const body = { id: record.id, revision: 1, why: 'Missed the top shelf', lines: [{ item_id: hanger.id, quantity: 7 }, { item_id: missed.id, quantity: 3 }] };
+  const res = await post(ctx.base, '/api/month-end/correct', { key: crypto.randomUUID(), ...body }, bob.cookie);
+  assert.equal(res.status, 403, 'only an admin corrects a month-end record');
+  const corrected = await change(ctx, '/api/month-end/correct', body);
+  assert.equal(corrected.status, 200, corrected.body.error);
+  assert.equal(corrected.body.record.revision, 2);
+  assert.deepEqual((await read(bob, '/api/month-end')).records.map((r) => [r.revision, r.items]), [[2, 3]]);
+
+  const csv = await get(ctx.base, `/api/month-end/csv?id=${record.id}`, bob.cookie);
+  assert.equal(csv.status, 200);
+  assert.match(csv.headers.get('content-type'), /^text\/csv/);
+  assert.equal(csv.headers.get('content-disposition'), 'attachment; filename="Hangers month-end August 2026 revision 2.csv"');
+  const text = Buffer.from(await csv.arrayBuffer()).toString('utf8');
+  assert.ok(text.startsWith('\uFEFF'), 'a UTF-8 byte-order mark, so Excel shows ′ in a name');
+  assert.equal(text.slice(1), [
+    'SKU,Name,Quantity (pieces),Date counted',
+    'LUS28,LUS28,7,2026-09-01',
+    '"HUS""26, Z","HUS""26, Z",5,2026-09-01',
+    'HGUS26,HGUS26,3,2026-09-01',
+    '',
+  ].join('\r\n'), 'a comma or a quote is kept inside its cell');
+  for (const route of ['/api/month-end/csv', '/api/month-end/record']) {
+    assert.equal((await get(ctx.base, `${route}?id=${submitted.id + 99}`, bob.cookie)).status, 404, route);
+  }
+
+  const [entry] = (await read(ctx, '/api/activity?family=hangers')).entries;
+  assert.deepEqual([entry.who, entry.action, entry.target, entry.change], ['Ann Lee', 'correct month-end', 'Hangers month-end, August 2026',
+    'revision 2: LUS28 10 → 7, HGUS26 added 3; why: Missed the top shelf']);
+  const history = async (item) => (await read(ctx, `/api/items/history?id=${item.id}`)).entries
+    .filter((e) => e.action !== 'add item').map((e) => [Date.parse(e.at), e.who, e.action, e.change, e.detail]);
+  const counted = Date.parse('2026-09-02T03:30:00Z'); // 2026-09-01 23:30 -04:00, as set above
+  assert.deepEqual(await history(hanger), [
+    [counted, 'Ann Lee', 'correct month-end', -3, 'August 2026, revision 2: 10 → 7; why: Missed the top shelf'],
+    [counted, 'Ann Lee', 'approve count', 10, 'monthly, closes August 2026: counted 10, the app had 0; counted by Bob Ray'],
+  ], 'a correction sits at the count\'s moment, above the count it corrects');
+  assert.deepEqual(await history(missed), [[counted, 'Ann Lee', 'correct month-end', 3, 'August 2026, revision 2: added 3; why: Missed the top shelf']]);
 });

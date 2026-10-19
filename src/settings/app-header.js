@@ -104,6 +104,35 @@ window.AppHeader = (() => {
     box.append(note);
   }
 
+  // "Was this before or after the count?" (stories 77, 78): a receipt,
+  // correction or trim saved soon after a count is refused with the counts
+  // to pick from, oldest first (err.current.counts). Shows the question in
+  // #message, one button per answer: before the first count, between each
+  // two, after the last. `resend(timing)` saves the same entry again with
+  // the answer. Cancel saves nothing and leaves the form as typed. With no
+  // count left to ask about (one was rejected meanwhile), the one button
+  // saves without an answer. Answers whether `err` was that refusal.
+  function askTiming(err, resend) {
+    const counts = err.current && err.current.counts;
+    if (!Array.isArray(counts)) return false;
+    say(err.message, 'bad');
+    const note = el('message').firstChild;
+    const count = (c) => 'the ' + c.family_name + ' count of ' + showTime(c.counted_at);
+    const last = counts[counts.length - 1];
+    const answers = !last ? [['Save', null]] : counts.map((c, n) =>
+      [n ? 'Between ' + count(counts[n - 1]) + ' and ' + count(c) : 'Before ' + count(c), { before: c.id }])
+      .concat([['After ' + count(last), { after: last.id }]]);
+    const button = (label, className, onClick) => {
+      const pick = document.createElement('button');
+      Object.assign(pick, { type: 'button', className, textContent: label });
+      pick.addEventListener('click', onClick);
+      note.append(' ', pick);
+    };
+    for (const [label, timing] of answers) button(label, '', () => resend(timing));
+    button('Cancel', 'ghost', () => say(''));
+    return true;
+  }
+
   // Reads every route a page lists from at once; null, with the reason said
   // in #message, if any fails.
   async function getAll(routes) {
@@ -140,6 +169,15 @@ window.AppHeader = (() => {
   const OFFICE_ZONE = 'America/New_York';
   const officeTime = new Intl.DateTimeFormat('en-US', { timeZone: OFFICE_ZONE, dateStyle: 'medium', timeStyle: 'short' });
   const showTime = (iso) => (iso ? officeTime.format(new Date(iso)) : '—');
+  // The office date alone, for a column of dates: "Aug 1, 2026".
+  const officeDate = new Intl.DateTimeFormat('en-US', { timeZone: OFFICE_ZONE, dateStyle: 'medium' });
+  const showDate = (iso) => officeDate.format(new Date(iso));
+  // The month a count closes, YYYY-MM, in words: "September 2026". The
+  // Activity Log words it the same way on the server (src/settings/activity.js).
+  const monthWords = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const monthName = (m) => monthWords.format(new Date(m + '-01T00:00:00Z'));
+  // A count's kind as a title says it: "monthly count" or "spot check".
+  const countKind = (kind) => (kind === 'monthly' ? 'monthly count' : 'spot check');
   // Today's office date as a date box writes it, YYYY-MM-DD.
   const officeDay = new Intl.DateTimeFormat('en-CA', { timeZone: OFFICE_ZONE });
   const today = () => officeDay.format(new Date());
@@ -203,5 +241,5 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, getAll, say, itemLabel, unitShort, inOrderUnit, showTime, today, familyBar, typingIn };
+  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, monthName, countKind, today, familyBar, typingIn };
 })();

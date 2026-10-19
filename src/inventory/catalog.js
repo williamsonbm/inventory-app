@@ -49,11 +49,15 @@ async function listCatalog(database) {
     readFamilies(database),
     database.read(`
       SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
-             i.active, i.version, f.incoming, f.on_hand, f.reorder
+             i.active, i.version, f.incoming, f.on_hand, f.reorder, f.counted_at,
+             coalesce(f.counted_at < pg_catalog.now() - interval '65 days', false) AS counted_long_ago
         FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
        ORDER BY i.family, i.sku, i.product, i.size, i.grade, i.length_ft`),
     database.read('SELECT depth, available_lf, threshold_lf, reorder FROM inv.lvl_depth_figures ORDER BY depth'),
   ]);
+  // counted_long_ago: 65 days is two 31-day months and three days for a late
+  // count, so an item two monthly counts missed stands out (story 81; #72).
+  // Never counted is null and not flagged (Q154).
   // gradeOrder: lumber grades weakest first, the engine's own ranking, so the
   // Overview sorts 2x4 #2 ahead of 2x4 #1 (owner, 2026-10-01).
   return { families, items, lvlDepths, gradeOrder: GRADE_STRENGTH_ORDER };
@@ -62,6 +66,9 @@ async function listCatalog(database) {
 // A draft count's save and submit take the same arguments: the count, the
 // version the sheet read, the month it closes and the sheet's rows.
 const draftArgs = (b) => [b.id, b.version, b.closes ?? null, JSON.stringify(b.lines)];
+
+// { before: count id } or { after: count id }, or nothing when the page was not asked.
+const timing = (b) => (b.timing == null ? null : JSON.stringify(b.timing));
 
 // Route → the database function it calls, its arguments after the actor and
 // the retry key, the name its answer goes back under, and whether only an
@@ -95,18 +102,20 @@ const CATALOG_CHANGES = {
   // A delivery against a PO (po_id and the version the screen read) or
   // without one (supplier_id). replaces: a receipt line it replaces, from
   // History → Reverse → Reverse and enter again; likewise for a correction
-  // and a trim.
+  // and a trim. timing: the answer to "before or after the count?", for
+  // each of the three (group D).
   '/api/receipts/receive': {
-    fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines), b.replaces ?? null], as: 'receipt',
+    fn: 'receive', args: (b) => [b.po_id, b.po_version, b.supplier_id, b.bol, JSON.stringify(b.lines), b.replaces ?? null, timing(b)],
+    as: 'receipt',
   },
   // Inventory → Overview → an item → Correct on hand: a change in pieces, + or −.
   '/api/items/correct': {
-    fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note, b.replaces ?? null], as: 'correction',
+    fn: 'correct', args: (b) => [b.item_id, b.quantity, b.reason_id, b.note, b.replaces ?? null, timing(b)], as: 'correction',
   },
   // Inventory → Overview → an LVL item → Trim: boards cut down to a shorter length;
   // unretire: the page said a retired length comes back into use (Q39).
   '/api/items/trim': {
-    fn: 'trim', args: (b) => [b.item_id, b.length_ft, b.boards, b.note, b.unretire === true, b.replaces ?? null], as: 'trim',
+    fn: 'trim', args: (b) => [b.item_id, b.length_ft, b.boards, b.note, b.unretire === true, b.replaces ?? null, timing(b)], as: 'trim',
   },
   // Inventory → Overview → an item → History → Reverse: a receipt line, a
   // correction or a trim entered by mistake (stories 42, 43, 49).
@@ -127,6 +136,11 @@ const CATALOG_CHANGES = {
   // approves a count they did not work on; the database says who may.
   '/api/counts/approve': { fn: 'approve_count', args: (b) => [b.id, b.version, JSON.stringify(b.answers ?? {})], as: 'count' },
   '/api/counts/reject': { fn: 'reject_count', args: (b) => [b.id, b.version], as: 'count' },
+  // A draft nobody will finish (Q149): its starter or an admin; the database says who.
+  '/api/counts/discard': { fn: 'discard_count', args: (b) => [b.id, b.version], as: 'count' },
+  '/api/month-end/correct': {
+    fn: 'correct_month_end', args: (b) => [b.id, b.revision, b.why, JSON.stringify(b.lines)], as: 'record', adminOnly: true,
+  },
   // Settings → Inventory → Count approval. Admin-only (owner, Q110).
   '/api/count-approval/set': {
     fn: 'set_count_approval_by_another', args: (b) => [b.version, b.on], as: 'setting', adminOnly: true,
