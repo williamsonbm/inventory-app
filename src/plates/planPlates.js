@@ -37,7 +37,6 @@
 
 const { parsePlateSummary } = require('./parsePlateSummary.js');
 const { skuKey } = require('./readPlateStockCsv.js');
-const PACK_FACTORS = require('./packFactors.json');
 
 // Standard stocked plates list provided by engineering / yard operations.
 // Plates outside this set are non-stocked special orders and flagged for redesign.
@@ -67,21 +66,25 @@ const STOCKED_PLATES = new Set([
   'MT20HS5X10', 'MT20HS6X12', 'MT20HS7X8', 'MT20HS7X10', 'MT20HS10X12',
 ]);
 
-// key → ALL pack factors for that SKU. Built once at require time; the table is
-// static reference data and changes only when a supplier changes packaging.
+// key → ALL pack factors for that SKU, built on every call from the pack
+// sizes the caller passes in. Deliberately per call, not once at require
+// time: the sizes come from the database (#81 change item 3), so a map
+// built once would keep serving a size changed in Settings → Pack sizes.
 //
-// WHY AN ARRAY, NOT A SINGLE ENTRY. 72 rows cover 57 distinct SKUs — 15 of them
-// appear TWICE, once banded and once boxed, with the same sku_display and wildly
-// different packaging (MT20 4x4 is a 20-each pack with a 15,400 pallet as
-// MT20-BAND, and a 330-each box as MT20-BOX). A plain Map keyed on SKU keeps
-// whichever row happens to be last and silently prices the other option out of
-// existence — caught by test/plates.test.js during the first run of this file.
-// Both are genuinely orderable, so both are offered.
-const PACK_BY_KEY = new Map();
-for (const p of PACK_FACTORS) {
-  const k = skuKey(p.sku);
-  if (!PACK_BY_KEY.has(k)) PACK_BY_KEY.set(k, []);
-  PACK_BY_KEY.get(k).push(p);
+// WHY AN ARRAY, NOT A SINGLE ENTRY. 15 plates have two rows, once banded and
+// once boxed, with the same SKU and wildly different packaging (MT20 4x4 is a
+// 20-each pack with a 15,400 pallet, and a 330-each box). A plain Map keyed
+// on SKU keeps whichever row happens to be last and silently prices the
+// other option out of existence — caught by test/plates.test.js during the
+// first run of this file. Both are genuinely orderable, so both are offered.
+function packsByKey(packs) {
+  const byKey = new Map();
+  for (const p of packs || []) {
+    const k = skuKey(p.sku);
+    if (!byKey.has(k)) byKey.set(k, []);
+    byKey.get(k).push(p);
+  }
+  return byKey;
 }
 
 /**
@@ -135,9 +138,13 @@ function toPurchaseUnits(eaches, packs) {
 /**
  * @param files  [{ name, text }]  MiTek Material Summary CSVs
  * @param stock  parsePlateStockCsv() result, or null to plan greenfield
+ * @param packs  pack-factor rows { sku, eaches_per_unit, unit_label,
+ *               pallet_eaches, product_line }, several per SKU allowed;
+ *               none leaves every plate unpriced (packKnown false)
  * @returns a report; writes nothing
  */
-function planPlates(files, stock) {
+function planPlates(files, stock, { packs } = {}) {
+  const packByKey = packsByKey(packs);
   const jobs = [];
   const rejected = [];
   // Parser notices for every job, one list, job-prefixed.
@@ -196,7 +203,7 @@ function planPlates(files, stock) {
 
   for (const d of demand.values()) {
     const s = bySku.get(d.key) || null;
-    const packs = PACK_BY_KEY.get(d.key) || null;
+    const skuPacks = packByKey.get(d.key) || null;
 
     // Use the RAW figure, negatives included. Clamping to 0 here was a real bug:
     // it hid the shortfall already in the ledger AND discarded genuinely committed
@@ -228,15 +235,15 @@ function planPlates(files, stock) {
       incoming: s ? s.incoming : null,
       threshold: s ? s.threshold : null,
       inStockFile: !!s,
-      purchase: toPurchaseUnits(short, packs),
-      packKnown: !!packs,
+      purchase: toPurchaseUnits(short, skuPacks),
+      packKnown: !!skuPacks,
       // Sorted biggest-shortfall-first inside the row too, so expanding a row
       // shows the job driving it at the top.
       byJob: d.byJob.slice().sort((a, b) => b.qty - a.qty),
     };
 
     // Anything we can't price or can't find is surfaced, never dropped.
-    if (!s || !packs) unmatched.push({ sku: d.sku, inStockFile: !!s, packKnown: !!packs });
+    if (!s || !skuPacks) unmatched.push({ sku: d.sku, inStockFile: !!s, packKnown: !!skuPacks });
     rows.push(row);
   }
 
@@ -271,4 +278,4 @@ function planPlates(files, stock) {
   };
 }
 
-module.exports = { planPlates, toPurchaseUnits, PACK_BY_KEY, STOCKED_PLATES };
+module.exports = { planPlates, toPurchaseUnits, STOCKED_PLATES };

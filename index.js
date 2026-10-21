@@ -5,13 +5,14 @@
 // to deploy — "No entrypoint found which imports express" — because the
 // express import sat one file down, out of the scan.
 //
-// Three environment variables, all set in Vercel (#77):
+// Four environment variables, all set in Vercel (#77, #81 part 4):
 //   DATABASE_URL      the transaction-mode pooler, port 6543, as the app's own
 //                     login, with no sslmode (see src/db/database.js)
+//   PLANNER_DATABASE_URL  the same, as the Planner's read-only login, inv_planner
 //   DATABASE_CA_CERT  Supabase's CA certificate, the text of the .crt file
 //   SESSION_SECRET    at least 32 random characters; changing it signs everyone out
 //
-// The pool is made once, at module scope: Vercel shares one instance across
+// Each pool is made once, at module scope: Vercel shares one instance across
 // concurrent requests, and a pool per request would multiply connections (#28).
 //
 // It never calls listen. Vercel owns the listener in the cloud. `npm start`
@@ -20,13 +21,15 @@ const express = require('express');
 const { createApp } = require('./src/app.js');
 const { openDatabase } = require('./src/db/database.js');
 
-const { DATABASE_URL, DATABASE_CA_CERT } = process.env;
+const { DATABASE_URL, PLANNER_DATABASE_URL, DATABASE_CA_CERT } = process.env;
 if (!DATABASE_URL) throw new Error('DATABASE_URL is not set (the pooled connection, port 6543).');
+if (!PLANNER_DATABASE_URL) throw new Error('PLANNER_DATABASE_URL is not set (the pooled connection, port 6543, as inv_planner).');
 if (!DATABASE_CA_CERT) throw new Error('DATABASE_CA_CERT is not set (Supabase\'s CA certificate, as text).');
 
 const server = express();
 server.use(createApp({
   database: openDatabase(DATABASE_URL, { ca: DATABASE_CA_CERT }),
+  plannerDatabase: openDatabase(PLANNER_DATABASE_URL, { ca: DATABASE_CA_CERT }),
   sessionSecret: process.env.SESSION_SECRET,
 }));
 

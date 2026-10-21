@@ -4,8 +4,8 @@
 // as one passing file.
 // =============================================================
 // Boots the real composed app (src/app.js) against a fresh database built by
-// the migration runner, connected as the app's own login. Nothing outside
-// the app is replaced.
+// the migration runner, connected as the app's own login and, for the
+// Planner, as the Planner's. Nothing outside the app is replaced.
 // =============================================================
 
 const { after } = require('node:test');
@@ -20,9 +20,9 @@ const SESSION_SECRET = 'a test signing secret, at least 32 characters long';
 const running = [];
 
 after(async () => {
-  for (const { server, database } of running) {
+  for (const { server, databases } of running) {
     await new Promise((r) => server.close(r));
-    await database.end();
+    for (const database of databases) await database.end();
   }
 });
 
@@ -32,11 +32,12 @@ after(async () => {
 async function startApp({ databaseUrl } = {}) {
   const db = databaseUrl ? null : await freshDatabase();
   const database = openDatabase(databaseUrl || urlFor(db, 'inv_app'));
-  const app = createApp({ database, sessionSecret: SESSION_SECRET });
+  const plannerDatabase = openDatabase(db ? urlFor(db, 'inv_planner') : databaseUrl);
+  const app = createApp({ database, plannerDatabase, sessionSecret: SESSION_SECRET });
   const server = await new Promise((resolve) => {
     const s = app.listen(0, '127.0.0.1', () => resolve(s));
   });
-  running.push({ server, database });
+  running.push({ server, databases: [database, plannerDatabase] });
   const base = `http://127.0.0.1:${server.address().port}`;
   return { base, db, app };
 }

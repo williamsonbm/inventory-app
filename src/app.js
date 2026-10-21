@@ -21,6 +21,7 @@ const { listMonthEnd, readMonthEnd, monthEndCsv } = require('./inventory/month-e
 const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
+const { PLAN_FAMILIES, planFromInventory } = require('./inventory/planner-stock.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
 // The exact open list: the sign-in page (its script and style are inline, so
@@ -66,7 +67,7 @@ function wantsPage(req) {
   return req.method === 'GET' && !req.path.startsWith('/api/');
 }
 
-function createApp({ database, sessionSecret }) {
+function createApp({ database, plannerDatabase, sessionSecret }) {
   checkSecret(sessionSecret);
   const app = express();
   app.use(express.json({ limit: `${BODY_LIMIT_MB}mb` }));
@@ -213,9 +214,8 @@ function createApp({ database, sessionSecret }) {
 
   // The Planner's lumber buying options come from the database, shared by
   // every computer (S37). The menu route answers ahead of the Planner's own,
-  // which serves only the engine's default. A lumber plan always runs with
-  // the shared options: whatever menu or redirects the request carries are
-  // replaced here, so an old page's own copy cannot change a buy list.
+  // which serves only the engine's default. It serves the editing panel, so
+  // it reads through the app's login.
   // Deliberately here and not in src/planner/server.js: the Planner module
   // reaches no database (test/port-guards.test.js).
   app.get('/api/lumber/menu', catchAsync(async (_req, res) => {
@@ -225,16 +225,15 @@ function createApp({ database, sessionSecret }) {
     const options = await readLumberOptions(database);
     res.json({ ok: true, ...options, lumberSizes: await readLumberSizes(database), gradeOrder: GRADE_STRENGTH_ORDER });
   }));
-  // With every length switched off the engine would plan with its own
-  // default, so that plan is refused instead.
-  app.post('/api/lumber/plan', catchAsync(async (req, res, next) => {
-    const { menu, redirects } = await readLumberOptions(database);
-    if (!Object.keys(menu).length) {
-      return res.status(400).json({ ok: false, error: 'No lumber lengths are switched on. Switch on the lengths you buy in the "Stock lengths we buy" panel of the Planner.' });
-    }
-    Object.assign(req.body, { menu, redirects });
-    next();
-  }));
+  // The four plan routes answer ahead of the Planner's own, with the
+  // database's inputs (src/inventory/planner-stock.js). A plan reads through
+  // the Planner's own login, which can change no row (migration 007; ADR 0001).
+  for (const route of Object.keys(PLAN_FAMILIES)) {
+    app.post(route, catchAsync(async (req, res) => {
+      const { status, body } = await planFromInventory(plannerDatabase, route, req.body);
+      res.status(status).json(body);
+    }));
+  }
 
   app.use(planner);
   // An API address nobody registered answers JSON, like every other refusal.

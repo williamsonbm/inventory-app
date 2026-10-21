@@ -2,6 +2,9 @@
 // planner/server.js — the DB-FREE entry point.
 // Run alone with: node src/planner/server.js  →  http://127.0.0.1:3000
 // (npm start runs the whole app instead: src/local.js)
+// Run alone it has no plate pack sizes, which live in the database (#81
+// change item 3): plate shortfalls show in eaches, with no box, pack or
+// pallet to buy. The lumber buying menu falls back to the engine's default.
 // =============================================================
 // A purchase planner for four material families — plates, hangers, LVL and
 // lumber. Drop in one or more MiTek "Material Summary" CSVs and get back the
@@ -113,13 +116,18 @@ app.get('/api/lumber/menu', (_req, res) => {
 // The four families differ only in DATA — which sniffer routes a dropped stock
 // file, which reader parses it, which planner runs, and the noun in the "nothing
 // usable" message — never in the shape of the operation. So the operation lives
-// once in planHandler, and PLAN_ROUTES keys that data by the family's route
+// once in runPlan, and PLAN_ROUTES keys that data by the family's route
 // (docs/CODING-STANDARDS.md §Seams). The key is the full literal path, so a grep
-// for "/api/plates/plan" still lands on its registration (§Readers). Lumber
-// alone carries page-editable options — an edited menu and grade redirects — so
-// it supplies `readOptions`; the other three pass none.
+// for "/api/plates/plan" still lands on its registration (§Readers). Two
+// families take options, through `readOptions`: lumber its buying menu and
+// grade redirects, plates their pack sizes. In the whole app both come from
+// the database and replace whatever the request carries
+// (src/inventory/planner-stock.js); the other two take none.
 const PLAN_ROUTES = {
-  '/api/plates/plan': { sniff: looksLikePlateStockCsv, parseStock: parsePlateStockCsv, plan: planPlates, noun: 'plate' },
+  '/api/plates/plan': {
+    sniff: looksLikePlateStockCsv, parseStock: parsePlateStockCsv, plan: planPlates, noun: 'plate',
+    readOptions: (body) => ({ packs: body.packs }),
+  },
   '/api/hangers/plan': { sniff: looksLikeHangerStockCsv, parseStock: parseHangerStockCsv, plan: planHangers, noun: 'hanger' },
   '/api/lvl/plan': { sniff: looksLikeStockCsv, parseStock: parseStockCsv, plan: planLvl, noun: 'LVL' },
   '/api/lumber/plan': {
@@ -143,71 +151,80 @@ function planBodyError({ files, stock }) {
   return null;
 }
 
-function planHandler({ sniff, parseStock, plan, noun, readOptions }) {
-  return (req, res) => {
-    const bodyError = planBodyError(req.body);
-    if (bodyError) return res.status(400).json({ ok: false, error: bodyError });
-    const { files, stock } = req.body;
+// Runs one plan: the route's full literal path and the request body in, the
+// HTTP status and the JSON answer out. Pure, so the whole app (src/app.js)
+// can choose the inputs first and add to the answer after.
+function runPlan(route, reqBody) {
+  const { sniff, parseStock, plan, noun, readOptions } = PLAN_ROUTES[route];
+  const bodyError = planBodyError(reqBody);
+  if (bodyError) return { status: 400, body: { ok: false, error: bodyError } };
+  const { files, stock } = reqBody;
 
-    // Sniff the dropped files rather than trusting which zone they landed in — a
-    // misfiled CSV is a two-second mistake that would otherwise cost a confusing
-    // error. A file that reads as stock, when none was named outright, is
-    // rerouted to the stock slot and reported back in `rerouted`. A second such
-    // file is ignored and named in `warnings`.
-    const jobFiles = [];
-    let stockFile = stock && stock.text.trim() ? stock : null;
-    const rerouted = [];
-    const ignored = [];
-    for (const f of files) {
-      if (sniff(f.text)) {
-        if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
-        // Same name in both slots is one file, not two.
-        else if (f.name !== stockFile.name) ignored.push(`"${f.name}" ignored: "${stockFile.name}" is already the on-hand file.`);
-      } else {
-        jobFiles.push(f);
-      }
+  // Sniff the dropped files rather than trusting which zone they landed in — a
+  // misfiled CSV is a two-second mistake that would otherwise cost a confusing
+  // error. A file that reads as stock, when none was named outright, is
+  // rerouted to the stock slot and reported back in `rerouted`. A second such
+  // file is ignored and named in `warnings`.
+  const jobFiles = [];
+  let stockFile = stock && stock.text.trim() ? stock : null;
+  const rerouted = [];
+  const ignored = [];
+  for (const f of files) {
+    if (sniff(f.text)) {
+      if (!stockFile) { stockFile = f; rerouted.push({ name: f.name, to: 'stock' }); }
+      // Same name in both slots is one file, not two.
+      else if (f.name !== stockFile.name) ignored.push(`"${f.name}" ignored: "${stockFile.name}" is already the on-hand file.`);
+    } else {
+      jobFiles.push(f);
     }
+  }
 
-    // A bad stock file must not refuse the plan outright — losing the netting is
-    // annoying; refusing to plan because an OPTIONAL second input was wrong is
-    // worse. Surface the failure as `stockError` rather than throwing.
-    let parsedStock = null;
-    let stockError = null;
-    if (stockFile) {
-      try {
-        parsedStock = parseStock(stockFile.text);
-      } catch (err) {
-        stockError = err.message;
-      }
-    }
-
-    let result;
+  // A bad stock file must not refuse the plan outright — losing the netting is
+  // annoying; refusing to plan because an OPTIONAL second input was wrong is
+  // worse. Surface the failure as `stockError` rather than throwing.
+  let parsedStock = null;
+  let stockError = null;
+  if (stockFile) {
     try {
-      result = readOptions
-        ? plan(jobFiles, parsedStock, readOptions(req.body))
-        : plan(jobFiles, parsedStock);
+      parsedStock = parseStock(stockFile.text);
     } catch (err) {
-      return res.status(400).json({ ok: false, error: err.message });
+      stockError = err.message;
     }
-    if (!result.jobs.length) {
-      return res.status(400).json({
-        ok: false, error: `No usable ${noun} material summaries found.`, rejected: result.rejected,
-      });
-    }
+  }
 
-    res.json({
+  let result;
+  try {
+    result = readOptions
+      ? plan(jobFiles, parsedStock, readOptions(reqBody))
+      : plan(jobFiles, parsedStock);
+  } catch (err) {
+    return { status: 400, body: { ok: false, error: err.message } };
+  }
+  if (!result.jobs.length) {
+    return {
+      status: 400,
+      body: { ok: false, error: `No usable ${noun} material summaries found.`, rejected: result.rejected },
+    };
+  }
+
+  return {
+    status: 200,
+    body: {
       ok: true,
       ...result,
       warnings: [...result.warnings, ...ignored],
       rerouted,
       stockFileName: stockFile ? stockFile.name : null,
       stockError,
-    });
+    },
   };
 }
 
-for (const [route, spec] of Object.entries(PLAN_ROUTES)) {
-  app.post(route, planHandler(spec));
+for (const route of Object.keys(PLAN_ROUTES)) {
+  app.post(route, (req, res) => {
+    const { status, body } = runPlan(route, req.body);
+    res.status(status).json(body);
+  });
 }
 
 // Error shaping, applied once: every failure leaves as { ok: false, error },
@@ -257,9 +274,11 @@ if (require.main === module) {
 }
 
 // `app`, plus jsonError, the test-only seam the file header names.
+// runPlan: src/inventory/planner-stock.js runs a plan with the database's
+// inputs through it.
 // BODY_LIMIT_MB and BODY_ERROR_MESSAGES: src/app.js applies the same body
 // limit in front of the Planner and answers its refusals in the same words.
 // PORT, HOST and start() are used by the CLI block above and by nothing else in this repo:
 // their only other caller was the Electron packaging in `materials-planner`,
 // which the port leaves behind. An export with no reader does not ship (#39).
-module.exports = { app, jsonError, BODY_LIMIT_MB, BODY_ERROR_MESSAGES };
+module.exports = { app, runPlan, jsonError, BODY_LIMIT_MB, BODY_ERROR_MESSAGES };

@@ -20,6 +20,11 @@ const path = require('node:path');
 const { planPlates, toPurchaseUnits, STOCKED_PLATES } = require('../src/plates/planPlates.js');
 const { parsePlateStockCsv, skuKey } = require('../src/plates/readPlateStockCsv.js');
 
+// The plate pack sizes the import seeds the database with. The engine takes
+// them as an input (#81 change item 3); fed this list, it prices as it did
+// when it read the file itself (Q180).
+const PACKS = { packs: require('../src/plates/packFactors.json') };
+
 const FIX = path.join(__dirname, 'plate-fixtures');
 const read = (f) => ({ name: f, text: fs.readFileSync(path.join(FIX, f), 'utf8') });
 
@@ -80,7 +85,7 @@ test('an old-spelling job line finds its current-spelling stock row', () => {
   const text = original.replace(/MT20 {2}1\.5x4/g, 'M18AHS 8x10');
   assert.notStrictEqual(text, original, 'the fixture must actually contain the line being rewritten');
   const jobs = [{ name: 'old.csv', text }];
-  const r = planPlates(jobs, stock);
+  const r = planPlates(jobs, stock, PACKS);
   const x = r.rows.find((q) => q.key === skuKey('MT18AHS 8x10'));
   assert.ok(x, 'the old-spelling demand line must resolve to a row');
   assert.strictEqual(x.inStockFile, true, 'and must find the MT18AHS stock row');
@@ -137,16 +142,20 @@ test('a SKU with both a pack and a pallet returns BOTH, smallest overshoot first
 });
 
 test('REGRESSION: a SKU that is both banded and boxed offers ALL of its options', () => {
-  // 15 of 57 SKUs appear twice in plate_pack_factor — once as MT20-BAND, once as
-  // MT20-BOX — with the same sku_display. An earlier version keyed a plain Map on
-  // SKU, so the second row overwrote the first and one perfectly orderable option
-  // silently disappeared. This pins all three, from the REAL pack-factor table.
-  const { PACK_BY_KEY } = require('../src/plates/planPlates.js');
-  const packs = PACK_BY_KEY.get(skuKey('MT20 4x4'));
-  assert.strictEqual(packs.length, 2, 'MT20 4x4 exists as both MT20-BAND and MT20-BOX');
-
-  const o = toPurchaseUnits(506, packs);
-  assert.strictEqual(o.length, 3, 'band pack + band pallet + box');
+  // 15 of 59 SKUs appear twice in the pack sizes — once as a pack, once as a
+  // box — with the same SKU. An earlier version keyed a plain Map on SKU, so
+  // the second row overwrote the first and one perfectly orderable option
+  // silently disappeared. This pins all three, from the REAL pack sizes.
+  const sheet = [
+    'Material Summary,Sample Customer',
+    'Quote Date:,1/2/2026,Job Number:,BANDBOX',
+    'PLATE SUMMARY,,,,',
+    'SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES,UNIT COST,TOTAL',
+    ',506,MT20  4x4,1.00,240.00,$1.00,$506.00',
+    '',
+  ].join('\n');
+  const r = planPlates([{ name: 'bandbox.csv', text: sheet }], null, PACKS);
+  const o = r.rows.find((row) => row.key === skuKey('MT20 4x4')).purchase;
   assert.deepStrictEqual(o.map((x) => [x.units, x.unit, x.leftover]), [
     [26, 'pack', 14],        // 26 x 20   = 520
     [2, 'box', 154],         //  2 x 330  = 660
@@ -162,7 +171,7 @@ test('zero or negative shortfall converts to nothing', () => {
 // ── the plan ────────────────────────────────────────────────────────────────
 
 test('all three jobs are listed, including the one with no plates', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   assert.strictEqual(r.jobs.length, 3);
   assert.strictEqual(r.rejected.length, 0);
   const ewpJob = r.jobs.find((j) => j.jobNumber === '10002J');
@@ -171,7 +180,7 @@ test('all three jobs are listed, including the one with no plates', () => {
 });
 
 test('demand sums across jobs', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   assert.strictEqual(row(r, 'MT20 3x3').needEaches, 2124);
   assert.strictEqual(row(r, 'MT20 1.5x3').needEaches, 1576);
   assert.strictEqual(r.totals.jobs, 3);
@@ -179,7 +188,7 @@ test('demand sums across jobs', () => {
 });
 
 test('a covered SKU is not on the buy list', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   const x = row(r, 'MT20 3x3');            // need 2124, available 3000
   assert.strictEqual(x.shortEaches, 0);
   assert.strictEqual(x.purchase, null);
@@ -187,7 +196,7 @@ test('a covered SKU is not on the buy list', () => {
 });
 
 test('a short SKU gets the right buy figure in eaches AND units', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   const x = row(r, 'MT20 1.5x3');          // need 1576, available 1000
   assert.strictEqual(x.shortEaches, 576);
   assert.strictEqual(x.purchase[0].units, 1);
@@ -196,7 +205,7 @@ test('a short SKU gets the right buy figure in eaches AND units', () => {
 });
 
 test('incoming is REPORTED, never netted out of the buy figure', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   const x = row(r, 'MT20 4x4');            // need 1006, available 500, incoming 600
   assert.strictEqual(x.incoming, 600);
   assert.strictEqual(x.shortEaches, 506,
@@ -206,7 +215,7 @@ test('incoming is REPORTED, never netted out of the buy figure', () => {
 });
 
 test('a SKU absent from the stock file is treated as zero on hand and flagged', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   const x = row(r, 'MT20 1.5x4');          // need 930, not in the stock file
   assert.strictEqual(x.inStockFile, false);
   assert.strictEqual(x.availableEaches, 0);
@@ -219,7 +228,7 @@ test('a SKU absent from the stock file is treated as zero on hand and flagged', 
 test('a negative-stock SKU shows the real figure and BUYS the existing shortfall too', () => {
   // Clamping available to 0 here was a bug: it hid the ledger shortfall and
   // under-ordered. need 1022, available -100 -> buy 1122, split for the UI.
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   const x = row(r, 'MT20 3x6');
   assert.strictEqual(x.availableEaches, -100, 'the real, negative figure is shown');
   assert.strictEqual(x.negativeStock, true);
@@ -229,7 +238,7 @@ test('a negative-stock SKU shows the real figure and BUYS the existing shortfall
 });
 
 test('a healthy SKU reports no ledger shortfall component', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   const x = row(r, 'MT20 1.5x3');          // need 1576, available 1000
   assert.strictEqual(x.negativeStock, false);
   assert.strictEqual(x.shortEaches, 576);
@@ -238,7 +247,7 @@ test('a healthy SKU reports no ledger shortfall component', () => {
 });
 
 test('every job row carries what the drill-down needs', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   for (const j of row(r, 'MT20 3x3').byJob) {
     assert.ok(j.job, 'job number');
     assert.ok('jobName' in j, 'name');
@@ -248,14 +257,14 @@ test('every job row carries what the drill-down needs', () => {
 });
 
 test('the buy list is ordered biggest shortfall first', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   for (let i = 1; i < r.toBuy.length; i++) {
     assert.ok(r.toBuy[i - 1].shortEaches >= r.toBuy[i].shortEaches, `buy list must be ordered by shortfall descending, but row ${i} has a larger shortfall than row ${i - 1}`);
   }
 });
 
 test('every row can be traced back to the jobs that drove it', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   const x = row(r, 'MT20 3x3');
   assert.ok(x.byJob.length >= 1, 'every plan row must carry at least one contributing job');
   assert.strictEqual(x.byJob.reduce((s, j) => s + j.qty, 0), x.needEaches,
@@ -265,7 +274,7 @@ test('every row can be traced back to the jobs that drove it', () => {
 // ── the safety property ─────────────────────────────────────────────────────
 
 test('planning with no stock file at all still works (greenfield)', () => {
-  const r = planPlates(JOB_FILES, null);
+  const r = planPlates(JOB_FILES, null, PACKS);
   assert.strictEqual(r.stockInfo, null);
   assert.strictEqual(row(r, 'MT20 3x3').shortEaches, 2124, 'everything is a buy');
   assert.strictEqual(row(r, 'MT20 3x3').inStockFile, false);
@@ -275,14 +284,14 @@ test('planPlates is pure - same inputs, identical output, inputs untouched', () 
   // The whole safety argument for this tool is that it writes nothing anywhere.
   // A stable, side-effect-free result is the testable half of that claim.
   const before = JSON.stringify(JOB_FILES);
-  const a = JSON.stringify(planPlates(JOB_FILES, STOCK));
-  const b = JSON.stringify(planPlates(JOB_FILES, STOCK));
+  const a = JSON.stringify(planPlates(JOB_FILES, STOCK, PACKS));
+  const b = JSON.stringify(planPlates(JOB_FILES, STOCK, PACKS));
   assert.strictEqual(a, b);
   assert.strictEqual(JSON.stringify(JOB_FILES), before, 'inputs must not be mutated');
 });
 
 test('planPlates correctly identifies stocked vs non-stocked plates', () => {
-  const r = planPlates(JOB_FILES, STOCK);
+  const r = planPlates(JOB_FILES, STOCK, PACKS);
   const stocked = row(r, 'MT20 3x3');
   assert.strictEqual(stocked.isStocked, true, 'MT20 3x3 is in the stocked plate list');
 
@@ -316,7 +325,7 @@ const STOCK_CHECK_CSV = [
 ].join('\n');
 
 test('MT20 4x6, MT20 2x6 and MT20HS 7x8 report as STOCKED, not special-order', () => {
-  const r = planPlates([{ name: 'stockchk.csv', text: STOCK_CHECK_CSV }], null);
+  const r = planPlates([{ name: 'stockchk.csv', text: STOCK_CHECK_CSV }], null, PACKS);
   assert.deepStrictEqual(r.rejected, [], 'the fixture must parse');
 
   for (const sku of ['MT20 4x6', 'MT20 2x6', 'MT20HS 7x8']) {
@@ -362,7 +371,7 @@ test('a plate row with a bad QUANTITY is reported in the plan warnings, not drop
   const good = read('10001R-materials.csv');
   const text = good.text.replace(',930,MT20  1.5x4,', ',abc,MT20  1.5x4,');
   assert.notStrictEqual(text, good.text, 'the fixture row must exist for this test to mean anything');
-  const r = planPlates([{ name: 'bad.csv', text }], null);
+  const r = planPlates([{ name: 'bad.csv', text }], null, PACKS);
   const goodLines = planPlates([good], null).jobs[0].plateLines;
   assert.strictEqual(r.jobs[0].plateLines, goodLines - 1, 'only the bad row is lost');
   assert.ok(r.warnings.some((w) => /^\[10001R\] Row 80 skipped: QUANTITY not a positive integer: "abc"$/.test(w)),
@@ -370,7 +379,7 @@ test('a plate row with a bad QUANTITY is reported in the plan warnings, not drop
 });
 
 test('a job with no PLATE SUMMARY surfaces its parser warning at the top level', () => {
-  const r = planPlates(JOB_FILES, null);
+  const r = planPlates(JOB_FILES, null, PACKS);
   assert.ok(r.warnings.some((w) => /^\[10002J\] No 'PLATE SUMMARY' section/.test(w)),
     `expected the EWP job's warning, got ${JSON.stringify(r.warnings)}`);
 });

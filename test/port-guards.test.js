@@ -210,7 +210,7 @@ test('malformed JSON is refused with a JSON 400, not the default HTML page', asy
   });
 });
 
-// One shape check guards all four routes (planHandler), so one route proves it.
+// One shape check guards all four routes (runPlan), so one route proves it.
 // Each body below is valid JSON and used to reach the handler, where a null
 // entry threw a TypeError outside any try/catch.
 test('a malformed plan body is refused with a JSON 400 before any file is read', async () => {

@@ -28,8 +28,17 @@
 // `warnings` list and lost the unread per-job `warnings` field on jobs[].
 // Proven at re-record time: with those two keys removed from both, the new
 // and the captured bodies are deep-equal, and the nine new top-level
-// warnings are the nine old per-job warnings, job-prefixed. Every other
-// recorded file is still the pre-port capture.
+// warnings are the nine old per-job warnings, job-prefixed.
+//
+// Divergence, 2026-10-21: plates-no-stock.json and plates-with-stock.json
+// were re-recorded from this repo after the plate engine took its pack
+// sizes from the database instead of src/plates/packFactors.json (#81
+// change item 3). The database keeps no product line, so every buy
+// option's `productLine` is now null (Q184). Proven at re-record time: with
+// `productLine` removed from both, the new and the previous bodies are
+// deep-equal; 170 options (no stock) and 12 (with stock) carried a product
+// line before. The test seeds the database with every plate in that file.
+// Every other recorded file is still the pre-port capture.
 //
 // This test boots the whole app (src/app.js), signs in as a test user, and
 // compares the response, for all 50 sheets, against the recorded JSON above.
@@ -43,6 +52,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { withAdmin } = require('./support/app.js');
+const { as, APP } = require('./support/database.js');
 
 const FIXTURES = path.join(__dirname, 'port-fixtures');
 
@@ -66,13 +76,31 @@ function loadStock(fileName) {
   return { name: fileName, text: fs.readFileSync(p, 'utf8') };
 }
 
+// Every plate's pack sizes from the file the catalog import reads, put in
+// the test database through the app's own functions: the plate engine takes
+// them from the database (#81 change item 3).
+async function seedPlatePacks(db, ann) {
+  const packs = require('../src/plates/packFactors.json');
+  await as(db, APP, async (app) => {
+    const fn = async (name, ...args) => (await app.query(
+      `SELECT inv.${name}(${args.map((_, i) => `$${i + 1}`).join(', ')}) AS r`, args)).rows[0].r;
+    const ids = new Map();
+    for (const p of packs) {
+      if (!ids.has(p.sku)) ids.set(p.sku, (await fn('add_item', ann, crypto.randomUUID(), 'plates', { sku: p.sku })).id);
+      await fn('add_pack_size', ann, crypto.randomUUID(), ids.get(p.sku), p.unit_label, p.eaches_per_unit);
+      if (p.pallet_eaches != null) await fn('add_pack_size', ann, crypto.randomUUID(), ids.get(p.sku), 'pallet', p.pallet_eaches);
+    }
+  });
+}
+
 function loadRecorded(family, withStock) {
   const p = path.join(FIXTURES, 'recorded', `${family}-${withStock ? 'with-stock' : 'no-stock'}.json`);
   return JSON.parse(fs.readFileSync(p, 'utf8'));
 }
 
 test('recorded-output proof: all four routes match the pre-port build, all 50 sheets, with and without stock', async () => {
-  const { base, cookie } = await withAdmin();
+  const { base, cookie, db, ann } = await withAdmin();
+  await seedPlatePacks(db, ann.id);
 
   const sheets = loadSheets();
   assert.equal(sheets.length, 50, 'the committed corpus should still hold 50 sheets');

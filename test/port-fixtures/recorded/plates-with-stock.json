@@ -3868,7 +3868,7 @@
         "purchase": [
           {
             "unit": "pack",
-            "productLine": "MT20-BAND",
+            "productLine": null,
             "eachesPerUnit": 20,
             "units": 74,
             "totalEaches": 1480,
@@ -3876,7 +3876,7 @@
           },
           {
             "unit": "box",
-            "productLine": "MT20-BOX",
+            "productLine": null,
             "eachesPerUnit": 100,
             "units": 15,
             "totalEaches": 1500,
@@ -3884,7 +3884,7 @@
           },
           {
             "unit": "pallet",
-            "productLine": "MT20-BAND",
+            "productLine": null,
             "eachesPerUnit": 5000,
             "units": 1,
             "totalEaches": 5000,
@@ -4091,7 +4091,7 @@
         "purchase": [
           {
             "unit": "box",
-            "productLine": "MT18AHS",
+            "productLine": null,
             "eachesPerUnit": 128,
             "units": 2,
             "totalEaches": 256,
@@ -4130,7 +4130,7 @@
         "purchase": [
           {
             "unit": "box",
-            "productLine": "MT20HS",
+            "productLine": null,
             "eachesPerUnit": 110,
             "units": 1,
             "totalEaches": 110,
@@ -4163,7 +4163,7 @@
         "purchase": [
           {
             "unit": "box",
-            "productLine": "MT20-BOX",
+            "productLine": null,
             "eachesPerUnit": 160,
             "units": 1,
             "totalEaches": 160,
@@ -8902,7 +8902,7 @@
         "purchase": [
           {
             "unit": "pack",
-            "productLine": "MT20-BAND",
+            "productLine": null,
             "eachesPerUnit": 20,
             "units": 74,
             "totalEaches": 1480,
@@ -8910,7 +8910,7 @@
           },
           {
             "unit": "box",
-            "productLine": "MT20-BOX",
+            "productLine": null,
             "eachesPerUnit": 100,
             "units": 15,
             "totalEaches": 1500,
@@ -8918,7 +8918,7 @@
           },
           {
             "unit": "pallet",
-            "productLine": "MT20-BAND",
+            "productLine": null,
             "eachesPerUnit": 5000,
             "units": 1,
             "totalEaches": 5000,
@@ -9125,7 +9125,7 @@
         "purchase": [
           {
             "unit": "box",
-            "productLine": "MT18AHS",
+            "productLine": null,
             "eachesPerUnit": 128,
             "units": 2,
             "totalEaches": 256,
@@ -9164,7 +9164,7 @@
         "purchase": [
           {
             "unit": "box",
-            "productLine": "MT20HS",
+            "productLine": null,
             "eachesPerUnit": 110,
             "units": 1,
             "totalEaches": 110,
@@ -9197,7 +9197,7 @@
         "purchase": [
           {
             "unit": "box",
-            "productLine": "MT20-BOX",
+            "productLine": null,
             "eachesPerUnit": 160,
             "units": 1,
             "totalEaches": 160,
