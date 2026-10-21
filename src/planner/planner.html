@@ -28,7 +28,8 @@
   This file is glue: the header (its theme switch, name and Sign out are in
   src/settings/app-header.js), the family filter, the file panel, and the
   runner that posts to each family's plan route and hands the response to that
-  family's section (src/planner/<family>-section.js). NOT UNIT-TESTED: the
+  family's section (src/planner/<family>-section.js), and the Un-retire and
+  Add to catalog buttons on its lines (PlannerUI.flagsHtml). NOT UNIT-TESTED: the
   tabs, the saved filter, the theme switch and the print buttons need a browser,
   and this repo has no DOM harness. Checked by hand: a pass over the four
   families (spec #72, Testing Decisions). The routes are proven by
@@ -59,6 +60,7 @@
     <button id="btn-clear" class="ghost" hidden>Clear</button>
     <button id="btn-print" class="ghost" hidden>Print order sheet</button>
   </div>
+  <div id="message" role="status"></div>
 
   <div id="sections"></div>
 </div>
@@ -96,7 +98,50 @@
     const out = sec.querySelector('.fam-out');
     familyParts[family] = { sec, out, busy: sec.querySelector('.busy'), drills: PlannerUI.drilldowns(out) };
     if (section.mount) section.mount({ out, tools: sec.querySelector('.fam-tools') });
+    // Captured here and stopped, so a click on a line's button never also
+    // opens or shuts that line's detail (the row's own click does that).
+    out.addEventListener('click', (e) => {
+      const button = e.target.closest('[data-flag-do]');
+      if (!button) return;
+      e.stopPropagation();
+      fixLine(family, button.dataset.flagDo, flagsShown[family][button.dataset.flagKey]);
+    }, true);
     sec.querySelector('.print-one').addEventListener('click', () => printOnly(family));
+  }
+
+  // ── A line's catalog flag, fixed ───────────────────────────────────────────
+  // Each family's flags as last painted, by line key.
+  const flagsShown = {};
+  // Un-retire every item behind the line, or add its one item, through the
+  // same item routes Overview uses, then plan the family again so the line
+  // shows the catalog as it now stands. Each request is built once, retry key
+  // included, so "Try again" after an unconfirmed save sends the same one.
+  function fixLine(family, act, flag) {
+    if (!flag) return;
+    const label = AppHeader.itemLabel;
+    if (act === 'unretire') {
+      const n = flag.retired.length;
+      saveAll(family, flag.retired.map(({ id, version }) => ['/api/items/unretire', { key: crypto.randomUUID(), id, version }]),
+        (item) => label(item) + (n > 1 ? ' and ' + (n - 1) + ' more are' : ' is') + ' in use again.');
+    } else {
+      saveAll(family, [['/api/items/add', { key: crypto.randomUUID(), ...flag.addToCatalog }]],
+        (item) => label(item) + ' was added to the catalog as Special Order, with no threshold.');
+    }
+  }
+  async function saveAll(family, requests, done) {
+    AppHeader.say('');
+    let item;
+    try {
+      while (requests.length) {
+        ({ item } = await AppHeader.send(...requests[0]));
+        requests = requests.slice(1);
+      }
+      AppHeader.say(done(item), 'ok');
+    } catch (err) {
+      AppHeader.say(err.message, 'bad', err.unconfirmed ? () => saveAll(family, requests, done) : null);
+      el('message').scrollIntoView({ block: 'nearest' });
+    }
+    runFamily(family, files.isEmpty() ? [] : files.getJobs());
   }
 
   // ── Family filter ──────────────────────────────────────────────────────────
@@ -167,6 +212,7 @@
           esc(data.error || 'The plan failed.') + '</div>' + PlannerUI.renderRejected(data.rejected);
         return;
       }
+      flagsShown[family] = data.flags;
       section.render(data, parts.out, parts.drills);
     } catch (err) {
       if (run === runs[family]) parts.out.innerHTML = '<div class="note bad">Request failed: ' + esc(err.message) + '</div>';

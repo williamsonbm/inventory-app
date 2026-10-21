@@ -887,16 +887,39 @@
     };
   }
 
+  // One buy-list line's catalog flags, from the plan answer's `flags` (built
+  // by lineFlags in src/inventory/planner-stock.js): when it was last counted,
+  // and a Retired or Not in the catalog chip with what fixes it. A button
+  // carries only its line's key; planner.html looks the flag up and saves.
+  // Lumber and LVL lines name no one item, so they link to Overview's
+  // "+ Add item" instead (Q186).
+  function flagsHtml(flag, key, family) {
+    if (!flag) return '';
+    const button = (act, label) =>
+      ' <button type="button" class="ghost flag-btn" data-flag-do="' + act + '" data-flag-key="' + esc(key) + '">' + label + '</button>';
+    let h = '';
+    if (flag.retired) h += ' <span class="chip warn">Retired</span>' + button('unretire', 'Un-retire');
+    if (flag.notInCatalog) {
+      h += ' <span class="chip bad">Not in the catalog</span>' + (flag.addToCatalog
+        ? button('add', 'Add to catalog')
+        : ' <a class="no-print" href="/inventory?add=' + esc(family) + '">+ Add item in Inventory</a>');
+    }
+    if (flag.lastCounted) {
+      h += '<br><span class="spare">' + (flag.lastCounted === 'never' ? 'never counted' : 'last counted ' + esc(flag.lastCounted)) + '</span>';
+    }
+    return h;
+  }
+
   if (typeof window !== 'undefined') {
     window.PlannerUI = {
       esc, fmtInt, fmtNum, ftLabel, buyLf, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
       wireSort, drilldowns, wireExpandAll, resetExpandAll, expandAllButtonHtml, dropZones, debounce,
-      stockProductHints, looksLikePlateOrHangerStock, includedJobs,
+      stockProductHints, looksLikePlateOrHangerStock, includedJobs, flagsHtml,
     };
   }
 
   // Node (tests): the pure helpers only — looksLikePlateOrHangerStock, redact(),
-  // jobBreakdown(), renderBreakdown() and pickOnHand(), which their own tests
+  // jobBreakdown(), renderBreakdown(), pickOnHand() and flagsHtml(), which their own tests
   // drive directly. Everything else here (dropZones, drilldowns, sorting, …)
   // touches the DOM and has no Node caller. redact(), jobBreakdown() and
   // renderBreakdown() are NOT put on window.PlannerUI: getJobs()/getOnHand()
@@ -911,7 +934,7 @@
   // drives it through them (#74).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand,
+      looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml,
     };
   }
 })();

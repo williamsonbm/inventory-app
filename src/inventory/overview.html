@@ -234,6 +234,9 @@
     reasons = reasonList.ok ? reasonList.reasons.filter((r) => r.active && !r.entry) : [];
     paintReorder();
     paintStatus();
+    // The Planner's link for a lumber or LVL line not in the catalog arrives
+    // as /inventory?add=<family>: that family, its add form open, this visit only.
+    const addFor = new URLSearchParams(location.search).get('add');
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
       if (f === current) return;
       current = f;
@@ -246,7 +249,11 @@
       el('add-open').disabled = f === 'all';
       el('add-open').title = f === 'all' ? 'Pick a family to add an item.' : '';
       paint();
-    });
+    }, addFor);
+    if (addFor !== null) {
+      history.replaceState(null, '', '/inventory');
+      if (current === addFor) el('add-open').click();
+    }
   }
 
   // Counts waiting for approval, at the top so approvals do not wait (story
