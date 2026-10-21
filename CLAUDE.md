@@ -15,9 +15,18 @@ under `claude-pod` they are at `/workspace/`.
   without it; report both results. Name inherited assumptions before building on them.
 - **Spec before code for a feature.** The owner runs `/to-spec` — agents cannot — to put the
   spec in a tracker issue. Implement logic with `/tdd`; then `/simplify`, re-run tests, ask
-  to commit. A fresh Opus session reviews the PR; run `/code-review` in the authoring session
-  only when asked. `/simplify` is this repo's refactor stage, including where `tdd` says
+  to commit. `/simplify` is this repo's refactor stage, including where `tdd` says
   "the review stage"; it can break passing code.
+- **Review loop.** This session, in the pod, builds from the issue and opens the PR. A
+  separate session outside the pod reviews it for correctness and bugs and posts its findings
+  as a PR comment. The owner brings them back; this session answers each finding, fixes the
+  accepted ones test-first, and shows the reply before posting. Run `/code-review` in the
+  authoring session only when asked.
+  - The reviewer runs `/code-review` and one cold review that reads only the diff and the
+    issue.
+  - Each finding has a number, a concrete failure (inputs → wrong result) and the command
+    that shows it.
+  - A second review follows only when the fixes change a migration or a database rule.
 - **State test results plainly** — real counts, real pass/fail, never "should pass".
 - **Short replies to the owner.** Under 300 words, at most 3 questions per reply. Log every
   question, recommendation and answer in the open-questions memory, numbered continuously.
