@@ -38,6 +38,8 @@
 // `productLine` removed from both, the new and the previous bodies are
 // deep-equal; 170 options (no stock) and 12 (with stock) carried a product
 // line before. The test seeds the database with every plate in that file.
+// Then the always-null `productLine` key was deleted from both files, and
+// from the engine, 182 lines in all (Q199); git diff shows only those lines.
 // Every other recorded file is still the pre-port capture.
 //
 // Added, not recorded, 2026-10-21: the app adds one top-level `flags` field

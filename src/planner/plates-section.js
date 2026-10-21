@@ -43,7 +43,6 @@
     return p.map((o, i) =>
       '<span class="opt' + (i === 0 ? ' best' : '') + '">' + n(o.units) + ' ' + plural(o.unit, o.units) +
       ' of ' + n(o.eachesPerUnit) +
-      (o.productLine ? ' <span class="spare">(' + esc(o.productLine) + ')</span>' : '') +
       ' <span class="spare">' + n(o.leftover) + ' spare</span></span>').join('');
   }
 

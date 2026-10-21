@@ -15,33 +15,25 @@
 // TEST-ONLY SEAM: `stockText` is exported for test/planner-stock.test.js,
 // which feeds its text to each family's own reader (#81 Testing Decisions).
 
-const { runPlan } = require('../planner/server.js');
+const { runPlan, PLAN_ROUTES, isCsvFile } = require('../planner/server.js');
 const { readLumberOptions } = require('./catalog.js');
+const { cell } = require('./month-end.js');
+const { OFFICE_TIME_ZONE } = require('../settings/activity.js');
 const { parsePlateStockCsv } = require('../plates/readPlateStockCsv.js');
 const { parseHangerStockCsv } = require('../hangers/readHangerStockCsv.js');
 const { parseLumberStockCsv } = require('../lumber/readLumberStockCsv.js');
 const { parseStockCsv } = require('../ewp/readStockCsv.js');
 
-// Route → family, by the route's full literal path.
-const PLAN_FAMILIES = {
-  '/api/plates/plan': 'plates',
-  '/api/hangers/plan': 'hangers',
-  '/api/lvl/plan': 'lvl',
-  '/api/lumber/plan': 'lumber',
-};
-
 // Each family's columns in the web app's export, and one item's cells.
 // Committed is zero until jobs exist (step 4), so available is on hand.
 const figures = (i) => [i.on_hand, 0, i.on_hand, i.incoming, i.threshold];
+const SKU_EXPORT = {
+  header: 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted',
+  cells: (i) => [i.sku, ...figures(i), '', i.last_counted],
+};
 const STOCK_EXPORTS = {
-  plates: {
-    header: 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted',
-    cells: (i) => [i.sku, ...figures(i), '', i.last_counted],
-  },
-  hangers: {
-    header: 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted',
-    cells: (i) => [i.sku, ...figures(i), '', i.last_counted],
-  },
+  plates: SKU_EXPORT,
+  hangers: SKU_EXPORT,
   lumber: {
     header: 'size,grade,length,on_hand,committed,available,incoming,threshold,flag',
     cells: (i) => [i.size, i.grade, i.length_ft, ...figures(i), ''],
@@ -52,57 +44,41 @@ const STOCK_EXPORTS = {
   },
 };
 
-const csvCell = (v) => {
-  const t = v == null ? '' : String(v);
-  return /[",\n\r]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
-};
-
 // The family's items as its on-hand file, retired items included: what is
 // on the shelf still counts.
 function stockText(family, items) {
   const { header, cells } = STOCK_EXPORTS[family];
-  return [header, ...items.map((i) => cells(i).map(csvCell).join(','))].join('\n') + '\n';
+  return [header, ...items.map((i) => cells(i).map((v) => cell(v ?? '')).join(','))].join('\n') + '\n';
 }
 
 // Whether the family is live, and every item with its figures. last_counted
 // is the New York date, as the web app's export writes it.
 async function readPlannerStock(database, family) {
-  const [{ live }] = await database.read('SELECT live FROM inv.families WHERE code = $1', [family]);
-  const items = await database.read(`
+  const [[{ live }], items] = await Promise.all([
+    database.read('SELECT live FROM inv.families WHERE code = $1', [family]),
+    database.read(`
     SELECT i.id::int, i.version, i.active, i.sku, i.product, i.size, i.grade, i.length_ft, i.threshold, f.on_hand, f.incoming,
-           pg_catalog.to_char(f.counted_at AT TIME ZONE 'America/New_York', 'YYYY-MM-DD') AS last_counted
+           pg_catalog.to_char(f.counted_at AT TIME ZONE $2, 'YYYY-MM-DD') AS last_counted
       FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
      WHERE i.family = $1
-     ORDER BY i.id`, [family]);
+     ORDER BY i.id`, [family, OFFICE_TIME_ZONE]),
+  ]);
   return { live, items };
 }
 
-// Every plate's pack sizes, in the rows the plate engine takes
-// (src/plates/planPlates.js): one row per pack or box size, the pallet on the
-// pack row if the plate has one, else on the box row, as the import's file
-// (src/plates/packFactors.json) holds them. The database keeps no product
-// line, so the engine gets none (Q184).
+// Every plate's pack sizes, one engine row (src/plates/planPlates.js) per
+// size: a pallet as `pallet_eaches`, a pack or box as `eaches_per_unit`. The
+// engine makes one buy option per figure and sorts them itself, so which row
+// a pallet rides on changes nothing. No product line: the database keeps
+// none (Q184).
 async function readPlatePacks(database) {
   const sizes = await database.read(`
-    SELECT i.id, i.sku, p.kind, p.pieces
+    SELECT i.sku, p.kind, p.pieces
       FROM inv.items i JOIN inv.pack_sizes p ON p.item_id = i.id
-     WHERE i.family = 'plates'
-     ORDER BY i.id, p.kind DESC`);
-  const byItem = new Map();
-  for (const s of sizes) {
-    if (!byItem.has(s.id)) byItem.set(s.id, { sku: s.sku, units: [], pallet: null });
-    const plate = byItem.get(s.id);
-    if (s.kind === 'pallet') plate.pallet = s.pieces;
-    else plate.units.push({ sku: s.sku, eaches_per_unit: s.pieces, unit_label: s.kind, pallet_eaches: null, product_line: null });
-  }
-  const rows = [];
-  for (const { sku, units, pallet } of byItem.values()) {
-    // 'pack' sorts before 'box' (kind DESC above), so the pallet lands on the pack row first.
-    if (pallet != null && units.length) units[0].pallet_eaches = pallet;
-    else if (pallet != null) units.push({ sku, eaches_per_unit: null, unit_label: null, pallet_eaches: pallet, product_line: null });
-    rows.push(...units);
-  }
-  return rows;
+     WHERE i.family = 'plates'`);
+  return sizes.map(({ sku, kind, pieces }) => (kind === 'pallet'
+    ? { sku, eaches_per_unit: null, unit_label: null, pallet_eaches: pieces }
+    : { sku, eaches_per_unit: pieces, unit_label: kind, pallet_eaches: null }));
 }
 
 // Each family's lines in the engine's answer and each line's key; an item's
@@ -110,6 +86,11 @@ async function readPlatePacks(database) {
 // item matches a line by the engine's own rule; `sku`, for the families a
 // line adds to the catalog in one click (Q186); `byLength`, for the families
 // whose lines hold several lengths (Q185).
+//
+// Deliberately the one-row text and the family's reader, not a key function
+// per family: only the plate and hanger readers export one (skuKey), so the
+// alternative is new exports from the lumber and LVL readers, ported modules
+// that land byte-identical, and a second statement of each key rule.
 const LINES = {
   plates: {
     lines: (b) => b.rows, key: (l) => l.key, sku: (l) => l.sku,
@@ -148,12 +129,12 @@ function lineFlags(family, answer, items, live) {
   const flags = {};
   for (const line of lines(answer)) {
     const behind = itemsByKey.get(key(line)) ?? [];
-    const f = {};
     if (!behind.length) {
-      f.notInCatalog = true;
-      if (sku) f.addToCatalog = { family, identity: { sku: sku(line) } };
+      flags[key(line)] = { notInCatalog: true, ...(sku && { addToCatalog: { family, identity: { sku: sku(line) } } }) };
+      continue;
     }
-    if (behind.length && live) {
+    const f = {};
+    if (live) {
       f.lastCounted = oldest(behind.map((i) => i.last_counted));
       if (byLength) {
         const lengths = [...new Set(behind.map((i) => i.length_ft))];
@@ -161,35 +142,41 @@ function lineFlags(family, answer, items, live) {
           [ft, oldest(behind.filter((i) => i.length_ft === ft).map((i) => i.last_counted))]));
       }
     }
-    if (behind.length && behind.every((i) => !i.active)) f.retired = behind.map(({ id, version }) => ({ id, version }));
+    if (behind.every((i) => !i.active)) f.retired = behind.map(({ id, version }) => ({ id, version }));
     if (Object.keys(f).length) flags[key(line)] = f;
   }
   return flags;
 }
 
-const hasText = (f) => typeof f?.name === 'string' && typeof f?.text === 'string' && f.text.trim() !== '';
+const hasText = (f) => isCsvFile(f) && f.text.trim() !== '';
+
+// The options a family's plan always takes from the database, replacing
+// whatever the request carries, so an old page's own copy cannot change a
+// buy list: lumber its shared buying options, plates their pack sizes (#81
+// change item 3). Returns the options, or { error } to refuse the plan.
+const PLAN_OPTIONS = {
+  lumber: async (database) => {
+    const { menu, redirects } = await readLumberOptions(database);
+    // With every length switched off the engine would plan with its own default.
+    if (!Object.keys(menu).length) {
+      return { error: 'No lumber lengths are switched on. Switch on the lengths you buy in the "Stock lengths we buy" panel of the Planner.' };
+    }
+    return { menu, redirects };
+  },
+  plates: async (database) => ({ packs: await readPlatePacks(database) }),
+};
 
 // One plan, with the database's inputs. Returns { status, body }.
 async function planFromInventory(database, route, reqBody) {
-  const family = PLAN_FAMILIES[route];
-  const body = { ...reqBody };
+  const { family } = PLAN_ROUTES[route];
+  const [options, { live, items }] = await Promise.all([
+    PLAN_OPTIONS[family]?.(database) ?? {},
+    readPlannerStock(database, family),
+  ]);
+  if (options.error) return { status: 400, body: { ok: false, error: options.error } };
+  const body = { ...reqBody, ...options };
   const warnings = [];
 
-  // A lumber plan always runs with the shared buying options: whatever menu
-  // or redirects the request carries are replaced, so an old page's own copy
-  // cannot change a buy list. With every length switched off the engine
-  // would plan with its own default, so that plan is refused instead.
-  if (family === 'lumber') {
-    const { menu, redirects } = await readLumberOptions(database);
-    if (!Object.keys(menu).length) {
-      return { status: 400, body: { ok: false, error: 'No lumber lengths are switched on. Switch on the lengths you buy in the "Stock lengths we buy" panel of the Planner.' } };
-    }
-    Object.assign(body, { menu, redirects });
-  }
-  // Plate pack sizes likewise: always the database's (#81 change item 3).
-  if (family === 'plates') body.packs = await readPlatePacks(database);
-
-  const { live, items } = await readPlannerStock(database, family);
   if (live) {
     if (hasText(reqBody?.stock)) {
       warnings.push(`"${reqBody.stock.name}" not used: this family is live in Inventory, so the plan uses Inventory's on-hand figures.`);
@@ -205,4 +192,4 @@ async function planFromInventory(database, route, reqBody) {
   return result;
 }
 
-module.exports = { PLAN_FAMILIES, planFromInventory, stockText };
+module.exports = { planFromInventory, stockText };

@@ -9,8 +9,8 @@
 // last step — converting a shortfall in EACHES into something orderable.
 //
 // THE CONVERSION IS THE POINT. Plates are counted and consumed in eaches but
-// PURCHASED in boxes, packs or pallets (plate_pack_factor, 72 rows, covering
-// 57/57 stocked SKUs). A box is 32 eaches for some SKUs and 14,100 for others;
+// PURCHASED in boxes, packs or pallets (the catalog's pack sizes, passed in as
+// `packs`). A box is 32 eaches for some SKUs and 14,100 for others;
 // banded plates carry both a 20-each pack and a 22,000-each pallet — units
 // 1,100x apart. "You need 400 more" is a demand figure, not an order. Doing that
 // arithmetic by hand across a dozen jobs is exactly where an expensive mistake
@@ -111,7 +111,6 @@ function toPurchaseUnits(eaches, packs) {
       const units = Math.ceil(eaches / pack.eaches_per_unit);
       options.push({
         unit: pack.unit_label || 'unit',
-        productLine: pack.product_line || null,
         eachesPerUnit: pack.eaches_per_unit,
         units,
         totalEaches: units * pack.eaches_per_unit,
@@ -122,7 +121,6 @@ function toPurchaseUnits(eaches, packs) {
       const units = Math.ceil(eaches / pack.pallet_eaches);
       options.push({
         unit: 'pallet',
-        productLine: pack.product_line || null,
         eachesPerUnit: pack.pallet_eaches,
         units,
         totalEaches: units * pack.pallet_eaches,
@@ -139,7 +137,8 @@ function toPurchaseUnits(eaches, packs) {
  * @param files  [{ name, text }]  MiTek Material Summary CSVs
  * @param stock  parsePlateStockCsv() result, or null to plan greenfield
  * @param packs  pack-factor rows { sku, eaches_per_unit, unit_label,
- *               pallet_eaches, product_line }, several per SKU allowed;
+ *               pallet_eaches }, several per SKU allowed (no product line:
+ *               the catalog keeps none, Q184);
  *               none leaves every plate unpriced (packKnown false)
  * @returns a report; writes nothing
  */

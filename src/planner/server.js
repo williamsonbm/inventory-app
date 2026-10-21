@@ -122,16 +122,17 @@ app.get('/api/lumber/menu', (_req, res) => {
 // families take options, through `readOptions`: lumber its buying menu and
 // grade redirects, plates their pack sizes. In the whole app both come from
 // the database and replace whatever the request carries
-// (src/inventory/planner-stock.js); the other two take none.
+// (src/inventory/planner-stock.js), which finds each route's `family`
+// here; the other two take none.
 const PLAN_ROUTES = {
   '/api/plates/plan': {
-    sniff: looksLikePlateStockCsv, parseStock: parsePlateStockCsv, plan: planPlates, noun: 'plate',
+    family: 'plates', sniff: looksLikePlateStockCsv, parseStock: parsePlateStockCsv, plan: planPlates, noun: 'plate',
     readOptions: (body) => ({ packs: body.packs }),
   },
-  '/api/hangers/plan': { sniff: looksLikeHangerStockCsv, parseStock: parseHangerStockCsv, plan: planHangers, noun: 'hanger' },
-  '/api/lvl/plan': { sniff: looksLikeStockCsv, parseStock: parseStockCsv, plan: planLvl, noun: 'LVL' },
+  '/api/hangers/plan': { family: 'hangers', sniff: looksLikeHangerStockCsv, parseStock: parseHangerStockCsv, plan: planHangers, noun: 'hanger' },
+  '/api/lvl/plan': { family: 'lvl', sniff: looksLikeStockCsv, parseStock: parseStockCsv, plan: planLvl, noun: 'LVL' },
   '/api/lumber/plan': {
-    sniff: looksLikeLumberStockCsv, parseStock: parseLumberStockCsv, plan: planLumber, noun: 'lumber',
+    family: 'lumber', sniff: looksLikeLumberStockCsv, parseStock: parseLumberStockCsv, plan: planLumber, noun: 'lumber',
     readOptions: (body) => ({ menu: body.menu, redirects: body.redirects }),
   },
 };
@@ -281,4 +282,4 @@ if (require.main === module) {
 // PORT, HOST and start() are used by the CLI block above and by nothing else in this repo:
 // their only other caller was the Electron packaging in `materials-planner`,
 // which the port leaves behind. An export with no reader does not ship (#39).
-module.exports = { app, runPlan, jsonError, BODY_LIMIT_MB, BODY_ERROR_MESSAGES };
+module.exports = { app, runPlan, PLAN_ROUTES, isCsvFile, jsonError, BODY_LIMIT_MB, BODY_ERROR_MESSAGES };

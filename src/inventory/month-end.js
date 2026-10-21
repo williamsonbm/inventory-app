@@ -59,4 +59,4 @@ async function monthEndCsv(database, id) {
   };
 }
 
-module.exports = { listMonthEnd, readMonthEnd, monthEndCsv };
+module.exports = { listMonthEnd, readMonthEnd, monthEndCsv, cell };

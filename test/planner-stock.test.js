@@ -96,19 +96,19 @@ test('a plate plan prices with the database\'s pack sizes; a Settings change rea
   const ctx = await setUp();
   const plate = await ctx.add('plates', { sku: 'MT20 2x4' });
   const box = await call(ctx.db, 'add_pack_size', ctx.ann.id, crypto.randomUUID(), plate.id, 'box', 330);
-  const own = [{ sku: 'MT20 2x4', eaches_per_unit: 1, unit_label: 'box', pallet_eaches: null, product_line: null }];
+  const own = [{ sku: 'MT20 2x4', eaches_per_unit: 1, unit_label: 'box', pallet_eaches: null }];
 
   const options = async () => (await ctx.plan('/api/plates/plan', { files: [PLATE_SHEET], packs: own }))
     .rows.find((r) => r.key === 'MT202X4').purchase;
   // The sheet asks for 214 and there is no on-hand file.
   assert.deepEqual(await options(),
-    [{ unit: 'box', productLine: null, eachesPerUnit: 330, units: 1, totalEaches: 330, leftover: 116 }]);
+    [{ unit: 'box', eachesPerUnit: 330, units: 1, totalEaches: 330, leftover: 116 }]);
 
   await call(ctx.db, 'change_pack_size', ctx.ann.id, crypto.randomUUID(), box.id, box.version, 100);
   await call(ctx.db, 'add_pack_size', ctx.ann.id, crypto.randomUUID(), plate.id, 'pallet', 15400);
   assert.deepEqual(await options(), [
-    { unit: 'box', productLine: null, eachesPerUnit: 100, units: 3, totalEaches: 300, leftover: 86 },
-    { unit: 'pallet', productLine: null, eachesPerUnit: 15400, units: 1, totalEaches: 15400, leftover: 15186 },
+    { unit: 'box', eachesPerUnit: 100, units: 3, totalEaches: 300, leftover: 86 },
+    { unit: 'pallet', eachesPerUnit: 15400, units: 1, totalEaches: 15400, leftover: 15186 },
   ]);
 });
 

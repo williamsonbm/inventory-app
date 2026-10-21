@@ -21,7 +21,8 @@ const { listMonthEnd, readMonthEnd, monthEndCsv } = require('./inventory/month-e
 const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
-const { PLAN_FAMILIES, planFromInventory } = require('./inventory/planner-stock.js');
+const { planFromInventory } = require('./inventory/planner-stock.js');
+const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
 // The exact open list: the sign-in page (its script and style are inline, so
@@ -228,7 +229,7 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
   // The four plan routes answer ahead of the Planner's own, with the
   // database's inputs (src/inventory/planner-stock.js). A plan reads through
   // the Planner's own login, which can change no row (migration 007; ADR 0001).
-  for (const route of Object.keys(PLAN_FAMILIES)) {
+  for (const route of Object.keys(PLAN_ROUTES)) {
     app.post(route, catchAsync(async (req, res) => {
       const { status, body } = await planFromInventory(plannerDatabase, route, req.body);
       res.status(status).json(body);

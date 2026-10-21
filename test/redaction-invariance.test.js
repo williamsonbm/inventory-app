@@ -35,9 +35,8 @@ const { redact } = require('../src/planner/planner-ui.js');
 
 // The Planner alone has no plate pack sizes (they live in the database, #81
 // change item 3) and takes them from the request. These are the ones the
-// recorded plate files were made with: the import's file, with no product
-// line, as the database keeps them (Q184).
-const PLATE_PACKS = require('../src/plates/packFactors.json').map((p) => ({ ...p, product_line: null }));
+// recorded plate files were made with: the import's file.
+const PLATE_PACKS = require('../src/plates/packFactors.json');
 
 const FIXTURES = path.join(__dirname, 'port-fixtures');
 
