@@ -9,11 +9,18 @@
 // where a dropped file goes (#81, "The app"); a dropped on-hand file is not
 // used. For a family not live yet, the dropped file, as before.
 //
+// Each line of the answer gets flags (#81 design item 4): when it was last
+// counted, whether it is retired, whether it is in the catalog at all.
+//
 // TEST-ONLY SEAM: `stockText` is exported for test/planner-stock.test.js,
 // which feeds its text to each family's own reader (#81 Testing Decisions).
 
 const { runPlan } = require('../planner/server.js');
 const { readLumberOptions } = require('./catalog.js');
+const { parsePlateStockCsv } = require('../plates/readPlateStockCsv.js');
+const { parseHangerStockCsv } = require('../hangers/readHangerStockCsv.js');
+const { parseLumberStockCsv } = require('../lumber/readLumberStockCsv.js');
+const { parseStockCsv } = require('../ewp/readStockCsv.js');
 
 // Route → family, by the route's full literal path.
 const PLAN_FAMILIES = {
@@ -62,7 +69,7 @@ function stockText(family, items) {
 async function readPlannerStock(database, family) {
   const [{ live }] = await database.read('SELECT live FROM inv.families WHERE code = $1', [family]);
   const items = await database.read(`
-    SELECT i.sku, i.product, i.size, i.grade, i.length_ft, i.threshold, f.on_hand, f.incoming,
+    SELECT i.id::int, i.version, i.active, i.sku, i.product, i.size, i.grade, i.length_ft, i.threshold, f.on_hand, f.incoming,
            pg_catalog.to_char(f.counted_at AT TIME ZONE 'America/New_York', 'YYYY-MM-DD') AS last_counted
       FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
      WHERE i.family = $1
@@ -98,6 +105,68 @@ async function readPlatePacks(database) {
   return rows;
 }
 
+// Each family's lines in the engine's answer and each line's key; an item's
+// key, from its one-row on-hand text read by the family's own reader, so an
+// item matches a line by the engine's own rule; `sku`, for the families a
+// line adds to the catalog in one click (Q186); `byLength`, for the families
+// whose lines hold several lengths (Q185).
+const LINES = {
+  plates: {
+    lines: (b) => b.rows, key: (l) => l.key, sku: (l) => l.sku,
+    itemKey: (text) => parsePlateStockCsv(text).items[0]?.key,
+  },
+  hangers: {
+    lines: (b) => [...b.buyList, ...b.covered], key: (l) => l.key, sku: (l) => l.sku,
+    itemKey: (text) => parseHangerStockCsv(text).rows[0]?.key,
+  },
+  lumber: {
+    lines: (b) => b.bySizeGrade, key: (l) => l.key, byLength: true,
+    itemKey: (text) => parseLumberStockCsv(text).byKey.keys().next().value,
+  },
+  lvl: {
+    lines: (b) => b.byDepth, key: (l) => l.depth, byLength: true,
+    itemKey: (text) => parseStockCsv(text).items[0]?.depth,
+  },
+};
+
+// The oldest date, or 'never' when any item was never counted.
+const oldest = (dates) => (dates.includes(null) ? 'never' : dates.sort()[0]);
+
+// Flags for the answer's lines, by line key; a line with nothing to say has
+// none. Last counted only for a live family; retired when every item behind
+// the line is, with what Un-retire takes (Q183).
+function lineFlags(family, answer, items, live) {
+  const { lines, key, sku, itemKey, byLength } = LINES[family];
+  const itemsByKey = new Map();
+  for (const item of items) {
+    const k = itemKey(stockText(family, [item]));
+    if (k == null) continue;
+    if (!itemsByKey.has(k)) itemsByKey.set(k, []);
+    itemsByKey.get(k).push(item);
+  }
+
+  const flags = {};
+  for (const line of lines(answer)) {
+    const behind = itemsByKey.get(key(line)) ?? [];
+    const f = {};
+    if (!behind.length) {
+      f.notInCatalog = true;
+      if (sku) f.addToCatalog = { family, identity: { sku: sku(line) } };
+    }
+    if (behind.length && live) {
+      f.lastCounted = oldest(behind.map((i) => i.last_counted));
+      if (byLength) {
+        const lengths = [...new Set(behind.map((i) => i.length_ft))];
+        f.lastCountedByLength = Object.fromEntries(lengths.map((ft) =>
+          [ft, oldest(behind.filter((i) => i.length_ft === ft).map((i) => i.last_counted))]));
+      }
+    }
+    if (behind.length && behind.every((i) => !i.active)) f.retired = behind.map(({ id, version }) => ({ id, version }));
+    if (Object.keys(f).length) flags[key(line)] = f;
+  }
+  return flags;
+}
+
 const hasText = (f) => typeof f?.name === 'string' && typeof f?.text === 'string' && f.text.trim() !== '';
 
 // One plan, with the database's inputs. Returns { status, body }.
@@ -129,7 +198,10 @@ async function planFromInventory(database, route, reqBody) {
   }
 
   const result = runPlan(route, body);
-  if (result.body.ok) result.body.warnings.push(...warnings);
+  if (result.body.ok) {
+    result.body.warnings.push(...warnings);
+    result.body.flags = lineFlags(family, result.body, items, live);
+  }
   return result;
 }
 

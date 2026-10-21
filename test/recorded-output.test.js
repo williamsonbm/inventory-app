@@ -40,6 +40,12 @@
 // line before. The test seeds the database with every plate in that file.
 // Every other recorded file is still the pre-port capture.
 //
+// Added, not recorded, 2026-10-21: the app adds one top-level `flags` field
+// to every plan (#81 design item 4: last counted, retired, not in the
+// catalog), keyed by line, so the engine's answer is unchanged. It reads
+// the catalog, which the pre-port build had none of; this test drops it
+// before comparing, and test/planner-stock.test.js tests it.
+//
 // This test boots the whole app (src/app.js), signs in as a test user, and
 // compares the response, for all 50 sheets, against the recorded JSON above.
 // Since #77 every route sits behind the identity middleware; passing through
@@ -115,7 +121,8 @@ test('recorded-output proof: all four routes match the pre-port build, all 50 sh
         headers: { 'content-type': 'application/json', cookie },
         body: JSON.stringify(body),
       });
-      const json = await res.json();
+      const { flags, ...json } = await res.json();
+      assert.equal(typeof flags, 'object', `${family}: every plan carries flags`);
       const recorded = loadRecorded(family, withStock);
 
       assert.equal(res.status, recorded.status, `${family} ${withStock ? 'with' : 'no'}-stock: status changed`);

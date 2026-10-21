@@ -9,7 +9,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const { withAdmin, post } = require('./support/app.js');
-const { call, goLive } = require('./support/database.js');
+const { as, call, goLive } = require('./support/database.js');
 const { stockText } = require('../src/inventory/planner-stock.js');
 const { parsePlateStockCsv } = require('../src/plates/readPlateStockCsv.js');
 const { parseHangerStockCsv } = require('../src/hangers/readHangerStockCsv.js');
@@ -25,6 +25,15 @@ const PLATE_SHEET = {
   text: fs.readFileSync(path.join(__dirname, 'plate-fixtures', '10001R-materials.csv'), 'utf8'),
 };
 
+// Four lumber lines (2x4 #1, #2, DSS, MSR2400) and one LVL depth (11-78).
+const LUMBER_LVL_SHEET = {
+  name: '66059F.csv',
+  text: fs.readFileSync(path.join(__dirname, 'port-fixtures', 'sheets', '66059F-scrubbed.csv'), 'utf8'),
+};
+
+// Today in New York, as last counted is written.
+const today = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+
 // A hanger's line, to buy or already covered.
 const hangerLine = (plan, sku) => [...plan.buyList, ...plan.covered].find((l) => l.sku === sku);
 
@@ -35,6 +44,16 @@ async function setUp() {
   ctx.add = (family, identity) => call(ctx.db, 'add_item', ctx.ann.id, crypto.randomUUID(), family, identity);
   ctx.receive = (item, quantity) => call(ctx.db, 'receive', ctx.ann.id, crypto.randomUUID(), null, null, supplier.id, null,
     JSON.stringify([{ item_id: item.id, quantity }]));
+  ctx.retire = (item) => call(ctx.db, 'retire_item', ctx.ann.id, crypto.randomUUID(), item.id, item.version);
+  // A spot check of `family` that finds one of each item, approved; `at`,
+  // the moment it was counted, when not now.
+  ctx.count = async (family, items, at = null) => {
+    const started = await call(ctx.db, 'start_count', ctx.ann.id, crypto.randomUUID(), family, 'spot check', null);
+    if (at) await as(ctx.db, null, (owner) => owner.query('UPDATE inv.counts SET counted_at = $2 WHERE id = $1', [started.id, at]));
+    const count = await call(ctx.db, 'submit_count', ctx.ann.id, crypto.randomUUID(), started.id, started.version, started.closes,
+      JSON.stringify(items.map((i) => ({ item_id: i.id, loose: 1 }))));
+    return call(ctx.db, 'approve_count', ctx.ann.id, crypto.randomUUID(), count.id, count.version, '{}');
+  };
   ctx.plan = async (route, body) => {
     const res = await post(ctx.base, route, body, ctx.cookie);
     const json = await res.json();
@@ -91,6 +110,77 @@ test('a plate plan prices with the database\'s pack sizes; a Settings change rea
     { unit: 'box', productLine: null, eachesPerUnit: 100, units: 3, totalEaches: 300, leftover: 86 },
     { unit: 'pallet', productLine: null, eachesPerUnit: 15400, units: 1, totalEaches: 15400, leftover: 15186 },
   ]);
+});
+
+// Flags on the buy-list lines (#81 design item 4; Q183, Q185, Q186): one
+// field keyed by the engine's own line key, so the engine's answer is
+// unchanged. A line with nothing to say has no entry.
+test('a live family\'s lines say when last counted, whether retired, and whether in the catalog (Q183, Q186)', async () => {
+  const ctx = await setUp();
+  const hus26 = await ctx.add('hangers', { sku: 'HUS26' });
+  const h2az = await ctx.add('hangers', { sku: 'H2AZ' });
+  await goLive(ctx.db, 'hangers');
+  await ctx.count('hangers', [hus26]);
+  const retired = await ctx.retire(h2az);
+
+  const { flags } = await ctx.plan('/api/hangers/plan', { files: [HANGER_SHEET] });
+  assert.deepEqual(flags.HUS26, { lastCounted: today() });
+  assert.deepEqual(flags.H2AZ, { lastCounted: 'never', retired: [{ id: retired.id, version: retired.version }] });
+  assert.deepEqual(flags.H1AZ, { notInCatalog: true, addToCatalog: { family: 'hangers', identity: { sku: 'H1AZ' } } },
+    'the sheet says H1A2; the line, and so the new item, takes the canonical SKU');
+
+  // Plates are not live: no last counted, the rest the same.
+  await ctx.retire(await ctx.add('plates', { sku: 'MT20 2x4' }));
+  const plates = await ctx.plan('/api/plates/plan', { files: [PLATE_SHEET] });
+  assert.deepEqual(Object.keys(plates.flags.MT202X4), ['retired']);
+  assert.deepEqual(plates.flags.MT2015X4, { notInCatalog: true, addToCatalog: { family: 'plates', identity: { sku: 'MT20  1.5x4' } } },
+    'the sheet\'s SKU as it stands; adding an item folds the double space');
+});
+
+test('a lumber line gives last counted per length and shows the oldest; a family not live gives none (Q185, Q186)', async () => {
+  const ctx = await setUp();
+  const add = (grade, length_ft) => ctx.add('lumber', { size: '2x4', grade, length_ft });
+  const [no2at8, no2at16, no1at10, no1at12] = [await add('#2', 8), await add('#2', 16), await add('#1', 10), await add('#1', 12)];
+  const lvl = await ctx.add('lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 24 });
+  await goLive(ctx.db, 'lumber');
+  await ctx.count('lumber', [no2at8, no1at10], '2026-10-01 12:00-04');
+  await ctx.count('lumber', [no1at12]);
+  const retiredLvl = await ctx.retire(lvl);
+  await ctx.retire(no2at16); // one length of 2x4 #2: the line is not retired
+
+  const lumber = await ctx.plan('/api/lumber/plan', { files: [LUMBER_LVL_SHEET] });
+  assert.deepEqual(lumber.flags['2x4|#2'], { lastCounted: 'never', lastCountedByLength: { 8: '2026-10-01', 16: 'never' } });
+  assert.deepEqual(lumber.flags['2x4|#1'], { lastCounted: '2026-10-01', lastCountedByLength: { 10: '2026-10-01', 12: today() } });
+  assert.deepEqual(lumber.flags['2x4|DSS'], { notInCatalog: true }, 'lumber is added from Overview, not in one click');
+
+  const lvlPlan = await ctx.plan('/api/lvl/plan', { files: [LUMBER_LVL_SHEET] });
+  assert.deepEqual(lvlPlan.flags, { '11-78': { retired: [{ id: retiredLvl.id, version: retiredLvl.version }] } },
+    'not live: no last counted');
+});
+
+// A plan changes no row (#81 design item 5). Every table's row count, read
+// as the owner, after Ann signs in and before all four plans, and after.
+test('running all four plans, one family live and one on a dropped file, changes no row in any table', async () => {
+  const ctx = await setUp();
+  const hus26 = await ctx.add('hangers', { sku: 'HUS26' });
+  await goLive(ctx.db, 'hangers');
+  await ctx.receive(hus26, 4);
+  const rowCounts = () => as(ctx.db, null, async (owner) => {
+    const { rows } = await owner.query(`SELECT pg_catalog.format('%I.%I', schemaname, tablename) AS name FROM pg_catalog.pg_tables
+      WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1`);
+    const counts = {};
+    for (const { name } of rows) counts[name] = Number((await owner.query(`SELECT count(*) FROM ${name}`)).rows[0].count);
+    return counts;
+  });
+  const before = await rowCounts();
+  assert.ok(before['inv.items'] === 1 && before['inv.ledger'] > 0, `the counts see the app's tables: ${JSON.stringify(before)}`);
+
+  const plateFile = { name: 'plate-stock.csv', text: 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted\nMT20 2x4,500,0,500,0,,,\n' };
+  await ctx.plan('/api/hangers/plan', { files: [HANGER_SHEET] });
+  await ctx.plan('/api/plates/plan', { files: [PLATE_SHEET], stock: plateFile });
+  await ctx.plan('/api/lumber/plan', { files: [LUMBER_LVL_SHEET] });
+  await ctx.plan('/api/lvl/plan', { files: [LUMBER_LVL_SHEET] });
+  assert.deepEqual(await rowCounts(), before);
 });
 
 // The text the app builds for a live family, read back by the family's own
