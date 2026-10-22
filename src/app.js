@@ -21,7 +21,7 @@ const { listMonthEnd, readMonthEnd, monthEndCsv } = require('./inventory/month-e
 const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
-const { planFromInventory } = require('./inventory/planner-stock.js');
+const { planFromInventory } = require('./inventory/planner-inventory.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -227,7 +227,7 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
     res.json({ ok: true, ...options, lumberSizes: await readLumberSizes(database), gradeOrder: GRADE_STRENGTH_ORDER });
   }));
   // The four plan routes answer ahead of the Planner's own, with the
-  // database's inputs (src/inventory/planner-stock.js). A plan reads through
+  // database's inputs (src/inventory/planner-inventory.js). A plan reads through
   // the Planner's own login, which can change no row (migration 007; ADR 0001).
   for (const route of Object.keys(PLAN_ROUTES)) {
     app.post(route, catchAsync(async (req, res) => {

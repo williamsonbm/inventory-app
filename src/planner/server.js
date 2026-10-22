@@ -122,7 +122,7 @@ app.get('/api/lumber/menu', (_req, res) => {
 // families take options, through `readOptions`: lumber its buying menu and
 // grade redirects, plates their pack sizes. In the whole app both come from
 // the database and replace whatever the request carries
-// (src/inventory/planner-stock.js), which finds each route's `family`
+// (src/inventory/planner-inventory.js), which finds each route's `family`
 // here; the other two take none.
 const PLAN_ROUTES = {
   '/api/plates/plan': {
@@ -218,7 +218,7 @@ function runPlan(route, reqBody) {
       stockFileName: stockFile ? stockFile.name : null,
       stockError,
       // Each line's flags, by line key. Run alone there are none; the whole
-      // app fills them from the database (src/inventory/planner-stock.js).
+      // app fills them from the database (src/inventory/planner-inventory.js).
       flags: {},
     },
   };
@@ -278,7 +278,7 @@ if (require.main === module) {
 }
 
 // `app`, plus jsonError, the test-only seam the file header names.
-// runPlan: src/inventory/planner-stock.js runs a plan with the database's
+// runPlan: src/inventory/planner-inventory.js runs a plan with the database's
 // inputs through it.
 // BODY_LIMIT_MB and BODY_ERROR_MESSAGES: src/app.js applies the same body
 // limit in front of the Planner and answers its refusals in the same words.

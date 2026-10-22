@@ -46,7 +46,7 @@
 // to every plan (#81 design item 4: last counted, retired, not in the
 // catalog), keyed by line, so the engine's answer is unchanged. It reads
 // the catalog, which the pre-port build had none of; this test drops it
-// before comparing, and test/planner-stock.test.js tests it.
+// before comparing, and test/planner-inventory.test.js tests it.
 //
 // This test boots the whole app (src/app.js), signs in as a test user, and
 // compares the response, for all 50 sheets, against the recorded JSON above.

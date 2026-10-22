@@ -888,7 +888,7 @@
   }
 
   // One buy-list line's catalog flags, from the plan answer's `flags` (built
-  // by lineFlags in src/inventory/planner-stock.js): when it was last counted,
+  // by lineFlags in src/inventory/planner-inventory.js): when it was last counted,
   // and a Retired or Not in the catalog chip with what fixes it. A button
   // carries only its line's key; planner.html looks the flag up and saves.
   // Lumber and LVL lines name no one item, so they link to Overview's

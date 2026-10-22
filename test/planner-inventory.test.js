@@ -10,7 +10,7 @@ const path = require('node:path');
 
 const { withAdmin, post } = require('./support/app.js');
 const { as, call, goLive } = require('./support/database.js');
-const { stockText } = require('../src/inventory/planner-stock.js');
+const { onHandText } = require('../src/inventory/planner-inventory.js');
 const { parsePlateStockCsv } = require('../src/plates/readPlateStockCsv.js');
 const { parseHangerStockCsv } = require('../src/hangers/readHangerStockCsv.js');
 const { parseLumberStockCsv } = require('../src/lumber/readLumberStockCsv.js');
@@ -201,7 +201,7 @@ test('running all four plans, one family live and one on a dropped file, changes
 // The text the app builds for a live family, read back by the family's own
 // reader, gives the database's figures (#81 Testing Decisions).
 test('the on-hand text built from the database reads back as the same figures in every family\'s own reader', () => {
-  const plates = parsePlateStockCsv(stockText('plates', [
+  const plates = parsePlateStockCsv(onHandText('plates', [
     { sku: 'MT20 2x4', on_hand: 40, incoming: 12, threshold: 100, last_counted: '2026-10-01' },
     { sku: 'MT18AHS 3x8', on_hand: -6, incoming: 0, threshold: null, last_counted: null },
   ]));
@@ -212,7 +212,7 @@ test('the on-hand text built from the database reads back as the same figures in
   assert.deepEqual([mt18.availableRaw, mt18.threshold, mt18.lastCounted], [-6, null, null]);
   assert.equal(plates.lastCounted, '2026-10-01');
 
-  const hangers = parseHangerStockCsv(stockText('hangers', [
+  const hangers = parseHangerStockCsv(onHandText('hangers', [
     { sku: 'LUS28', on_hand: 7, incoming: 3, threshold: 20, last_counted: '2026-10-01' },
     { sku: 'HUS26, "special"', on_hand: -2, incoming: 0, threshold: null, last_counted: null },
   ]));
@@ -220,7 +220,7 @@ test('the on-hand text built from the database reads back as the same figures in
   assert.deepEqual([lus28.availableRaw, lus28.onHand, lus28.committed, lus28.incoming, lus28.threshold], [7, 7, 0, 3, 20]);
   assert.deepEqual(hangers.rows.map((r) => r.sku), ['LUS28', 'HUS26, "special"'], 'a SKU with a comma and quotes stays one cell');
 
-  const lumber = parseLumberStockCsv(stockText('lumber', [
+  const lumber = parseLumberStockCsv(onHandText('lumber', [
     { size: '2x4', grade: '#2', length_ft: 8, on_hand: 10, incoming: 4, threshold: null },
     { size: '2x4', grade: '#2', length_ft: 16, on_hand: 5, incoming: 0, threshold: 30 },
   ]));
@@ -229,7 +229,7 @@ test('the on-hand text built from the database reads back as the same figures in
   assert.equal(group.onHandLf, 160);
   assert.equal(group.incomingLf, 32);
 
-  const lvl = parseStockCsv(stockText('lvl', [
+  const lvl = parseStockCsv(onHandText('lvl', [
     { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 24, on_hand: 3, incoming: 2, threshold: null },
   ]));
   assert.deepEqual(lvl.items, [{ source: 'inventory', item: '2.1 RigidLam LVL 1-3/4 x 11-7/8', depth: '11-78', span: 24, qty: 3, incoming: 2 }]);

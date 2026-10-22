@@ -12,7 +12,7 @@
 // Each line of the answer gets flags (#81 design item 4): when it was last
 // counted, whether it is retired, whether it is in the catalog at all.
 //
-// TEST-ONLY SEAM: `stockText` is exported for test/planner-stock.test.js,
+// TEST-ONLY SEAM: `onHandText` is exported for test/planner-inventory.test.js,
 // which feeds its text to each family's own reader (#81 Testing Decisions).
 
 const { runPlan, PLAN_ROUTES, isCsvFile } = require('../planner/server.js');
@@ -31,7 +31,7 @@ const SKU_EXPORT = {
   header: 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted',
   cells: (i) => [i.sku, ...figures(i), '', i.last_counted],
 };
-const STOCK_EXPORTS = {
+const ON_HAND_FILES = {
   plates: SKU_EXPORT,
   hangers: SKU_EXPORT,
   lumber: {
@@ -46,14 +46,14 @@ const STOCK_EXPORTS = {
 
 // The family's items as its on-hand file, retired items included: what is
 // on the shelf still counts.
-function stockText(family, items) {
-  const { header, cells } = STOCK_EXPORTS[family];
+function onHandText(family, items) {
+  const { header, cells } = ON_HAND_FILES[family];
   return [header, ...items.map((i) => cells(i).map((v) => cell(v ?? '')).join(','))].join('\n') + '\n';
 }
 
 // Whether the family is live, and every item with its figures. last_counted
 // is the New York date, as the web app's export writes it.
-async function readPlannerStock(database, family) {
+async function readInventory(database, family) {
   const [[{ live }], items] = await Promise.all([
     database.read('SELECT live FROM inv.families WHERE code = $1', [family]),
     database.read(`
@@ -120,7 +120,7 @@ function lineFlags(family, answer, items, live) {
   const { lines, key, sku, itemKey, byLength } = LINES[family];
   const itemsByKey = new Map();
   for (const item of items) {
-    const k = itemKey(stockText(family, [item]));
+    const k = itemKey(onHandText(family, [item]));
     if (k == null) continue;
     if (!itemsByKey.has(k)) itemsByKey.set(k, []);
     itemsByKey.get(k).push(item);
@@ -172,7 +172,7 @@ async function planFromInventory(database, route, reqBody) {
   const { family } = PLAN_ROUTES[route];
   const [options, { live, items }] = await Promise.all([
     PLAN_OPTIONS[family]?.(database) ?? {},
-    readPlannerStock(database, family),
+    readInventory(database, family),
   ]);
   if (options.error) return { status: 400, body: { ok: false, error: options.error } };
   const body = { ...reqBody, ...options };
@@ -182,7 +182,7 @@ async function planFromInventory(database, route, reqBody) {
     if (hasText(reqBody?.stock)) {
       warnings.push(`"${reqBody.stock.name}" not used: this family is live in Inventory, so the plan uses Inventory's on-hand figures.`);
     }
-    body.stock = { name: 'Inventory', text: stockText(family, items) };
+    body.stock = { name: 'Inventory', text: onHandText(family, items) };
   }
 
   const result = runPlan(route, body);
@@ -193,4 +193,4 @@ async function planFromInventory(database, route, reqBody) {
   return result;
 }
 
-module.exports = { planFromInventory, stockText };
+module.exports = { planFromInventory, onHandText };
