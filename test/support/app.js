@@ -28,7 +28,9 @@ after(async () => {
 
 // Starts the app on a fresh database. Returns the base URL, the database's
 // name (for the owner's own setup and for moving the lock time), and fetch
-// helpers that send JSON.
+// helpers that send JSON. `databaseUrl` is for a database that does not
+// answer: both pools use it, so a plan through it would not use the
+// read-only Planner login.
 async function startApp({ databaseUrl } = {}) {
   const db = databaseUrl ? null : await freshDatabase();
   const database = openDatabase(databaseUrl || urlFor(db, 'inv_app'));

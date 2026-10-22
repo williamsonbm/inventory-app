@@ -168,29 +168,34 @@ test('a lumber line redirected whole buys nothing, so it is not flagged as not i
   assert.deepEqual(lumber.flags['2x4|MSR2400'], { notInCatalog: true }, 'the line it goes to is still flagged');
 });
 
-// A plan changes no row (#81 design item 5). Every table's row count, read
-// as the owner, after Ann signs in and before all four plans, and after.
+// A plan changes no row (#81 design item 5). Every table's row count and a
+// hash of its rows, read as the owner, after Ann signs in and before all four
+// plans, and after. The hash catches a changed value, which a count misses.
+// The database's grants are the guarantee (test/database.test.js, S62).
 test('running all four plans, one family live and one on a dropped file, changes no row in any table', async () => {
   const ctx = await setUp();
   const hus26 = await ctx.add('hangers', { sku: 'HUS26' });
   await goLive(ctx.db, 'hangers');
   await ctx.receive(hus26, 4);
-  const rowCounts = () => as(ctx.db, null, async (owner) => {
+  const tables = () => as(ctx.db, null, async (owner) => {
     const { rows } = await owner.query(`SELECT pg_catalog.format('%I.%I', schemaname, tablename) AS name FROM pg_catalog.pg_tables
       WHERE schemaname NOT IN ('pg_catalog', 'information_schema') ORDER BY 1`);
-    const counts = {};
-    for (const { name } of rows) counts[name] = Number((await owner.query(`SELECT count(*) FROM ${name}`)).rows[0].count);
-    return counts;
+    const seen = {};
+    for (const { name } of rows) {
+      seen[name] = (await owner.query(`SELECT count(*)::int AS rows,
+        pg_catalog.md5(coalesce(pg_catalog.string_agg(t::text, '|' ORDER BY t::text), '')) AS hash FROM ${name} t`)).rows[0];
+    }
+    return seen;
   });
-  const before = await rowCounts();
-  assert.ok(before['inv.items'] === 1 && before['inv.ledger'] > 0, `the counts see the app's tables: ${JSON.stringify(before)}`);
+  const before = await tables();
+  assert.ok(before['inv.items'].rows === 1 && before['inv.ledger'].rows > 0, `the check sees the app's tables: ${JSON.stringify(before)}`);
 
   const plateFile = { name: 'plate-stock.csv', text: 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted\nMT20 2x4,500,0,500,0,,,\n' };
   await ctx.plan('/api/hangers/plan', { files: [HANGER_SHEET] });
   await ctx.plan('/api/plates/plan', { files: [PLATE_SHEET], stock: plateFile });
   await ctx.plan('/api/lumber/plan', { files: [LUMBER_LVL_SHEET] });
   await ctx.plan('/api/lvl/plan', { files: [LUMBER_LVL_SHEET] });
-  assert.deepEqual(await rowCounts(), before);
+  assert.deepEqual(await tables(), before);
 });
 
 // The text the app builds for a live family, read back by the family's own
