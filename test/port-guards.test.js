@@ -13,6 +13,7 @@
 //   4. a request body over the size cap is refused before any handler runs
 //   5. every refusal leaves as JSON the page can show, never Express's HTML
 //   6. no page that changes the address hides the browser's history
+//   7. a connection string in the wrong shape stops the app at start-up
 //
 // node --test runs each test FILE in its own process, so require.cache below
 // reflects only what this file pulled in.
@@ -28,6 +29,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -274,5 +276,34 @@ test('no page that changes the address declares a history of its own', () => {
   assert.ok(pages.length >= 3, 'the scan finds the pages that call history.replaceState');
   for (const [f, text] of pages) {
     assert.doesNotMatch(text, /\b(let|const|var|function)\s+history\b/, `${f} hides window.history`);
+  }
+});
+
+// A connection string that does not start with postgres:// or postgresql://
+// reaches pg as nonsense: on Preview it failed only at the first request, as
+// "ENOTFOUND base". The app refuses it at start-up instead, naming the
+// variable but never printing its value, which carries a password (Q203).
+function startIndex(env) {
+  const run = spawnSync(process.execPath, ['-e', "require('./index.js')"], {
+    cwd: path.join(SRC, '..'),
+    env: { PATH: process.env.PATH, DATABASE_CA_CERT: 'test-ca', SESSION_SECRET: 'x'.repeat(32), ...env },
+    encoding: 'utf8',
+    timeout: 20000,
+  });
+  return { status: run.status, output: run.stdout + run.stderr };
+}
+
+test('the app refuses at start-up a connection string that is not postgres:// or postgresql://, and never prints it', () => {
+  const good = 'postgresql://inv_app.ref:good-pw@pooler.example:6543/postgres';
+  const secret = 'https://inv_app.ref:s3cret-pw@pooler.example:6543/postgres';
+
+  const started = startIndex({ DATABASE_URL: good, PLANNER_DATABASE_URL: good.replace('postgresql', 'postgres') });
+  assert.equal(started.status, 0, `good strings start the app: ${started.output}`);
+
+  for (const name of ['DATABASE_URL', 'PLANNER_DATABASE_URL']) {
+    const run = startIndex({ DATABASE_URL: good, PLANNER_DATABASE_URL: good, [name]: secret });
+    assert.notEqual(run.status, 0, `${name}: the app must not start`);
+    assert.match(run.output, new RegExp(`(^|[^_])${name} does not start with postgres:// or postgresql://`), `${name} is named`);
+    assert.doesNotMatch(run.output, /s3cret-pw|https:\/\//, `${name}: the value is never printed`);
   }
 });

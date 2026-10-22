@@ -24,6 +24,11 @@ const { openDatabase } = require('./src/db/database.js');
 const { DATABASE_URL, PLANNER_DATABASE_URL, DATABASE_CA_CERT } = process.env;
 if (!DATABASE_URL) throw new Error('DATABASE_URL is not set (the pooled connection, port 6543).');
 if (!PLANNER_DATABASE_URL) throw new Error('PLANNER_DATABASE_URL is not set (the pooled connection, port 6543, as inv_planner).');
+// A string in any other shape fails only at the first request, as "ENOTFOUND
+// base". The message names the variable, never its value: that holds a password.
+for (const [name, url] of Object.entries({ DATABASE_URL, PLANNER_DATABASE_URL })) {
+  if (!/^postgres(ql)?:\/\//.test(url)) throw new Error(`${name} does not start with postgres:// or postgresql://.`);
+}
 if (!DATABASE_CA_CERT) throw new Error('DATABASE_CA_CERT is not set (Supabase\'s CA certificate, as text).');
 
 const server = express();
