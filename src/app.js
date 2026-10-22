@@ -22,6 +22,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
+const { commitSheet, listJobs } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -42,6 +43,7 @@ const TEMPORARY_OPEN = new Set([
 // The four catalog Settings pages are one file, which shows the section its
 // address names.
 const PAGE_FILES = {
+  '/jobs': ['jobs/board.html', 'text/html'],
   '/inventory': ['inventory/overview.html', 'text/html'],
   '/inventory/receive': ['inventory/receive.html', 'text/html'],
   '/inventory/count': ['inventory/count.html', 'text/html'],
@@ -199,6 +201,15 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
       res.json({ ok: true, ...await saveCatalogChange(database, req.user, route, req.body || {}) });
     }));
   }
+
+  // Jobs (#97): everyone commits a job and reads the Job board.
+  app.get('/api/jobs', catchAsync(async (_req, res) => {
+    res.json({ ok: true, jobs: await listJobs(database) });
+  }));
+  app.post('/api/jobs/commit', catchAsync(async (req, res) => {
+    const { status, body } = await commitSheet(database, req.user, req.body);
+    res.status(status).json(body);
+  }));
 
   // The Activity Log, its own mode (owner, 2026-10-01). Everyone can read it.
   app.get('/api/activity', catchAsync(async (req, res) => {

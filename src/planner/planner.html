@@ -45,7 +45,7 @@
   </div>
   <!-- The Planner has no tasks yet, so no task row. The family bar is the
        same as Inventory's (AppHeader.familyBar). -->
-  <nav class="appbar-nav" aria-label="Modes"><a href="/" class="here" aria-current="page">Planner</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/" class="here" aria-current="page">Planner</a><a href="/jobs">Jobs</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
   <div class="appbar-filter">
     <span class="label" id="family-label">Family</span>
     <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
@@ -112,21 +112,15 @@
   // ── A line's catalog flag, fixed ───────────────────────────────────────────
   // Each family's flags as last painted, by line key.
   const flagsShown = {};
-  // Un-retire every item behind the line, or add its one item, through the
-  // same item routes Overview uses, then plan the family again so the line
-  // shows the catalog as it now stands. Each request is built once, retry key
-  // included, so "Try again" after an unconfirmed save sends the same one.
+  // Fixes the line's catalog flag (PlannerUI.flagFixes), then plans the
+  // family again so the line shows the catalog as it now stands.
   function fixLine(family, act, flag) {
     if (!flag) return;
     const label = AppHeader.itemLabel;
-    if (act === 'unretire') {
-      const n = flag.retired.length;
-      saveAll(family, flag.retired.map(({ id, version }) => ['/api/items/unretire', { key: crypto.randomUUID(), id, version }]),
-        (item) => label(item) + (n > 1 ? ' and ' + (n - 1) + ' more are' : ' is') + ' in use again.');
-    } else {
-      saveAll(family, [['/api/items/add', { key: crypto.randomUUID(), ...flag.addToCatalog }]],
-        (item) => label(item) + ' was added to the catalog as Special Order, with no threshold.');
-    }
+    const n = act === 'unretire' ? flag.retired.length : 1;
+    saveAll(family, PlannerUI.flagFixes(act, flag), act === 'unretire'
+      ? (item) => label(item) + (n > 1 ? ' and ' + (n - 1) + ' more are' : ' is') + ' in use again.'
+      : (item) => label(item) + ' was added to the catalog as Special Order, with no threshold.');
   }
   async function saveAll(family, requests, done) {
     AppHeader.say('');

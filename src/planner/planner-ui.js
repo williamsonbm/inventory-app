@@ -911,11 +911,21 @@
     return h;
   }
 
+  // The saves that fix a line's catalog flag (flagsHtml's buttons), each a
+  // [route, body] built once, retry key included, so "Try again" after an
+  // unconfirmed save sends the same one: Un-retire every item behind the
+  // line, or add its one item, through the item routes Overview uses.
+  function flagFixes(act, flag) {
+    return act === 'unretire'
+      ? flag.retired.map(({ id, version }) => ['/api/items/unretire', { key: crypto.randomUUID(), id, version }])
+      : [['/api/items/add', { key: crypto.randomUUID(), ...flag.addToCatalog }]];
+  }
+
   if (typeof window !== 'undefined') {
     window.PlannerUI = {
       esc, fmtInt, fmtNum, ftLabel, buyLf, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
       wireSort, drilldowns, wireExpandAll, resetExpandAll, expandAllButtonHtml, dropZones, debounce,
-      stockProductHints, looksLikePlateOrHangerStock, includedJobs, flagsHtml,
+      stockProductHints, looksLikePlateOrHangerStock, includedJobs, flagsHtml, flagFixes,
     };
   }
 

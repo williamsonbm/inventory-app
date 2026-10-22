@@ -253,7 +253,7 @@ test('no login can insert, update, delete or empty any table (S62)', async () =>
 
 test('the app runs only its granted functions; the Planner runs only the calculation\'s; the backup login none', async () => {
   const db = await freshDatabase();
-  const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'approve_count', 'base_count', 'change_pack_size', 'change_password', 'close_po_line', 'correct', 'correct_month_end', 'count_entries', 'count_found', 'count_json', 'count_review', 'discard_count',
+  const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'approve_count', 'base_count', 'change_pack_size', 'change_password', 'close_po_line', 'commit_job', 'correct', 'correct_month_end', 'count_entries', 'count_found', 'count_json', 'count_review', 'discard_count',
     'edit_item', 'edit_po', 'enter_po', 'grant_admin', 'item_label', 'lumber_sizes', 'month_end_json', 'nothing_before', 'on_hand_at', 'po_json', 'po_line_number', 'reactivate_user', 'receive', 'received',
     'record_password_check', 'reject_count', 'remove_lumber_group', 'remove_user', 'rename_item', 'rename_supplier', 'rename_user', 'reopen_po_line', 'retire_item', 'retire_reason', 'reverse', 'revoke_admin',
     'save_count', 'set_count_approval_by_another', 'set_grade_redirect', 'set_lumber_lengths', 'set_lvl_depth_threshold', 'set_password', 'set_working_day_window',

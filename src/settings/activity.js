@@ -52,6 +52,10 @@ async function readActivity(database, { person, action, family, from, to, before
                THEN EXISTS (SELECT FROM inv.families f WHERE f.code = $7 AND f.name = l.new_value ->> 'name')
              WHEN l.target_table = 'counts'
                THEN EXISTS (SELECT FROM inv.counts c WHERE c.id = l.target_id AND c.family = $7)
+             WHEN l.target_table = 'jobs'
+               THEN EXISTS (SELECT FROM inv.job_sheets js JOIN inv.job_lines jl ON jl.sheet_id = js.id
+                              JOIN inv.items i ON i.id = jl.item_id
+                             WHERE js.action_id = l.id AND i.family = $7)
              WHEN l.target_table = 'purchase_orders'
                THEN EXISTS (SELECT FROM inv.po_lines pl JOIN inv.items i ON i.id = pl.item_id
                              WHERE pl.po_id = l.target_id AND i.family = $7)
@@ -88,6 +92,7 @@ const TARGET_NAMES = {
   lumber_purchasable_lengths: (_item, row) => `${row.size} ${row.grade}`,
   lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
   purchase_orders: (_item, row) => `PO ${row.number}`,
+  jobs: (_item, row) => `Job ${row.number}`,
   receipts: (_item, row) => (row.po_number ? `PO ${row.po_number}` : `${row.supplier}, no PO`),
   ledger: (_item, row) => row.item ?? row.lines[0].item,  // a correction's item, a trim's long one, or a reversal's first
   families: (_item, row) => row.name,
@@ -117,6 +122,7 @@ const ADDED = {
   lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
   purchase_orders: (row) => `${row.supplier}, dated ${row.po_date}, ${row.lines.length} line${row.lines.length === 1 ? '' : 's'}`,
   receipts: describeReceipt,
+  jobs: (row) => `${row.name ?? 'no job name'}, revision ${row.revision}`,
   ledger: (row) => `on hand ${signed(row.quantity)}, ${row.reason}${noted(row)}`,
   reverse: (row) => `reversal of ${reversalLines(row)}${noted(row)}`,
   counts: (row) => countLabel(row),

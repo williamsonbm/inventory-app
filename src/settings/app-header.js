@@ -69,7 +69,8 @@ window.AppHeader = (() => {
   // Posts `body` to `route` and answers the parsed reply; throws an Error
   // carrying the reply's plain message. A reply that never arrives may still
   // have saved: the caller keeps the same body, retry key included, so
-  // "Try again" acts once. `err.current` carries the row a stale save found.
+  // "Try again" acts once. `err.current` carries the row a stale save found;
+  // `err.reply`, the whole refusal, for a page that reads more of it.
   async function send(route, body) {
     let res;
     try {
@@ -81,7 +82,9 @@ window.AppHeader = (() => {
       throw Object.assign(new Error('The save was not confirmed. Check whether it happened before you try again.'), { unconfirmed: true });
     }
     const reply = await res.json().catch(() => ({ ok: false, error: 'The app gave an answer it could not read.' }));
-    if (!reply.ok) throw Object.assign(new Error(reply.error), { current: reply.current, unconfirmed: res.status === 503 });
+    if (!reply.ok) {
+      throw Object.assign(new Error(reply.error), { current: reply.current, reply, unconfirmed: res.status === 503 });
+    }
     return reply;
   }
 

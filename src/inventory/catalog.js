@@ -24,6 +24,9 @@ async function readLumberSizes(database) {
   return (await database.read('SELECT inv.lumber_sizes() AS sizes'))[0].sizes;
 }
 
+// The families in the Planner's order, so every family bar and list matches.
+const FAMILY_ORDER = ['lumber', 'plates', 'hangers', 'lvl'];
+
 // The families Inventory holds, for the family bar on Inventory and the
 // Activity Log. See listCatalog for the columns.
 function readFamilies(database) {
@@ -32,7 +35,7 @@ function readFamilies(database) {
            CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
       FROM inv.families
      WHERE identity IS NOT NULL
-     ORDER BY pg_catalog.array_position(ARRAY['lumber', 'plates', 'hangers', 'lvl'], code)`);
+     ORDER BY pg_catalog.array_position($1::text[], code)`, [FAMILY_ORDER]);
 }
 
 // The families Inventory holds, for the family bar (in the Planner's order,
@@ -249,6 +252,6 @@ async function saveCatalogChange(database, actor, route, body) {
   return { [as]: await database.save(fn, [actor.id, body.key, ...args(body)]) };
 }
 
-module.exports = {
+module.exports = { FAMILY_ORDER,
   itemLabel, listCatalog, readFamilies, listPos, listCounts, readCountReview, readLumberSizes, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions,
 };
