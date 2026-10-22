@@ -13,7 +13,7 @@
    ============================================================= */
 (function () {
   'use strict';
-  const { esc, fmtInt: n, renderStats, renderWarnings, renderRejected } = PlannerUI;
+  const { esc, fmtInt: n, renderStats, renderWarnings, renderRejected, flagsHtml } = PlannerUI;
 
   // A buy-list sort or Expand all redraws the whole section from the same plan.
   // col is 'sku' | 'need' | 'buy'; dir is 'asc' | 'desc'.
@@ -43,7 +43,6 @@
     return p.map((o, i) =>
       '<span class="opt' + (i === 0 ? ' best' : '') + '">' + n(o.units) + ' ' + plural(o.unit, o.units) +
       ' of ' + n(o.eachesPerUnit) +
-      (o.productLine ? ' <span class="spare">(' + esc(o.productLine) + ')</span>' : '') +
       ' <span class="spare">' + n(o.leftover) + ' spare</span></span>').join('');
   }
 
@@ -125,6 +124,7 @@
           '<td><span class="caret">' + (isExpanded ? '▾' : '▸') + '</span>' +
           '<span class="mono"><b>' + esc(r.sku) + '</b></span>' +
           (!isStocked ? '<span class="chip bad">Non-Stock</span>' : '') +
+          flagsHtml(d.flags[r.key], r.key, 'plates') +
           '</td>' +
           '<td>' + n(r.needEaches) + '</td>' +
           (hasStock ? '<td' + (r.negativeStock ? ' style="color:var(--bad)"' : '') + '>' +

@@ -13,7 +13,7 @@
    ============================================================= */
 (function () {
   'use strict';
-  const { esc, fmtNum: fmt, renderStats, renderWarnings, renderRejected } = PlannerUI;
+  const { esc, fmtNum: fmt, ftLabel, renderStats, renderWarnings, renderRejected, flagsHtml } = PlannerUI;
   const el = (id) => document.getElementById(id);
 
   // Sort state for the By-depth table. col null = natural depth order; 'depth'
@@ -26,6 +26,15 @@
     { label: 'By Depth', cell: (j) => j.byDepth.map((d) => `${d.label}: ${fmt(d.lf)}`).join(', ') || '—' },
     { label: 'Total LF', cls: 'n', strong: true, cell: (j) => fmt(j.totalLf) },
   ];
+
+  // Each length's last count, oldest of its items (Q185); only for a family
+  // live in Inventory. LVL's detail has no order list, so one line above it.
+  function countedByLength(counted) {
+    if (!counted) return '';
+    const lengths = Object.keys(counted).sort((a, b) => a - b);
+    return '<p class="sub">Last counted by length: ' +
+      lengths.map((ft) => esc(ftLabel(ft)) + ' ' + esc(counted[ft])).join(' · ') + '</p>';
+  }
 
   function render(p, out, drills) {
     const sum = p.summary;
@@ -109,9 +118,12 @@
         <tbody>`;
       rows.forEach((row, idx) => {
         const isShort = hasStock && row.neededLf > 0;
+        // An item names its depth as the label does, less the inch mark (9-1/2),
+        // not as the line's key does (9-12).
+        const fill = { size: row.label.replace(/"$/, '') };
         s += `
           <tr class="depth${isShort ? ' short' : ''}" data-group="depth" data-toggle="${idx}">
-            <td><span class="caret">▸</span><span class="mono"><b>${esc(row.label)}</b></span></td>
+            <td><span class="caret">▸</span><span class="mono"><b>${esc(row.label)}</b></span>${flagsHtml(p.flags[row.depth], row.depth, 'lvl', fill)}</td>
             <td class="n">${fmt(row.usedLf)}</td>
             ${hasStock ? `
               <td class="n ${row.stockLf === 0 ? 'zero-ink' : ''}">${fmt(row.stockLf)}</td>
@@ -124,6 +136,7 @@
           <tr class="jobs" id="drill-depth-${idx}" style="display:none">
             <td colspan="${hasStock ? 7 : 3}">
               <div class="drill">
+                ${countedByLength((p.flags[row.depth] || {}).lastCountedByLength)}
                 <h4>Driving usage — ${row.jobs.length} job(s) at ${esc(row.label)}</h4>
                 <table class="drill-t">
                   <thead>

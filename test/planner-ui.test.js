@@ -4,7 +4,7 @@
 // The DOM-facing half of planner-ui.js (dropZones, drilldowns, sorting, …)
 // has no Node harness and is verified manually; this covers the pure
 // classification helpers the on-hand sniffers build on, redact(),
-// jobBreakdown(), renderBreakdown() and pickOnHand().
+// jobBreakdown(), renderBreakdown(), pickOnHand() and flagsHtml().
 //
 // Recorded-output proof for jobBreakdown (spec #72, step 1):
 // port-fixtures/recorded/included-jobs-panels.json holds, as screen text,
@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand } = require('../src/planner/planner-ui.js');
+const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml } = require('../src/planner/planner-ui.js');
 
 const REAL_HANGER_STOCK = `sku,on_hand,committed,available,incoming,threshold,flag,last_counted
 HUS26,20,5,15,0,0,OK,
@@ -467,4 +467,34 @@ test('renderBreakdown: one table stands alone, escaped, with no footer when it h
   assert.ok(!html.includes('<tfoot>'), 'no footer row');
   assert.ok(html.includes('A&amp;B'), 'the heading text is HTML-escaped');
   assert.ok(html.includes('MT20 &lt;3x4&gt;'), 'the cell text is HTML-escaped');
+});
+
+// ── flagsHtml(): one buy-list line's catalog flags (#81 part 4) ─────────────
+test('flagsHtml: no flag shows nothing', () => {
+  assert.equal(flagsHtml(undefined, 'MT20 3x4', 'plates'), '');
+});
+
+test('flagsHtml: last counted shows the date, or "never counted"', () => {
+  assert.ok(flagsHtml({ lastCounted: '2026-10-01' }, 'k', 'plates').includes('last counted 2026-10-01'), 'a counted line shows its date');
+  assert.ok(flagsHtml({ lastCounted: 'never' }, 'k', 'plates').includes('never counted'), 'a line never counted says so');
+});
+
+test('flagsHtml: a retired line gets Un-retire, keyed by the line, escaped', () => {
+  const html = flagsHtml({ retired: [{ id: 3, version: 2 }] }, 'MT20 <3x4>', 'plates');
+  assert.ok(html.includes('>Retired<'), 'the Retired chip shows');
+  assert.ok(html.includes('data-flag-do="unretire" data-flag-key="MT20 &lt;3x4&gt;"'), 'the button names its line, escaped');
+  assert.ok(html.includes('>Un-retire</button>'), 'the button says Un-retire');
+});
+
+test('flagsHtml: not in the catalog adds in one click where the plan says how, else links to Overview', () => {
+  const plate = flagsHtml({ notInCatalog: true, addToCatalog: { family: 'plates', identity: { sku: 'X' } } }, 'X', 'plates');
+  assert.ok(plate.includes('>Not in the catalog<'), 'the chip shows');
+  assert.ok(plate.includes('data-flag-do="add" data-flag-key="X"') && plate.includes('>Add to catalog</button>'), 'plates add in one click');
+  const lumber = flagsHtml({ notInCatalog: true }, '2x4|#1', 'lumber', { size: '2x4', grade: '#1' });
+  assert.ok(lumber.includes('>Not in the catalog<'), 'the chip shows');
+  assert.ok(!lumber.includes('<button'), 'lumber has no one-click add');
+  assert.ok(lumber.includes('href="/inventory?add=lumber&amp;size=2x4&amp;grade=%231"'),
+    'lumber links to Overview, adding the line\'s size and grade (Q210)');
+  const lvl = flagsHtml({ notInCatalog: true }, '9-12', 'lvl', { size: '9-1/2' });
+  assert.ok(lvl.includes('href="/inventory?add=lvl&amp;size=9-1%2F2"'), 'LVL links to Overview, adding the line\'s depth (Q210)');
 });

@@ -13,7 +13,7 @@
    ============================================================= */
 (function () {
   'use strict';
-  const { esc, fmtInt: fmt, renderStats, renderWarnings, renderRejected, expandAllButtonHtml } = PlannerUI;
+  const { esc, fmtInt: fmt, renderStats, renderWarnings, renderRejected, expandAllButtonHtml, flagsHtml } = PlannerUI;
   const el = (id) => document.getElementById(id);
 
   // Sort state for the Buy list. col null = biggest-shortfall-first (the engine
@@ -134,7 +134,7 @@
       rows.forEach((r, idx) => {
         s += `
           <tr data-group="cov" data-toggle="${idx}">
-            <td><span class="caret">▸</span><span class="mono"><strong>${esc(r.sku)}</strong></span></td>
+            <td><span class="caret">▸</span><span class="mono"><strong>${esc(r.sku)}</strong></span>${flagsHtml(p.flags[r.key], r.key, 'hangers')}</td>
             <td class="n">${fmt(r.demand)}</td>
             <td class="n">${fmt(r.available)}</td>
             <td class="n"><strong>${fmt(r.available - r.demand)}</strong></td>
@@ -184,6 +184,7 @@
             <td>
               <span class="caret">▸</span><span class="mono"><b>${esc(row.sku)}</b></span>
               ${isNeg ? `<span class="chip neg">${row.availableRaw} in ledger</span>` : ''}
+              ${flagsHtml(p.flags[row.key], row.key, 'hangers')}
             </td>
             <td class="n">${fmt(row.demand)}</td>
             ${hasStock ? `<td class="n ${availCls}">${row.available != null ? fmt(row.available) : '—'}</td>` : ''}

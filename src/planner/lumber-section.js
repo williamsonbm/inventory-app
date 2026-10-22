@@ -19,7 +19,7 @@
    ============================================================= */
 (function () {
   'use strict';
-  const { esc, fmtNum: fmt, fmtInt, ftLabel, buyLf, renderStats, renderWarnings, renderRejected } = PlannerUI;
+  const { esc, fmtNum: fmt, fmtInt, ftLabel, buyLf, renderStats, renderWarnings, renderRejected, flagsHtml } = PlannerUI;
   const el = (id) => document.getElementById(id);
 
   const TOL = 0.0052;
@@ -391,7 +391,7 @@
         s += `
           <tbody>
           <tr class="grp${isShort ? ' short' : ''}${notInMenu ? ' non-stock' : ''}"${hasDrill ? ` data-group="grp" data-toggle="${idx}"` : ''}>
-            <td>${hasDrill ? '<span class="caret">▸</span>' : ''}<span class="mono"><b>${esc(row.label)}</b></span>${row.redirect ? ` <span class="sub">redirected to <b>${esc(row.redirect.toLabel)}</b></span>` : ''}</td>
+            <td>${hasDrill ? '<span class="caret">▸</span>' : ''}<span class="mono"><b>${esc(row.label)}</b></span>${row.redirect ? ` <span class="sub">redirected to <b>${esc(row.redirect.toLabel)}</b></span>` : ''}${flagsHtml(p.flags[row.key], row.key, 'lumber', { size: row.size, grade: row.grade })}</td>
             <td class="n">${needCellHtml(row)}</td>
             ${hasStock ? `
               <td class="n ${row.stockLf === 0 ? 'zero-ink' : ''}">${fmt(row.stockLf)}</td>
@@ -469,17 +469,20 @@
         // Purchased footage — distinct from the group's Need (LF) demand (that's
         // gross board LF bought, offcuts included; see PlannerUI.buyLf).
         const totalBuyLf = row.buyByLength.reduce((t, b) => t + buyLf(b), 0);
+        // Each length's last count, oldest of its items (Q185); only for a
+        // family live in Inventory.
+        const counted = (p.flags[row.key] || {}).lastCountedByLength;
         orderSide = `
           <h4>Order — buy ${fmtInt(total)} board(s) for ${esc(row.label)}${row.piecesOnHand ? ` (${fmtInt(row.piecesOnHand)} more come from on-hand)` : ''}</h4>
           <table class="drill-t">
-            <thead><tr><th>Stock length</th><th class="n">Boards to buy</th><th class="n">LF</th></tr></thead>
+            <thead><tr><th>Stock length</th><th class="n">Boards to buy</th><th class="n">LF</th>${counted ? '<th>Last counted</th>' : ''}</tr></thead>
             <tbody>
               ${row.buyByLength.map((b) => `
-                <tr><td class="mono">${ftLabel(b.stockLengthFt)}</td><td class="n"><strong>${fmtInt(b.boards)}</strong></td><td class="n">${fmt(buyLf(b))}</td></tr>
+                <tr><td class="mono">${ftLabel(b.stockLengthFt)}</td><td class="n"><strong>${fmtInt(b.boards)}</strong></td><td class="n">${fmt(buyLf(b))}</td>${counted ? `<td class="spare">${esc(counted[b.stockLengthFt] || '—')}</td>` : ''}</tr>
               `).join('')}
             </tbody>
             <tfoot>
-              <tr><td class="mono"><strong>Total</strong></td><td class="n"><strong>${fmtInt(total)}</strong></td><td class="n"><strong>${fmt(totalBuyLf)}</strong></td></tr>
+              <tr><td class="mono"><strong>Total</strong></td><td class="n"><strong>${fmtInt(total)}</strong></td><td class="n"><strong>${fmt(totalBuyLf)}</strong></td>${counted ? '<td></td>' : ''}</tr>
             </tfoot>
           </table>`;
         orderSide += `

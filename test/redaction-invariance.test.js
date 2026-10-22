@@ -33,6 +33,11 @@ const path = require('node:path');
 
 const { redact } = require('../src/planner/planner-ui.js');
 
+// The Planner alone has no plate pack sizes (they live in the database, #81
+// change item 3) and takes them from the request. These are the ones the
+// recorded plate files were made with: the import's file.
+const PLATE_PACKS = require('../src/plates/packFactors.json');
+
 const FIXTURES = path.join(__dirname, 'port-fixtures');
 
 const ROUTES = [
@@ -90,8 +95,11 @@ test('redaction invariance: redacted sheets plan to the same buy lists, all four
     for (const withStock of [false, true]) {
       const body = { files: sheets };
       if (withStock) body.stock = loadStock(stockFile);
+      if (family === 'plates') body.packs = PLATE_PACKS;
 
-      const res = await post(base, route, body);
+      // The baseline predates `flags`; recorded-output.test.js drops it too.
+      const { status, body: { flags, ...answer } } = await post(base, route, body);
+      const res = { status, body: answer };
       const recorded = loadRecorded(family, withStock);
 
       assert.equal(res.status, recorded.status, `${family} ${withStock ? 'with' : 'no'}-stock: status changed under redaction`);

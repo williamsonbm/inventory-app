@@ -70,7 +70,9 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    Preview database existed, so it skipped the order below; `inv.schema_migrations` lists it.
 
    **The order for every migration from 003 on** (#81): apply it to the Preview database (see
-   *Create the Preview database*), try the preview, apply it to Production, then merge the PR.
+   *Create the Preview database*); the owner checks the preview and the PR review is answered;
+   apply it to Production, then merge the PR. A fix that changes the migration goes to the
+   Preview database first, and the check repeats.
    A preview whose Vercel variables still point at the live database must not edit the
    catalog: its edits would change the live catalog.
 4. **Passwords for the three database logins** (`inv_app`, `inv_planner`, `inv_backup`): one
@@ -80,11 +82,15 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    | Name | Value |
    |---|---|
    | `DATABASE_URL` | The **Transaction** pooler string (port **6543**), with the `inv_app` login (`inv_app.<project-ref>` on the pooler) and its password. **No `sslmode`** in it: the app sets SSL from the next variable, and `pg` lets settings in the string override it. |
+   | `PLANNER_DATABASE_URL` | The same string with the `inv_planner` login (`inv_planner.<project-ref>`) and its password. The Planner reads the database through it, and this login can change no row (migration 007). |
    | `DATABASE_CA_CERT` | The whole text of Supabase's CA certificate file, `-----BEGIN CERTIFICATE-----` line included. |
    | `SESSION_SECRET` | At least 32 random characters. Make one with `node -e "console.log(require('node:crypto').randomBytes(32).toString('base64url'))"`. |
 
-   The app refuses to start without the first two, and throws if the secret is shorter than 32
-   characters. **A deploy made before these are set fails at start-up.**
+   The app refuses to start without the first three, and throws if the secret is shorter than 32
+   characters. **A deploy made before these are set fails at start-up.** `PLANNER_DATABASE_URL`
+   came with #81 part 4: set it in Preview before that branch is pushed, and in Production
+   before it is merged. Check first that `inv_planner` has a password (the `pg_shadow` query in
+   *Create the Preview database*, step 3).
 
    *Not checked:* that the pooler accepts `inv_app.<project-ref>` as a user name for a login the
    migration created. Supabase documents the `<login>.<project-ref>` form; the first sign-in
@@ -129,7 +135,8 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
 
 ## Create the Preview database
 
-A second Supabase project, so that a Vercel preview never touches the live data (#81). Done
+A second Supabase project, so that a Vercel preview never touches the live data (#81), and to
+prove each migration before Production. Done
 2026-10-03: `inventory-app-preview`, East US, on the Free plan. Repeat the go-live steps
 against it. Only the differences are listed. Preview skips go-live steps 8 to 10 (sign-in
 speed, nightly backup, practice restore).
@@ -156,7 +163,7 @@ rebuild it, see *Rebuild the Preview database* below.
 4. **Add the first person** (go-live step 6).
 5. **Set the Preview variables in Vercel** (go-live step 5), in the Preview environment only: the
    Preview project's Transaction-pooler string with the `inv_app.<preview-project-ref>` login,
-   the Preview certificate text, and a new `SESSION_SECRET` that differs from the live one. If
+   the same string with the `inv_planner.<preview-project-ref>` login, the Preview certificate text, and a new `SESSION_SECRET` that differs from the live one. If
    Production and Preview share a variable, untick Preview on it and add a Preview-only entry.
    Variables reach new deployments only, so redeploy a preview afterwards.
 6. **Check.** Run the checks of go-live step 7 in the Preview project. Sign in on the redeployed preview.
@@ -210,7 +217,9 @@ new time).
 ## Import the catalog
 
 The one-time import of the web app's items, thresholds, stocking statuses and pack sizes (#81
-part 1). It only adds: an item already in the catalog is skipped with its pack sizes, so a
+part 1). **Run it on Production before #81 part 4 reaches Production.** From part 4 on, the
+Planner takes plate pack sizes only from the catalog: with an empty catalog, a plate shortfall
+shows no box, pack or pallet to order, and every line says "Not in the catalog". It only adds: an item already in the catalog is skipped with its pack sizes, so a
 second run changes nothing and never overwrites an edit made in the app. It is one save:
 a refused row leaves nothing imported. Try it on the local practice database first
 (`DIRECT_DATABASE_URL=postgres://postgres@127.0.0.1:5432/inv_local`).

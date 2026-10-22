@@ -12,6 +12,8 @@
 //   3. "/" serves the Planner, and the old family addresses redirect to it
 //   4. a request body over the size cap is refused before any handler runs
 //   5. every refusal leaves as JSON the page can show, never Express's HTML
+//   6. no page that changes the address hides the browser's history
+//   7. a connection string in the wrong shape stops the app at start-up
 //
 // node --test runs each test FILE in its own process, so require.cache below
 // reflects only what this file pulled in.
@@ -27,6 +29,7 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -35,6 +38,7 @@ const { app, jsonError } = require('../src/planner/server.js');
 // A real lumber sheet, so the no-store probe below can assert a 200 rather than
 // settling for an error response that carries the header just as well.
 const LUMBER_SHEET = 'batch-0000-scrubbed.csv';
+const SRC = path.join(__dirname, '..', 'src');
 
 // Boot on an ephemeral port, run `fn`, always close.
 async function withServer(fn) {
@@ -110,6 +114,27 @@ test('every response is marked no-store so a stale API body cannot be reused', a
     assert.equal(plan.status, 200, '/api/lumber/plan must answer 200 for a real sheet');
     assert.match(plan.headers.get('cache-control') || '', /no-store/,
       '/api/lumber/plan must be no-store');
+  });
+});
+
+// The page reads each line's flags from the answer (flagsHtml). The whole app
+// fills them from the database; run alone, the Planner has none to give, but
+// the field must still be there, or the page throws on every plan.
+test('run alone, the Planner answers every plan with flags, empty', async () => {
+  const read = (dir, name) => ({ name, text: fs.readFileSync(path.join(__dirname, dir, name), 'utf8') });
+  const plateSheet = read('plate-fixtures', '10001R-materials.csv');   // plates and hangers
+  const lumberSheet = read('lumber-fixtures', LUMBER_SHEET);            // lumber and LVL
+  const sheets = { plates: plateSheet, hangers: plateSheet, lumber: lumberSheet, lvl: lumberSheet };
+  await withServer(async (base) => {
+    for (const [family, sheet] of Object.entries(sheets)) {
+      const res = await fetch(`${base}/api/${family}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: [sheet] }),
+      });
+      assert.equal(res.status, 200, `${family}: the sheet plans`);
+      assert.deepEqual((await res.json()).flags, {}, `${family}: flags is there, and empty`);
+    }
   });
 });
 
@@ -210,7 +235,7 @@ test('malformed JSON is refused with a JSON 400, not the default HTML page', asy
   });
 });
 
-// One shape check guards all four routes (planHandler), so one route proves it.
+// One shape check guards all four routes (runPlan), so one route proves it.
 // Each body below is valid JSON and used to reach the handler, where a null
 // entry threw a TypeError outside any try/catch.
 test('a malformed plan body is refused with a JSON 400 before any file is read', async () => {
@@ -259,4 +284,47 @@ test('an unknown handler error leaves as a JSON 500 that carries no request data
   assert.deepEqual(sent.body, { ok: false, error: 'The planner hit an unexpected error.' });
   assert.equal(logged.length, 1, 'the error is logged once');
   assert.match(logged[0], /boom in a handler/, 'the log carries the stack');
+});
+
+// A page's own variable named `history` hides the browser's, so a later
+// history.replaceState throws and the script stops there. Overview did this:
+// its add form never opened from /inventory?add=lumber (#81 part 4, step 7).
+test('no page that changes the address declares a history of its own', () => {
+  const pages = fs.readdirSync(SRC, { recursive: true })
+    .filter((f) => /\.(html|js)$/.test(f))
+    .map((f) => [f, fs.readFileSync(path.join(SRC, f), 'utf8')])
+    .filter(([, text]) => /\bhistory\.(replaceState|pushState)\(/.test(text));
+  assert.ok(pages.length >= 3, 'the scan finds the pages that call history.replaceState');
+  for (const [f, text] of pages) {
+    assert.doesNotMatch(text, /\b(let|const|var|function)\s+history\b/, `${f} hides window.history`);
+  }
+});
+
+// A connection string that does not start with postgres:// or postgresql://
+// reaches pg as nonsense: on Preview it failed only at the first request, as
+// "ENOTFOUND base". The app refuses it at start-up instead, naming the
+// variable but never printing its value, which carries a password (Q203).
+function startIndex(env) {
+  const run = spawnSync(process.execPath, ['-e', "require('./index.js')"], {
+    cwd: path.join(SRC, '..'),
+    env: { PATH: process.env.PATH, DATABASE_CA_CERT: 'test-ca', SESSION_SECRET: 'x'.repeat(32), ...env },
+    encoding: 'utf8',
+    timeout: 20000,
+  });
+  return { status: run.status, output: run.stdout + run.stderr };
+}
+
+test('the app refuses at start-up a connection string that is not postgres:// or postgresql://, and never prints it', () => {
+  const good = 'postgresql://inv_app.ref:good-pw@pooler.example:6543/postgres';
+  const secret = 'https://inv_app.ref:s3cret-pw@pooler.example:6543/postgres';
+
+  const started = startIndex({ DATABASE_URL: good, PLANNER_DATABASE_URL: good.replace('postgresql', 'postgres') });
+  assert.equal(started.status, 0, `good strings start the app: ${started.output}`);
+
+  for (const name of ['DATABASE_URL', 'PLANNER_DATABASE_URL']) {
+    const run = startIndex({ DATABASE_URL: good, PLANNER_DATABASE_URL: good, [name]: secret });
+    assert.notEqual(run.status, 0, `${name}: the app must not start`);
+    assert.match(run.output, new RegExp(`(^|[^_])${name} does not start with postgres:// or postgresql://`), `${name} is named`);
+    assert.doesNotMatch(run.output, /s3cret-pw|https:\/\//, `${name}: the value is never printed`);
+  }
 });

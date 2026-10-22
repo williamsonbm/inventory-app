@@ -178,7 +178,8 @@ async function main() {
 
   // The app connects as its own login, as on Vercel, so it has the same rights.
   const database = openDatabase(urlFor(server, 'inv_app'));
-  const app = createApp({ database, sessionSecret: sessionSecret() });
+  const plannerDatabase = openDatabase(urlFor(server, 'inv_planner'));
+  const app = createApp({ database, plannerDatabase, sessionSecret: sessionSecret() });
   const [{ n }] = await database.read('SELECT count(*)::int AS n FROM inv.users');
 
   app.listen(PORT, HOST, () => {
