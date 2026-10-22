@@ -130,7 +130,8 @@ function lineFlags(family, answer, items, live) {
   for (const line of lines(answer)) {
     const behind = itemsByKey.get(key(line)) ?? [];
     if (!behind.length) {
-      flags[key(line)] = { notInCatalog: true, ...(sku && { addToCatalog: { family, identity: { sku: sku(line) } } }) };
+      // A lumber line redirected whole buys nothing, so it needs no item (Q206).
+      if (!line.fullyRedirected) flags[key(line)] = { notInCatalog: true, ...(sku && { addToCatalog: { family, identity: { sku: sku(line) } } }) };
       continue;
     }
     const f = {};

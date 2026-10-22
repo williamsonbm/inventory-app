@@ -158,6 +158,16 @@ test('a lumber line gives last counted per length and shows the oldest; a family
     'not live: no last counted');
 });
 
+test('a lumber line redirected whole buys nothing, so it is not flagged as not in the catalog (Q206)', async () => {
+  const ctx = await setUp();
+  await call(ctx.db, 'set_grade_redirect', ctx.ann.id, crypto.randomUUID(), '2x4', 'DSS', null, 'MSR2400');
+
+  const lumber = await ctx.plan('/api/lumber/plan', { files: [LUMBER_LVL_SHEET] });
+  assert.equal(lumber.bySizeGrade.find((l) => l.key === '2x4|DSS').fullyRedirected, true, 'the redirect took the whole line');
+  assert.equal(lumber.flags['2x4|DSS'], undefined);
+  assert.deepEqual(lumber.flags['2x4|MSR2400'], { notInCatalog: true }, 'the line it goes to is still flagged');
+});
+
 // A plan changes no row (#81 design item 5). Every table's row count, read
 // as the owner, after Ann signs in and before all four plans, and after.
 test('running all four plans, one family live and one on a dropped file, changes no row in any table', async () => {
