@@ -117,6 +117,30 @@ test('every response is marked no-store so a stale API body cannot be reused', a
   });
 });
 
+// The page reads each line's flags from the answer (flagsHtml). The whole app
+// fills them from the database; run alone, the Planner has none to give, but
+// the field must still be there, or the page throws on every plan.
+test('run alone, the Planner answers every plan with flags, empty', async () => {
+  const read = (dir, name) => ({ name, text: fs.readFileSync(path.join(__dirname, dir, name), 'utf8') });
+  const sheets = {
+    plates: read('plate-fixtures', '10001R-materials.csv'),
+    hangers: read('plate-fixtures', '10001R-materials.csv'),
+    lumber: read('lumber-fixtures', LUMBER_SHEET),
+    lvl: read('lumber-fixtures', LUMBER_SHEET),
+  };
+  await withServer(async (base) => {
+    for (const [family, sheet] of Object.entries(sheets)) {
+      const res = await fetch(`${base}/api/${family}/plan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ files: [sheet] }),
+      });
+      assert.equal(res.status, 200, `${family}: the sheet plans`);
+      assert.deepEqual((await res.json()).flags, {}, `${family}: flags is there, and empty`);
+    }
+  });
+});
+
 // ---- 3. the front door -------------------------------------------------------
 // "/" served the EWP page before the port, then the lumber page (owner,
 // 2026-09-14). Spec #72 step 1 merges the four family pages into one Planner,

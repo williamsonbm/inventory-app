@@ -217,6 +217,9 @@ function runPlan(route, reqBody) {
       rerouted,
       stockFileName: stockFile ? stockFile.name : null,
       stockError,
+      // Each line's flags, by line key. Run alone there are none; the whole
+      // app fills them from the database (src/inventory/planner-stock.js).
+      flags: {},
     },
   };
 }

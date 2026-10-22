@@ -99,6 +99,8 @@ test('redaction invariance: redacted sheets plan to the same buy lists, all four
 
       const res = await post(base, route, body);
       const recorded = loadRecorded(family, withStock);
+      // The baseline predates `flags`; recorded-output.test.js drops it too.
+      delete res.body.flags;
 
       assert.equal(res.status, recorded.status, `${family} ${withStock ? 'with' : 'no'}-stock: status changed under redaction`);
       assert.deepEqual(res.body, recorded.body, `${family} ${withStock ? 'with' : 'no'}-stock: redaction changed the buy list`);
