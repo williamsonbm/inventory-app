@@ -12,6 +12,7 @@
 //   3. "/" serves the Planner, and the old family addresses redirect to it
 //   4. a request body over the size cap is refused before any handler runs
 //   5. every refusal leaves as JSON the page can show, never Express's HTML
+//   6. no page that changes the address hides the browser's history
 //
 // node --test runs each test FILE in its own process, so require.cache below
 // reflects only what this file pulled in.
@@ -35,6 +36,7 @@ const { app, jsonError } = require('../src/planner/server.js');
 // A real lumber sheet, so the no-store probe below can assert a 200 rather than
 // settling for an error response that carries the header just as well.
 const LUMBER_SHEET = 'batch-0000-scrubbed.csv';
+const SRC = path.join(__dirname, '..', 'src');
 
 // Boot on an ephemeral port, run `fn`, always close.
 async function withServer(fn) {
@@ -259,4 +261,18 @@ test('an unknown handler error leaves as a JSON 500 that carries no request data
   assert.deepEqual(sent.body, { ok: false, error: 'The planner hit an unexpected error.' });
   assert.equal(logged.length, 1, 'the error is logged once');
   assert.match(logged[0], /boom in a handler/, 'the log carries the stack');
+});
+
+// A page's own variable named `history` hides the browser's, so a later
+// history.replaceState throws and the script stops there. Overview did this:
+// its add form never opened from /inventory?add=lumber (#81 part 4, step 7).
+test('no page that changes the address declares a history of its own', () => {
+  const pages = fs.readdirSync(SRC, { recursive: true })
+    .filter((f) => /\.(html|js)$/.test(f))
+    .map((f) => [f, fs.readFileSync(path.join(SRC, f), 'utf8')])
+    .filter(([, text]) => /\bhistory\.(replaceState|pushState)\(/.test(text));
+  assert.ok(pages.length >= 3, 'the scan finds the pages that call history.replaceState');
+  for (const [f, text] of pages) {
+    assert.doesNotMatch(text, /\b(let|const|var|function)\s+history\b/, `${f} hides window.history`);
+  }
 });

@@ -117,7 +117,7 @@
   let tab = null;         // the open size (lumber) or depth (LVL) tab
   let open = null;        // the id of the item whose row is open
   let mode = null;        // what the open row's panel shows instead: 'rename', 'correct', 'trim' or 'history'
-  let history = null;     // the open item's History entries, once loaded
+  let historyEntries = null; // the open item's History entries, once loaded
   let reversing = null;   // the History entry whose Reverse form is open
   let replacing = null;   // the History entry a Correct or Trim form replaces
   let reasons = [];       // the reasons in use and not kept for another entry, for Correct on hand
@@ -411,8 +411,8 @@
     const canReverse = (e) => e.id && !e.reversed && !e.reversal && family(i.family).live;
     const last = (e) => (e.reversed ? '<span class="chip">reversed</span>'
       : canReverse(e) ? '<button type="button" class="ghost" data-do="reverse" data-entry="' + e.id + '">Reverse…</button>' : '');
-    const rows = history === null ? '<tr><td colspan="6" class="sub">Loading…</td></tr>'
-      : history.map((e) => '<tr><td>' + esc(showTime(e.at)) + '</td><td>' + esc(e.who) + '</td><td>' + esc(e.action) + '</td><td>' +
+    const rows = historyEntries === null ? '<tr><td colspan="6" class="sub">Loading…</td></tr>'
+      : historyEntries.map((e) => '<tr><td>' + esc(showTime(e.at)) + '</td><td>' + esc(e.who) + '</td><td>' + esc(e.action) + '</td><td>' +
         (e.change === null ? '' : signed(e.change)) + '</td><td>' + esc(e.detail) + '</td><td>' + last(e) + '</td></tr>' +
         (e.id === reversing ? '<tr><td colspan="6">' + reverseForm(e) + '</td></tr>' : '')).join('');
     return '<div class="row" style="align-items:center"><b>History of ' + esc(itemLabel(i)) + '</b>' +
@@ -460,19 +460,19 @@
       async ({ reversal }) => {
         reversing = null;
         const [, again] = await Promise.all([reloadItems(), fetchHistory(id)]);
-        if (again.ok) history = again.entries;
+        if (again.ok) historyEntries = again.entries;
         return reversal;
       });
   }
   async function showHistory(id) {
     mode = 'history';
-    history = null;
+    historyEntries = null;
     reversing = null;
     paint();
     const body = await fetchHistory(id);
     if (open !== id || mode !== 'history') return;  // closed while loading
     if (!body.ok) { mode = null; say(body.error, 'bad'); return paint(); }
-    history = body.entries;
+    historyEntries = body.entries;
     paint();
   }
 
@@ -581,7 +581,7 @@
     if (!tr) return;
     const what = e.target.dataset && e.target.dataset.do;
     if (what === 'history') return showHistory(open);
-    if (what === 'redo') return redo(history.find((h) => h.id === reversing));
+    if (what === 'redo') return redo(historyEntries.find((h) => h.id === reversing));
     if (what === 'reverse' || what === 'reverse-cancel') {
       reversing = what === 'reverse' ? Number(e.target.dataset.entry) : null;
       return paint();
