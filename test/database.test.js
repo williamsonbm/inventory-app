@@ -21,7 +21,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  urlFor, connect, freshDatabase, as, HASH, APP, firstUser, call, logRows, refused,
+  urlFor, connect, freshDatabase, as, HASH, APP, firstUser, call, logRows, refused, tables, contents,
 } = require('./support/database.js');
 
 test('the owner adds the first person, logged as their own addition', async () => {
@@ -230,19 +230,6 @@ test('two connections racing with the same retry key make one change (S22, S52)'
 
 const LOGINS = [APP, 'inv_planner', 'inv_backup'];
 
-// Every table in the schema, read from the catalog, so a table added by a
-// later migration is swept without anyone remembering to list it.
-async function tables(db) {
-  return as(db, null, async (owner) => (await owner.query(`
-    SELECT c.relname AS name,
-           -- Not an identity column: Postgres refuses SET id = id before it checks rights.
-           (SELECT a.attname FROM pg_catalog.pg_attribute a
-             WHERE a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped AND a.attidentity = ''
-             ORDER BY a.attnum LIMIT 1) AS first_column
-      FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
-     WHERE n.nspname = 'inv' AND c.relkind = 'r' ORDER BY 1`)).rows);
-}
-
 test('no login can insert, update, delete or empty any table (S62)', async () => {
   const db = await freshDatabase();
   await firstUser(db);
@@ -333,18 +320,6 @@ test('every function pins its search_path, and no login owns anything or holds s
     assert.deepEqual(special, [], 'a login holds a special right');
   });
 });
-
-// Every row of every table, keyed by table name, in a stable order.
-async function contents(db) {
-  const all = await tables(db);
-  return as(db, null, async (owner) => {
-    const out = {};
-    for (const { name } of all) {
-      out[name] = (await owner.query(`SELECT * FROM inv.${name} ORDER BY 1`)).rows;
-    }
-    return out;
-  });
-}
 
 // This restores onto the same server, where the three logins already exist.
 // The dump carries their grants but not the logins themselves, and not the

@@ -122,12 +122,9 @@ test('every response is marked no-store so a stale API body cannot be reused', a
 // the field must still be there, or the page throws on every plan.
 test('run alone, the Planner answers every plan with flags, empty', async () => {
   const read = (dir, name) => ({ name, text: fs.readFileSync(path.join(__dirname, dir, name), 'utf8') });
-  const sheets = {
-    plates: read('plate-fixtures', '10001R-materials.csv'),
-    hangers: read('plate-fixtures', '10001R-materials.csv'),
-    lumber: read('lumber-fixtures', LUMBER_SHEET),
-    lvl: read('lumber-fixtures', LUMBER_SHEET),
-  };
+  const plateSheet = read('plate-fixtures', '10001R-materials.csv');   // plates and hangers
+  const lumberSheet = read('lumber-fixtures', LUMBER_SHEET);            // lumber and LVL
+  const sheets = { plates: plateSheet, hangers: plateSheet, lumber: lumberSheet, lvl: lumberSheet };
   await withServer(async (base) => {
     for (const [family, sheet] of Object.entries(sheets)) {
       const res = await fetch(`${base}/api/${family}/plan`, {
