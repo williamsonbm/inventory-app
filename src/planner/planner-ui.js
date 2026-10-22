@@ -892,8 +892,9 @@
   // and a Retired or Not in the catalog chip with what fixes it. A button
   // carries only its line's key; planner.html looks the flag up and saves.
   // Lumber and LVL lines name no one item, so they link to Overview's
-  // "+ Add item" instead (Q186).
-  function flagsHtml(flag, key, family) {
+  // "+ Add item" instead (Q186), which starts with `fill`: the line's own name
+  // fields, as Overview's add form names them (Q210).
+  function flagsHtml(flag, key, family, fill) {
     if (!flag) return '';
     const button = (act, label) =>
       ' <button type="button" class="ghost flag-btn" data-flag-do="' + act + '" data-flag-key="' + esc(key) + '">' + label + '</button>';
@@ -902,7 +903,7 @@
     if (flag.notInCatalog) {
       h += ' <span class="chip bad">Not in the catalog</span>' + (flag.addToCatalog
         ? button('add', 'Add to catalog')
-        : ' <a class="no-print" href="/inventory?add=' + esc(family) + '">+ Add item in Inventory</a>');
+        : ' <a class="no-print" href="' + esc('/inventory?' + new URLSearchParams({ add: family, ...fill })) + '">+ Add item in Inventory</a>');
     }
     if (flag.lastCounted) {
       h += '<br><span class="spare">' + (flag.lastCounted === 'never' ? 'never counted' : 'last counted ' + esc(flag.lastCounted)) + '</span>';

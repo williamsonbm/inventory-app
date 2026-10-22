@@ -490,8 +490,11 @@ test('flagsHtml: not in the catalog adds in one click where the plan says how, e
   const plate = flagsHtml({ notInCatalog: true, addToCatalog: { family: 'plates', identity: { sku: 'X' } } }, 'X', 'plates');
   assert.ok(plate.includes('>Not in the catalog<'), 'the chip shows');
   assert.ok(plate.includes('data-flag-do="add" data-flag-key="X"') && plate.includes('>Add to catalog</button>'), 'plates add in one click');
-  const lumber = flagsHtml({ notInCatalog: true }, '2x4|#1', 'lumber');
+  const lumber = flagsHtml({ notInCatalog: true }, '2x4|#1', 'lumber', { size: '2x4', grade: '#1' });
   assert.ok(lumber.includes('>Not in the catalog<'), 'the chip shows');
   assert.ok(!lumber.includes('<button'), 'lumber has no one-click add');
-  assert.ok(lumber.includes('href="/inventory?add=lumber"'), 'lumber links to Overview, adding to lumber');
+  assert.ok(lumber.includes('href="/inventory?add=lumber&amp;size=2x4&amp;grade=%231"'),
+    'lumber links to Overview, adding the line\'s size and grade (Q210)');
+  const lvl = flagsHtml({ notInCatalog: true }, '9-12', 'lvl', { size: '9-1/2' });
+  assert.ok(lvl.includes('href="/inventory?add=lvl&amp;size=9-1%2F2"'), 'LVL links to Overview, adding the line\'s depth (Q210)');
 });

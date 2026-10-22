@@ -391,7 +391,7 @@
         s += `
           <tbody>
           <tr class="grp${isShort ? ' short' : ''}${notInMenu ? ' non-stock' : ''}"${hasDrill ? ` data-group="grp" data-toggle="${idx}"` : ''}>
-            <td>${hasDrill ? '<span class="caret">▸</span>' : ''}<span class="mono"><b>${esc(row.label)}</b></span>${row.redirect ? ` <span class="sub">redirected to <b>${esc(row.redirect.toLabel)}</b></span>` : ''}${flagsHtml(p.flags[row.key], row.key, 'lumber')}</td>
+            <td>${hasDrill ? '<span class="caret">▸</span>' : ''}<span class="mono"><b>${esc(row.label)}</b></span>${row.redirect ? ` <span class="sub">redirected to <b>${esc(row.redirect.toLabel)}</b></span>` : ''}${flagsHtml(p.flags[row.key], row.key, 'lumber', { size: row.size, grade: row.grade })}</td>
             <td class="n">${needCellHtml(row)}</td>
             ${hasStock ? `
               <td class="n ${row.stockLf === 0 ? 'zero-ink' : ''}">${fmt(row.stockLf)}</td>

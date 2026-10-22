@@ -118,9 +118,12 @@
         <tbody>`;
       rows.forEach((row, idx) => {
         const isShort = hasStock && row.neededLf > 0;
+        // An item names its depth as the label does, less the inch mark (9-1/2),
+        // not as the line's key does (9-12).
+        const fill = { size: row.label.replace(/"$/, '') };
         s += `
           <tr class="depth${isShort ? ' short' : ''}" data-group="depth" data-toggle="${idx}">
-            <td><span class="caret">▸</span><span class="mono"><b>${esc(row.label)}</b></span>${flagsHtml(p.flags[row.depth], row.depth, 'lvl')}</td>
+            <td><span class="caret">▸</span><span class="mono"><b>${esc(row.label)}</b></span>${flagsHtml(p.flags[row.depth], row.depth, 'lvl', fill)}</td>
             <td class="n">${fmt(row.usedLf)}</td>
             ${hasStock ? `
               <td class="n ${row.stockLf === 0 ? 'zero-ink' : ''}">${fmt(row.stockLf)}</td>

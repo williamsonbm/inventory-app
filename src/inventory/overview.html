@@ -235,8 +235,9 @@
     paintReorder();
     paintStatus();
     // The Planner's link for a lumber or LVL line not in the catalog arrives
-    // as /inventory?add=<family>: that family, its add form open, this visit only.
-    const addFor = new URLSearchParams(location.search).get('add');
+    // as /inventory?add=<family>&<name field>=<value>...: that family, its add
+    // form open and filled from the line (Q210), this visit only.
+    const { add: addFor = null, ...fill } = Object.fromEntries(new URLSearchParams(location.search));
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
       if (f === current) return;
       current = f;
@@ -252,7 +253,7 @@
     }, addFor);
     if (addFor !== null) {
       history.replaceState(null, '', '/inventory');
-      if (current === addFor) el('add-open').click();
+      if (current === addFor) openAdd(fill);
     }
   }
 
@@ -699,7 +700,7 @@
   const MAX_LENGTH = { sku: 30, product: 60, size: 10, grade: 20 };
   function identityInputs(fam, item) {
     const f = families.find((x) => x.code === fam);
-    const value = (field) => (item ? item[field] : '');
+    const value = (field) => item?.[field] ?? '';
     const box = (field) => (f.choices && f.choices[field]
       ? '<select data-identity="' + field + '" required>' + f.choices[field].map((s) =>
         '<option' + (s === value(field) ? ' selected' : '') + '>' + esc(s) + '</option>').join('') + '</select>'
@@ -715,11 +716,16 @@
     return identity;
   }
 
-  // "+ Add item" adds to the open family, with that family's name fields.
-  el('add-open').addEventListener('click', () => {
+  // "+ Add item" adds to the open family, with that family's name fields,
+  // starting with `fill`: by hand, the open size or depth tab (Q210).
+  function openAdd(fill) {
     el('add-title').textContent = 'Add to ' + familyName(current) + ':';
-    el('add-fields').innerHTML = identityInputs(current);
+    el('add-fields').innerHTML = identityInputs(current, fill);
     el('add').hidden = false;
+  }
+  el('add-open').addEventListener('click', () => {
+    const tabField = VIEWS[current]?.tab;
+    openAdd(tabField && tab != null ? { [tabField]: tab } : null);
   });
   el('add-cancel').addEventListener('click', () => { el('add').hidden = true; });
   el('add').addEventListener('submit', (e) => {
