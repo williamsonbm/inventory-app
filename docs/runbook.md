@@ -70,7 +70,9 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
    Preview database existed, so it skipped the order below; `inv.schema_migrations` lists it.
 
    **The order for every migration from 003 on** (#81): apply it to the Preview database (see
-   *Create the Preview database*), try the preview, apply it to Production, then merge the PR.
+   *Create the Preview database*); the owner checks the preview and the PR review is answered;
+   apply it to Production, then merge the PR. A fix that changes the migration goes to the
+   Preview database first, and the check repeats.
    A preview whose Vercel variables still point at the live database must not edit the
    catalog: its edits would change the live catalog.
 4. **Passwords for the three database logins** (`inv_app`, `inv_planner`, `inv_backup`): one
@@ -133,7 +135,8 @@ Supabase project exists, migration 001 is applied, and the three logins have pas
 
 ## Create the Preview database
 
-A second Supabase project, so that a Vercel preview never touches the live data (#81). Done
+A second Supabase project, so that a Vercel preview never touches the live data (#81), and to
+prove each migration before Production. Done
 2026-10-03: `inventory-app-preview`, East US, on the Free plan. Repeat the go-live steps
 against it. Only the differences are listed. Preview skips go-live steps 8 to 10 (sign-in
 speed, nightly backup, practice restore).
