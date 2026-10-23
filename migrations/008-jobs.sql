@@ -25,8 +25,9 @@ CREATE TABLE inv.jobs (
 CREATE UNIQUE INDEX jobs_number_key ON inv.jobs (pg_catalog.upper(number));
 
 -- One saved sheet of a job. The highest revision is the current one.
--- fingerprint is the SHA-256 of the sheet's lines (inv.sheet_fingerprint),
--- so the same sheet dropped again is found without comparing every line.
+-- fingerprint is the SHA-256 of the sheet's job name, delivery date and
+-- lines (inv.sheet_fingerprint), so the same sheet dropped again is found
+-- without comparing every line, and a new date is not dropped unsaid (Q19).
 -- Who saved it and when come from the action's activity-log row.
 CREATE TABLE inv.job_sheets (
   id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -91,18 +92,20 @@ AS $$
    GROUP BY 1
 $$;
 
-CREATE FUNCTION inv.sheet_fingerprint(p_lines jsonb) RETURNS bytea
-LANGUAGE sql IMMUTABLE
+-- p_job as inv.commit_job takes it. The number is left out: it finds the job.
+CREATE FUNCTION inv.sheet_fingerprint(p_job jsonb) RETURNS bytea
+LANGUAGE sql STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
-  SELECT pg_catalog.sha256(pg_catalog.convert_to(
-    coalesce(pg_catalog.string_agg(s.item_id || ':' || s.quantity, ',' ORDER BY s.item_id), ''), 'UTF8'))
-    FROM inv.sheet_lines(p_lines) AS s
+  SELECT pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.jsonb_build_array(
+    inv.tidy(p_job ->> 'name'), (p_job ->> 'delivery_date')::date,
+    (SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_array(s.item_id, s.quantity) ORDER BY s.item_id)
+       FROM inv.sheet_lines(p_job -> 'lines') AS s))::text, 'UTF8'))
 $$;
 
 -- Commits one job from its sheet (stories 1, 2, 6, 7, 9–11).
 -- p_job: {number, name, delivery_date, lines: [{item_id, quantity}, …]}. The
--- server reads the file and matches its lines to items (src/jobs/sheet.js);
+-- server reads the file and matches its lines to items (src/jobs/jobs.js);
 -- this function refuses again what the server refuses, as the guarantee.
 -- A line of a family not live in Inventory is kept like any other (J4).
 -- The same sheet for an open job changes nothing and writes no log row (S20).
@@ -133,7 +136,7 @@ BEGIN
               WHERE NOT (inv.is_whole_above_zero(l -> 'quantity') AND inv.is_whole_above_zero(l -> 'item_id'))) THEN
     RAISE EXCEPTION 'Each line names an item and a whole quantity above 0.' USING ERRCODE = 'IV400';
   END IF;
-  v_fingerprint := inv.sheet_fingerprint(v_lines);
+  v_fingerprint := inv.sheet_fingerprint(p_job);
 
   -- Deliberately a table lock, not a row lock: two first commits of one new
   -- job number have no row to lock yet, and without it the second fails on

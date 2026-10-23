@@ -61,7 +61,7 @@
 <script>
 (async () => {
   const { esc, flagsHtml } = PlannerUI;
-  const { say, send, showTime, showDate } = AppHeader;
+  const { say, send, getAll, showTime, showDate } = AppHeader;
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
 
@@ -69,8 +69,8 @@
   const familyText = (f) => (f.live ? esc(f.name) : '<span class="not-tracked">' + esc(f.name) + ' (not tracked yet)</span>');
 
   async function loadBoard() {
-    const body = await (await fetch('/api/jobs')).json();
-    if (!body.ok) { say(body.error, 'bad'); return; }
+    const [body] = (await getAll(['/api/jobs'])) ?? [];
+    if (!body) return;
     el('rows').innerHTML = body.jobs.map((j) => '<tr><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td>' +
       j.families.map(familyText).join(', ') + '</td><td>' + esc(j.status) + '</td><td>' +
       (j.delivery_date ? esc(showDate(j.delivery_date + 'T12:00:00Z')) : '—') + '</td><td>' +

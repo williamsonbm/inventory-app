@@ -48,8 +48,10 @@ function readSheet(text) {
 }
 
 // Each line's one active catalog item, or the line with the Planner's flag
-// for what fixes it (catalogFlag). `several` names a line that two active
-// items share, which a person settles by retiring one.
+// for what fixes it (catalogFlag). A line whose one item is retired is
+// flagged but keeps that item in `matched`, in sheet order, so a retry sends
+// the request it repeats. `several` names a line that two active items
+// share, which a person settles by retiring one.
 function matchLines(lines, behindByFamily) {
   const matched = [];
   const flagged = [];
@@ -59,7 +61,10 @@ function matchLines(lines, behindByFamily) {
     const active = behind.filter((i) => i.active);
     if (active.length === 1) matched.push({ item_id: active[0].id, quantity });
     else if (active.length > 1) several.push(`${sku} (${active.map((i) => i.sku).join(', ')})`);
-    else flagged.push({ family, sku, quantity, flag: catalogFlag(family, behind, sku) });
+    else {
+      if (behind.length === 1) matched.push({ item_id: behind[0].id, quantity });
+      flagged.push({ family, sku, quantity, flag: catalogFlag(family, behind, sku) });
+    }
   }
   return { matched, flagged, several };
 }
@@ -84,16 +89,24 @@ async function commitSheet(database, person, { key, file } = {}) {
     return { status: 422, body: { ok: false,
       error: `Job ${number} was not committed: ${several.join('; ')} each match more than one catalog item. Retire the one not used.` } };
   }
-  if (flagged.length) {
-    const n = flagged.length;
-    return { status: 422, body: { ok: false,
-      error: `Job ${number} was not committed: ${n === 1 ? '1 line is' : `${n} lines are`} not in the catalog or ${n === 1 ? 'is' : 'are'} retired.`,
-      lines: flagged } };
+  const n = flagged.length;
+  const refusal = { status: 422, body: { ok: false,
+    error: `Job ${number} was not committed: ${n === 1 ? '1 line is' : `${n} lines are`} not in the catalog or ${n === 1 ? 'is' : 'are'} retired.`,
+    lines: flagged } };
+  // A line not in the catalog was never committed; a retired line may have
+  // been, so the database answers first: a retry answers as the commit it
+  // repeats, and the same sheet again is unchanged (S20, S22). Otherwise it
+  // refuses the retired lines, as this file does.
+  if (matched.length < sheet.lines.length) return refusal;
+  try {
+    const job = await database.save('commit_job', [person.id, key, {
+      number, name: sheet.meta.job_name, delivery_date: sheet.meta.delivery_date, lines: matched,
+    }]);
+    return { status: 200, body: { ok: true, job, warnings: sheet.warnings } };
+  } catch (err) {
+    if (n && err.code === 'IV422') return refusal;
+    throw err;
   }
-  const job = await database.save('commit_job', [person.id, key, {
-    number, name: sheet.meta.job_name, delivery_date: sheet.meta.delivery_date, lines: matched,
-  }]);
-  return { status: 200, body: { ok: true, job, warnings: sheet.warnings } };
 }
 
 // The Job board: one row per job, with the families on its current sheet

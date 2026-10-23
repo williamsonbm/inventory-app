@@ -78,7 +78,34 @@ test('a different sheet for a job already in the app is refused with who committ
   const before = await contents(db);
   const err = await refused(commit(ctx, [[plate, 930], [lus28, 1]]), 'IV422', 'a different sheet');
   assert.match(err.message, /^Job 33864R was already committed by Ann Lee on \w+ \d+, \d{4}, from a different sheet\.$/);
+  // The same lines with another delivery date or job name are a different sheet too (Q19).
+  await refused(commit(ctx, [[plate, 930]], { deliveryDate: '2026-11-09' }), 'IV422', 'another delivery date');
+  await refused(commit(ctx, [[plate, 930]], { deliveryDate: null }), 'IV422', 'no delivery date');
+  await refused(commit(ctx, [[plate, 930]], { name: 'Jones Residence' }), 'IV422', 'another job name');
   assert.deepEqual(await contents(db), before);
+});
+
+test('two first commits of one job at once save it once; the second finds the first (S20)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28 } = ctx;
+  const lines = [[plate, 930], [lus28, 12]];
+  // The first commit holds its save open while the second starts, so the two meet every time.
+  await as(db, APP, async (first) => {
+    await first.query('BEGIN');
+    await first.query('SELECT inv.commit_job($1, $2, $3)', [ctx.ann.id, crypto.randomUUID(),
+      { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-02',
+        lines: lines.map(([item, quantity]) => ({ item_id: item.id, quantity })) }]);
+    const second = commit(ctx, lines);
+    await as(db, null, async (owner) => {
+      for (let waiting = 0; !waiting;) {
+        waiting = (await owner.query(`SELECT count(*)::int AS n FROM pg_catalog.pg_stat_activity
+                                       WHERE wait_event_type = 'Lock' AND query LIKE '%commit_job%'`)).rows[0].n;
+      }
+    });
+    await first.query('COMMIT');
+    assert.equal((await second).unchanged, true, await second);
+  });
+  assert.equal((await logRows(db)).filter((r) => r.target_table === 'jobs').length, 1);
 });
 
 test('a sheet with a retired or unknown item is refused whole, and leaves no row (J8)', async () => {
@@ -198,10 +225,32 @@ test('the same file twice commits once; a different sheet for the job is refused
   assert.equal(again.status, 200);
   assert.equal((await again.json()).job.unchanged, true);
 
-  const changed = await commitFile(ctx, SHEET.replace('12,Hanger,LUS28', '13,Hanger,LUS28'));
-  assert.equal(changed.status, 422);
-  assert.match((await changed.json()).error, /^Job 33864R was already committed by Ann Lee on /);
+  for (const [from, to] of [['12,Hanger,LUS28', '13,Hanger,LUS28'], ['Delivery Date:,11/2/2026', 'Delivery Date:,11/9/2026']]) {
+    assert.ok(SHEET.includes(from), from);
+    const changed = await commitFile(ctx, SHEET.replace(from, to));
+    assert.equal(changed.status, 422, to);
+    assert.match((await changed.json()).error, /^Job 33864R was already committed by Ann Lee on /);
+  }
+  assert.equal((await board(ctx))[0].delivery_date, '2026-11-02');
   assert.equal((await board(ctx)).length, 1);
+});
+
+test('a retry after a line is retired answers as the first commit did; the same file again is unchanged (S20, S22)', async () => {
+  const ctx = await appWithCatalog();
+  const key = crypto.randomUUID();
+  const first = await commitFile(ctx, SHEET, key);
+  assert.equal(first.status, 200);
+  const { job } = await first.json();
+  const { LUS28 } = ctx.items;
+  const retired = await post(ctx.base, '/api/items/retire', { key: crypto.randomUUID(), id: LUS28.id, version: LUS28.version }, ctx.cookie);
+  assert.equal(retired.status, 200, await retired.clone().text());
+
+  const retry = await commitFile(ctx, SHEET, key);
+  assert.equal(retry.status, 200, await retry.clone().text());
+  assert.deepEqual((await retry.json()).job, job);
+  const again = await commitFile(ctx);
+  assert.equal(again.status, 200, await again.clone().text());
+  assert.equal((await again.json()).job.unchanged, true);
 });
 
 test('a sheet with an unknown or a retired line is refused whole, each line with what fixes it (J8)', async () => {
