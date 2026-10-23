@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Jobs</title>
+<script>
+  // Theme before first paint; same key and rule as the Planner's header.
+  (function () {
+    var theme = null;
+    try { theme = localStorage.getItem('app.theme'); } catch (e) { /* storage blocked */ }
+    if (theme !== 'dark' && theme !== 'light') {
+      theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    document.documentElement.setAttribute('data-theme', theme);
+  })();
+</script>
+<link rel="stylesheet" href="/planner.css">
+<style>
+  .drop { border: 2px dashed var(--line, #999); border-radius: 8px; padding: 1.25rem; text-align: center; margin-bottom: 1rem; }
+  .drop.over { background: var(--hover, rgba(0, 0, 0, .05)); }
+  .not-tracked { font-style: italic; }
+</style>
+</head>
+<body>
+<!--
+  board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it; and
+  the Job board, one row per job.
+
+  Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
+  repo has no DOM harness. Reading the sheet, matching its lines, the refusals
+  and the board's rows are tested over HTTP in test/jobs.test.js; the page is
+  checked by hand on Preview (#96, Testing Decisions).
+-->
+<header class="appbar">
+  <div class="appbar-primary">
+    <span class="appbar-brand">RTW Inventory Tracker</span>
+    <button type="button" class="themebtn" id="theme-btn" aria-label="Switch between light and dark">☾</button>
+    <span class="appbar-user" id="user-name"></span>
+    <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
+  </div>
+  <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/jobs" class="here" aria-current="page">Jobs</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
+</header>
+
+<div class="wrap">
+  <label class="drop" id="drop">
+    Drop a job's material sheet here, or click to choose it.
+    <input type="file" id="file" accept=".csv,text/csv" hidden>
+    <div class="sub">Plates and hangers are committed now; lumber and LVL lines come later. EWP: step 5.</div>
+  </label>
+  <div id="message" role="status"></div>
+  <div id="sheet-view"></div>
+  <table class="log">
+    <thead><tr><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th></tr></thead>
+    <tbody id="rows"></tbody>
+  </table>
+</div>
+
+<script src="/app-header.js"></script>
+<script src="/planner-ui.js"></script>
+<script>
+(async () => {
+  const { esc, flagsHtml } = PlannerUI;
+  const { say, send, getAll, showTime, showDate } = AppHeader;
+  const el = (id) => document.getElementById(id);
+  if (!await AppHeader.me) return;
+
+  // A family not live in Inventory is kept on the job, not tracked yet (J4).
+  const familyText = (f) => (f.live ? esc(f.name) : '<span class="not-tracked">' + esc(f.name) + ' (not tracked yet)</span>');
+
+  async function loadBoard() {
+    const [body] = (await getAll(['/api/jobs'])) ?? [];
+    if (!body) return;
+    el('rows').innerHTML = body.jobs.map((j) => '<tr><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td>' +
+      j.families.map(familyText).join(', ') + '</td><td>' + esc(j.status) + '</td><td>' +
+      (j.delivery_date ? esc(showDate(j.delivery_date + 'T12:00:00Z')) : '—') + '</td><td>' +
+      esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td></tr>').join('')
+      || '<tr><td colspan="6" class="sub">No jobs yet.</td></tr>';
+  }
+
+  // The sheet last dropped, checked before it is committed (J27).
+  let sheet = null;
+  // The lines on screen, each with its catalog flag (J8), so a fix button finds its line.
+  let shownLines = [];
+
+  function showLines(lines, intro) {
+    shownLines = lines;
+    el('sheet-view').innerHTML = !lines.length ? '' : intro + '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
+      lines.map((l, i) => '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + '</td><td>' + esc(l.quantity) + '</td><td>' +
+        flagsHtml(l.flag, String(i), l.family) + '</td></tr>').join('') + '</tbody></table>';
+  }
+
+  // Shows what committing the sheet would save, with a Commit job button.
+  // Nothing is saved until the person clicks it.
+  async function check() {
+    say('');
+    showLines([], '');
+    let body;
+    try {
+      body = await send('/api/jobs/check', { file: sheet });
+    } catch (err) {
+      say(err.unconfirmed ? 'The sheet could not be checked. Drop it again.' : err.message, 'bad');
+      return;
+    }
+    const { job, lines, warnings } = body;
+    const flagged = lines.filter((l) => l.flag).length;
+    showLines(lines, '<h2>Job ' + esc(job.number) + (job.name ? ' · ' + esc(job.name) : '') + '</h2><p class="sub">Delivery ' +
+      (job.delivery_date ? esc(showDate(job.delivery_date + 'T12:00:00Z')) : '—') + '. ' +
+      (job.status ? 'This job is already in the app (' + esc(job.status) + '). ' : '') +
+      (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p><p>' +
+      '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>Commit job</button> ' +
+      '<button type="button" class="ghost" id="clear-job">Clear</button>' +
+      (flagged ? ' <span class="sub">Fix the flagged ' + (flagged === 1 ? 'line' : 'lines') + ' first.</span>' : '') + '</p>');
+  }
+
+  // One request, built once with its retry key, so "Try again" after an
+  // unconfirmed save sends the very same one and acts once.
+  async function commit(request) {
+    say('');
+    try {
+      const { job } = await send('/api/jobs/commit', request);
+      showLines([], '');
+      say(job.unchanged ? 'Job ' + job.number + ' is already committed from this sheet; nothing changed.' : 'Job ' + job.number + ' committed.', 'ok');
+      loadBoard();
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => commit(request) : null);
+      if (err.reply?.lines) showLines(err.reply.lines, '');
+    }
+  }
+
+  // Fixes a line's catalog flag (PlannerUI.flagFixes), then checks the sheet
+  // again. A save that was not confirmed offers "Try again", which resends
+  // only the saves still to do, each with its own retry key.
+  async function fixAll(requests) {
+    try {
+      while (requests.length) {
+        await send(...requests[0]);
+        requests = requests.slice(1);
+      }
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => fixAll(requests) : null);
+      return;
+    }
+    if (sheet) check();
+  }
+  el('sheet-view').addEventListener('click', (e) => {
+    if (e.target.id === 'commit-job') commit({ key: crypto.randomUUID(), file: sheet });
+    if (e.target.id === 'clear-job') { sheet = null; say(''); showLines([], ''); }
+    const button = e.target.closest('[data-flag-do]');
+    if (button) fixAll(PlannerUI.flagFixes(button.dataset.flagDo, shownLines[Number(button.dataset.flagKey)].flag));
+  });
+
+  async function take(file) {
+    if (!file) return;
+    sheet = { name: file.name, text: await file.text() };
+    check();
+  }
+  el('file').addEventListener('change', (e) => { take(e.target.files[0]); e.target.value = ''; });
+  const drop = el('drop');
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files[0]); });
+
+  loadBoard();
+})();
+</script>
+</body>
+</html>

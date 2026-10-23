@@ -117,21 +117,15 @@ const oldest = (dates) => (dates.includes(null) ? 'never' : dates.sort()[0]);
 // none. Last counted only for a live family; retired when every item behind
 // the line is, with what Un-retire takes (Q183).
 function lineFlags(family, answer, items, live) {
-  const { lines, key, sku, itemKey, byLength } = LINES[family];
-  const itemsByKey = new Map();
-  for (const item of items) {
-    const k = itemKey(onHandText(family, [item]));
-    if (k == null) continue;
-    if (!itemsByKey.has(k)) itemsByKey.set(k, []);
-    itemsByKey.get(k).push(item);
-  }
+  const { lines, key, sku, byLength } = LINES[family];
+  const behindKey = itemsByKey(family, items);
 
   const flags = {};
   for (const line of lines(answer)) {
-    const behind = itemsByKey.get(key(line)) ?? [];
+    const behind = behindKey.get(key(line)) ?? [];
     if (!behind.length) {
       // A lumber line redirected whole buys nothing, so it needs no item (Q206).
-      if (!line.fullyRedirected) flags[key(line)] = { notInCatalog: true, ...(sku && { addToCatalog: { family, identity: { sku: sku(line) } } }) };
+      if (!line.fullyRedirected) flags[key(line)] = catalogFlag(family, behind, sku && sku(line));
       continue;
     }
     const f = {};
@@ -143,10 +137,35 @@ function lineFlags(family, answer, items, live) {
           [ft, oldest(behind.filter((i) => i.length_ft === ft).map((i) => i.last_counted))]));
       }
     }
-    if (behind.every((i) => !i.active)) f.retired = behind.map(({ id, version }) => ({ id, version }));
+    Object.assign(f, catalogFlag(family, behind));
     if (Object.keys(f).length) flags[key(line)] = f;
   }
   return flags;
+}
+
+// The family's items under their line keys, each key from the item's
+// one-row on-hand text read by the family's own reader (LINES), so a line
+// matches an item by the engine's own rule. Shared with Jobs (src/jobs/jobs.js).
+function itemsByKey(family, items) {
+  const { itemKey } = LINES[family];
+  const behind = new Map();
+  for (const item of items) {
+    const k = itemKey(onHandText(family, [item]));
+    if (k == null) continue;
+    if (!behind.has(k)) behind.set(k, []);
+    behind.get(k).push(item);
+  }
+  return behind;
+}
+
+// What a line's catalog needs, for the page's buttons (PlannerUI.flagsHtml),
+// or null: Un-retire when every item behind it is retired, with what that
+// takes (Q183); Add to catalog when there is none, in one click when the line
+// names one SKU (Q186).
+function catalogFlag(family, behind, sku) {
+  if (!behind.length) return { notInCatalog: true, ...(sku && { addToCatalog: { family, identity: { sku } } }) };
+  if (behind.every((i) => !i.active)) return { retired: behind.map(({ id, version }) => ({ id, version })) };
+  return null;
 }
 
 const hasText = (f) => isCsvFile(f) && f.text.trim() !== '';
@@ -193,4 +212,4 @@ async function planFromInventory(database, route, reqBody) {
   return result;
 }
 
-module.exports = { planFromInventory, onHandText };
+module.exports = { planFromInventory, onHandText, readInventory, itemsByKey, catalogFlag };
