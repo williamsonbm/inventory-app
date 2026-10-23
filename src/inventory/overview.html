@@ -174,8 +174,9 @@
     length: { head: 'Length', width: 16, sort: (i) => i.length_ft, cell: (i) => i.length_ft + '′', name: true },
     // A Special Order item with available above zero has extras: more than
     // its jobs need (Q32). On hand alone is material waiting for its job.
+    // This cell wraps, so the narrow column never cuts off the link.
     stocking: { head: 'Stocking', width: 20, sort: (i) => i.stocking, cell: (i) => (i.stocking === 'Special Order' && i.available > 0
-      ? 'Special Order · ' + inUnit(i, available(i)) + ' extra <a href="#" data-do="stocking">Change to Non-Stock</a>'
+      ? '<span class="wraps">Special Order · ' + inUnit(i, available(i)) + ' extra <a href="#" data-do="stocking">Change to Non-Stock</a></span>'
       : esc(i.stocking)) },
     // Under All, an LVL row says where its threshold is instead of "not set".
     threshold: { head: 'Threshold', width: 14, sort: thresholdShown,
