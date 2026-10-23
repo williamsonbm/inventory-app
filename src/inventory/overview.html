@@ -34,8 +34,9 @@
 
   Glue, NOT UNIT-TESTED: the table and its cells need a browser, and this
   repo has no DOM harness. Every route it calls is tested in
-  test/inventory.test.js. The layout, filters, sorting and the family
-  bar's saved choice are checked by hand (#81, Testing Decisions).
+  test/inventory.test.js. The layout, filters, sorting, the family bar's
+  saved choice and the Special Order extras cell with its link (Q32) are
+  checked by hand (#81, Testing Decisions).
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -591,10 +592,12 @@
     if (!tr) return;
     const what = e.target.dataset && e.target.dataset.do;
     if (what === 'history') return showHistory(open);
-    // "Change to Non-Stock" opens the row at its Stocking choice (Q32).
+    // "Change to Non-Stock" opens the row at its Stocking choice (Q32), even
+    // when the open panel shows History or another form instead.
     if (what === 'stocking') {
       e.preventDefault();
-      if (open !== Number(tr.dataset.id)) toggle(Number(tr.dataset.id));
+      open = null;
+      toggle(Number(tr.dataset.id));
       return el('rows').querySelector('[data-field="stocking"]').focus();
     }
     if (what === 'redo') return redo(historyEntries.find((h) => h.id === reversing));

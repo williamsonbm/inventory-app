@@ -149,16 +149,18 @@ test('a saved sheet and its lines cannot be changed, even by the owner (design t
 
 test('a committed job commits its lines; available is on hand minus committed, and Reorder follows; a family not live shows no change (#98, J4)', async () => {
   const ctx = await withCatalog();
-  const { db, plate, lus28, hus } = ctx;
+  const { db, ann, plate, lus28, hus } = ctx;
+  await call(db, 'edit_item', ann.id, crypto.randomUUID(), lus28.id, lus28.version, { threshold: 3 });
   await goLive(db, 'hangers');
   await ctx.receive(lus28, 12);
   await commit(ctx, [[plate, 30], [lus28, 5]]);
-  await commit(ctx, [[lus28, 4]], { number: '33865R' });
+  await commit(ctx, [[lus28, 4], [hus, 2]], { number: '33865R' });
 
-  // Plates are not live, so the plate line is not tracked yet (J4).
-  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 9, [hus.id]: 0 });
-  assert.deepEqual(await figure(db, 'available'), { [plate.id]: 0, [lus28.id]: 3, [hus.id]: 0 });
-  assert.deepEqual(await figure(db, 'reorder'), { [plate.id]: 'OK', [lus28.id]: 'OK', [hus.id]: 'OK' });
+  // Plates are not live, so the plate line is not tracked yet (J4). On hand
+  // alone would leave LUS28 (12 > 3) and HUS26 (0) OK.
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 9, [hus.id]: 2 });
+  assert.deepEqual(await figure(db, 'available'), { [plate.id]: 0, [lus28.id]: 3, [hus.id]: -2 });
+  assert.deepEqual(await figure(db, 'reorder'), { [plate.id]: 'OK', [lus28.id]: 'Low', [hus.id]: 'Short' });
 });
 
 test("an LVL depth's linear feet count what jobs commit, so its lengths turn Low together (#98, Q35)", async () => {
