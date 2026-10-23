@@ -44,7 +44,7 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   assert.equal(back.body.item.active, true);
 
   const { families, items } = await read(ctx, '/api/items');
-  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0, reorder: 'Low', counted_at: null, counted_long_ago: false }],
+  assert.deepEqual(items, [{ ...back.body.item, incoming: 0, on_hand: 0, committed: 0, available: 0, reorder: 'Low', counted_at: null, counted_long_ago: false }],
     'a list row also carries the item\'s figures: none on hand is at or below its threshold of 40, never counted');
   // EWP stays out of Inventory until step 5, so the family bar leaves it out.
   // The Planner's order, so the two family bars match (owner, 2026-10-02).

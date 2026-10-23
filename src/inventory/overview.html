@@ -23,8 +23,8 @@
   family at a time or All, picked in the same family bar as the Planner's
   (owner, 2026-10-02). A row opens a panel below itself, where its stocking
   status, threshold and note are edited (owner, 2026-10-01). On Hand and
-  Incoming (stories 32, 50) come from inv.item_figures; Reorder joins them
-  later in part 2. "Correct on hand…" in the panel changes an item's on hand
+  Incoming (stories 32, 50), Committed and Available (#98) and Reorder come
+  from inv.item_figures; a Special Order item with extras says so (Q32). "Correct on hand…" in the panel changes an item's on hand
   with a reason (stories 44–46); "Trim…" on an LVL item cuts weathered boards
   down to a shorter length (stories 47–48). "History" lists every change to
   the item's on hand and settings (story 55). Counts waiting for approval
@@ -81,7 +81,7 @@
     <tbody id="rows"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
-  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Incoming is what open POs still bring. Threshold, On Hand and Incoming are in linear feet (LF) for lumber, pieces for the rest. Reorder is Short below zero, Low at or below the threshold, otherwise OK; LVL is Low by its depth's linear feet, shown above its lengths. Counted is the date of the item's last approved count, monthly or spot check; amber when more than 65 days ago.</p>
+  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Committed is what open jobs still need, and Available is On Hand minus Committed. Incoming is what open POs still bring. Threshold and the figures are in linear feet (LF) for lumber, pieces for the rest. Reorder judges Available: Short below zero, Low at or below the threshold, otherwise OK; LVL is Low by its depth's linear feet, shown above its lengths. Counted is the date of the item's last approved count, monthly or spot check; amber when more than 65 days ago.</p>
 </div>
 
 <script src="/app-header.js"></script>
@@ -141,8 +141,13 @@
     const unit = unitShort(orderUnit(i.family));
     return fmtInt(n) + (unit === 'pieces' ? '' : ' ' + unit);
   };
-  // on_hand comes in pieces; lumber's order unit is linear feet.
-  const onHand = (i) => inOrderUnit(i.on_hand, i, orderUnit(i.family));
+  // The figures come in pieces; lumber's order unit is linear feet.
+  const inOrder = (field) => (i) => inOrderUnit(i[field], i, orderUnit(i.family));
+  const onHand = inOrder('on_hand');
+  const committed = inOrder('committed');
+  const available = inOrder('available');
+  // Below zero is red (S67).
+  const signedCell = (i, n) => (n < 0 ? '<span class="chip neg">' + inUnit(i, n) + '</span>' : inUnit(i, n));
   // The threshold is kept in pieces; it shows in the order unit beside On
   // Hand, so a lumber row reads "640 LF | 1,280 LF" (Q60).
   const thresholdShown = (i) => (i.threshold == null ? null : inOrderUnit(i.threshold, i, orderUnit(i.family)));
@@ -166,24 +171,28 @@
     product: { head: 'Product', width: 36, sort: (i) => i.product, cell: (i) => esc(i.product), name: true },
     grade: { head: 'Grade', width: 20, sort: (i) => gradeRank(i.grade), cell: (i) => esc(i.grade), name: true },
     length: { head: 'Length', width: 16, sort: (i) => i.length_ft, cell: (i) => i.length_ft + '′', name: true },
-    stocking: { head: 'Stocking', width: 20, sort: (i) => i.stocking, cell: (i) => esc(i.stocking) },
+    // A Special Order item with available above zero has extras: more than
+    // its jobs need (Q32). On hand alone is material waiting for its job.
+    stocking: { head: 'Stocking', width: 20, sort: (i) => i.stocking, cell: (i) => (i.stocking === 'Special Order' && i.available > 0
+      ? 'Special Order · ' + inUnit(i, available(i)) + ' extra <a href="#" data-do="stocking">Change to Non-Stock</a>'
+      : esc(i.stocking)) },
     // Under All, an LVL row says where its threshold is instead of "not set".
     threshold: { head: 'Threshold', width: 14, sort: thresholdShown,
       cell: (i) => ((VIEWS[i.family] || {}).perDepth ? '<span class="sub">per depth</span>' : (thresholdShown(i) == null ? '—' : inUnit(i, thresholdShown(i)))) },
     // What is here, in the same unit as Incoming so the two read side by
     // side: 80 pieces of 16′ lumber is "1,280 LF" (owner, Q49). None shows 0
-    // (Q50); below zero, a shipment entered before its receipt, is red (S67).
-    onHand: { head: 'On Hand', width: 14, sort: onHand, cell: (i) => {
-      const n = onHand(i);
-      const text = inUnit(i, n);
-      return n < 0 ? '<span class="chip neg">' + text + '</span>' : text;
-    } },
+    // (Q50); below zero is a shipment entered before its receipt.
+    onHand: { head: 'On Hand', width: 14, sort: onHand, cell: (i) => signedCell(i, onHand(i)) },
+    // What open jobs still need (#98); none shows blank, as Incoming does.
+    committed: { head: 'Committed', width: 14, sort: committed, cell: (i) => (i.committed ? inUnit(i, committed(i)) : '') },
+    // On hand − committed: what Reorder judges.
+    available: { head: 'Available', width: 14, sort: available, cell: (i) => signedCell(i, available(i)) },
     // What open POs still bring, in the family's order unit: "1,280 LF" for
     // lumber (Q14). None shows blank, not 0.
     incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => (i.incoming ? inUnit(i, i.incoming) : '') },
     // An LVL length that is short names how many pieces (Q58: "Short (−6)").
     reorder: { head: 'Reorder', width: 14, sort: (i) => REORDER_RANK[i.reorder], cell: (i) => {
-      if (i.reorder === 'Short') return reorderChip('Short', (VIEWS[i.family] || {}).perDepth ? ' (' + signed(i.on_hand) + ')' : '');
+      if (i.reorder === 'Short') return reorderChip('Short', (VIEWS[i.family] || {}).perDepth ? ' (' + signed(i.available) + ')' : '');
       return depthLine() ? '' : reorderChip(i.reorder);
     } },
     // The last approved count's date; amber when the server says it is more
@@ -200,7 +209,7 @@
   // LVL calls its size the depth, in inches (″), and its thresholds are per
   // depth (Settings → LVL thresholds), so LVL rows have no Threshold column.
   // Every view ends with the same figures.
-  const FIGURES = ['onHand', 'incoming', 'reorder', 'counted', 'note'];
+  const FIGURES = ['onHand', 'committed', 'available', 'incoming', 'reorder', 'counted', 'note'];
   const VIEWS = {
     plates: { cols: ['sku', 'stocking', 'threshold', ...FIGURES], order: ['sku'] },
     hangers: { cols: ['sku', 'stocking', 'threshold', ...FIGURES], order: ['sku'] },
@@ -313,7 +322,7 @@
     el('depth').hidden = !d;
     if (!d) return;
     const short = items.filter((i) => i.family === current && i.size === tab && i.reorder === 'Short')
-      .sort((a, b) => a.length_ft - b.length_ft).map((i) => i.length_ft + '′ (' + signed(i.on_hand) + ')');
+      .sort((a, b) => a.length_ft - b.length_ft).map((i) => i.length_ft + '′ (' + signed(i.available) + ')');
     el('depth').innerHTML = '<b>' + esc(tab + VIEWS[current].tabUnit) + '</b>: ' + fmtInt(d.available_lf) + ' LF' +
       (d.threshold_lf == null ? ' <span class="sub">(no threshold)</span>' : ' of ' + fmtInt(d.threshold_lf) + ' LF') + ' · ' +
       reorderChip(d.reorder, ': ' + esc(short.join(', ')));
@@ -582,6 +591,12 @@
     if (!tr) return;
     const what = e.target.dataset && e.target.dataset.do;
     if (what === 'history') return showHistory(open);
+    // "Change to Non-Stock" opens the row at its Stocking choice (Q32).
+    if (what === 'stocking') {
+      e.preventDefault();
+      if (open !== Number(tr.dataset.id)) toggle(Number(tr.dataset.id));
+      return el('rows').querySelector('[data-field="stocking"]').focus();
+    }
     if (what === 'redo') return redo(historyEntries.find((h) => h.id === reversing));
     if (what === 'reverse' || what === 'reverse-cancel') {
       reversing = what === 'reverse' ? Number(e.target.dataset.entry) : null;

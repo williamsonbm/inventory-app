@@ -6,7 +6,7 @@
 // hand through the database's own functions as the app's login, then reads
 // Reorder through the one calculation (inv.item_figures), as #81's Testing
 // Decisions ask: "Q15, Q35: Reorder at the threshold is Low; LVL Short per
-// length". In step 3 committed is zero, so available equals on hand.
+// length". These tests commit no job, so available equals on hand.
 // =============================================================
 
 const { test } = require('node:test');
