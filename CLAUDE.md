@@ -17,6 +17,9 @@ under `claude-pod` they are at `/workspace/`.
   spec in a tracker issue. Implement logic with `/tdd`; then `/simplify`, re-run tests, ask
   to commit. `/simplify` is this repo's refactor stage, including where `tdd` says
   "the review stage"; it can break passing code.
+- **Check the web app first.** Before a spec is drafted and before each ticket is built, read
+  how hanger-web-app does the same thing. List each difference in what a person sees or does,
+  and ask the owner which to follow before writing code.
 - **Review loop.** This session, in the pod, builds from the issue and opens the PR. A
   separate session outside the pod reviews it for correctness and bugs and posts its findings
   as a PR comment. The owner brings them back; this session answers each finding, fixes the
