@@ -78,7 +78,7 @@ test('a different sheet for a job already in the app is refused with who committ
   const before = await contents(db);
   const err = await refused(commit(ctx, [[plate, 930], [lus28, 1]]), 'IV422', 'a different sheet');
   assert.match(err.message, /^Job 33864R was already committed by Ann Lee on \w+ \d+, \d{4}, from a different sheet\.$/);
-  // The same lines with another delivery date or job name are a different sheet too (Q19).
+  // The same lines with another delivery date or job name are a different sheet too (J19).
   await refused(commit(ctx, [[plate, 930]], { deliveryDate: '2026-11-09' }), 'IV422', 'another delivery date');
   await refused(commit(ctx, [[plate, 930]], { deliveryDate: null }), 'IV422', 'no delivery date');
   await refused(commit(ctx, [[plate, 930]], { name: 'Jones Residence' }), 'IV422', 'another job name');
@@ -193,7 +193,7 @@ function checkFile(ctx, text = SHEET) {
   return post(ctx.base, '/api/jobs/check', { file: { name: '33864R-materials.csv', text } }, ctx.cookie);
 }
 
-test('a dropped sheet shows its job and every line, each with what fixes it, and saves nothing (story 1, Q27)', async () => {
+test('a dropped sheet shows its job and every line, each with what fixes it, and saves nothing (story 1, J27)', async () => {
   const ctx = await appWithCatalog({ plates: ['MT20 3x4'], hangers: ['LUS28', 'HUS26'] });
   const { LUS28 } = ctx.items;
   const retired = await post(ctx.base, '/api/items/retire', { key: crypto.randomUUID(), id: LUS28.id, version: LUS28.version }, ctx.cookie);
@@ -205,7 +205,7 @@ test('a dropped sheet shows its job and every line, each with what fixes it, and
   const { warnings, ...body } = await res.json();
   assert.deepEqual(body, {
     ok: true,
-    job: { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-02' },
+    job: { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-02', status: null },
     lines: [
       { family: 'plates', sku: 'MT20 3x4', quantity: 930, flag: null },
       { family: 'hangers', sku: 'LUS28', quantity: 12, flag: { retired: [{ id: LUS28.id, version: LUS28.version + 1 }] } },
@@ -220,6 +220,17 @@ test('a dropped sheet shows its job and every line, each with what fixes it, and
   const bad = await checkFile(ctx, 'not a sheet');
   assert.equal(bad.status, 400);
   assert.equal((await bad.json()).ok, false);
+});
+
+test('the check of a job already in the app says so and asks for no catalog fix (J27)', async () => {
+  const ctx = await appWithCatalog();
+  assert.equal((await commitFile(ctx)).status, 200);
+  const { LUS28 } = ctx.items;
+  const retired = await post(ctx.base, '/api/items/retire', { key: crypto.randomUUID(), id: LUS28.id, version: LUS28.version }, ctx.cookie);
+  assert.equal(retired.status, 200, await retired.clone().text());
+  const body = await (await checkFile(ctx)).json();
+  assert.equal(body.job.status, 'committed');
+  assert.deepEqual(body.lines.filter((l) => l.flag), [], 'committing it again changes nothing, so nothing needs fixing');
 });
 
 test('a job sheet commits its plate and hanger lines and shows on the Job board (stories 1, 2, 11, 35, 36)', async () => {

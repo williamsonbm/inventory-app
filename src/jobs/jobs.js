@@ -89,15 +89,18 @@ async function matchSheet(database, file) {
 }
 
 // What committing the dropped sheet would save, shown before the person
-// commits it (Q27): the job and every line, each with what fixes it. Saves
-// nothing. The database answers "already committed" only on the commit.
+// commits it (J27): the job and every line, each with what fixes it. Saves
+// nothing. For a job already in the app, `status` says so and no line asks
+// for a fix: the commit then answers "unchanged" or "already committed".
 async function checkSheet(database, { file } = {}) {
   const { refusal, sheet, rows } = await matchSheet(database, file);
   if (refusal) return refusal;
   const { job_number: number, job_name: name, delivery_date } = sheet.meta;
+  const [found] = await database.read('SELECT status FROM inv.jobs WHERE pg_catalog.upper(number) = pg_catalog.upper($1)', [number]);
+  const status = found?.status ?? null;
   return { status: 200, body: { ok: true,
-    job: { number, name, delivery_date },
-    lines: rows.map(({ item_id, ...line }) => line),
+    job: { number, name, delivery_date, status },
+    lines: rows.map(({ item_id, flag, ...line }) => ({ ...line, flag: status ? null : flag })),
     warnings: sheet.warnings } };
 }
 

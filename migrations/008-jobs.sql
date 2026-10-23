@@ -27,7 +27,7 @@ CREATE UNIQUE INDEX jobs_number_key ON inv.jobs (pg_catalog.upper(number));
 -- One saved sheet of a job. The highest revision is the current one.
 -- fingerprint is the SHA-256 of the sheet's job name, delivery date and
 -- lines (inv.sheet_fingerprint), so the same sheet dropped again is found
--- without comparing every line, and a new date is not dropped unsaid (Q19).
+-- without comparing every line, and a new date is not dropped unsaid (J19).
 -- Who saved it and when come from the action's activity-log row.
 CREATE TABLE inv.job_sheets (
   id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
