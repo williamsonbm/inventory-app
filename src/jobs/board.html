@@ -24,7 +24,7 @@
 </head>
 <body>
 <!--
-  board.html — Jobs (#97): drop one job's material sheet and commit it, and
+  board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it; and
   the Job board, one row per job.
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
@@ -49,7 +49,7 @@
     <div class="sub">Plates and hangers are committed now; lumber and LVL lines come later. EWP: step 5.</div>
   </label>
   <div id="message" role="status"></div>
-  <div id="problems"></div>
+  <div id="sheet-view"></div>
   <table class="log">
     <thead><tr><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th></tr></thead>
     <tbody id="rows"></tbody>
@@ -78,33 +78,58 @@
       || '<tr><td colspan="6" class="sub">No jobs yet.</td></tr>';
   }
 
-  // The sheet last dropped, so a line fixed in the catalog can commit it again.
+  // The sheet last dropped, checked before it is committed (Q27).
   let sheet = null;
-  // Lines the last commit refused, each with its catalog flag (J8).
-  let refusedLines = [];
+  // The lines on screen, each with its catalog flag (J8), so a fix button finds its line.
+  let shownLines = [];
+
+  function showLines(lines, intro) {
+    shownLines = lines;
+    el('sheet-view').innerHTML = !lines.length ? '' : intro + '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
+      lines.map((l, i) => '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + '</td><td>' + esc(l.quantity) + '</td><td>' +
+        flagsHtml(l.flag, String(i), l.family) + '</td></tr>').join('') + '</tbody></table>';
+  }
+
+  // Shows what committing the sheet would save, with a Commit job button.
+  // Nothing is saved until the person clicks it.
+  async function check() {
+    say('');
+    showLines([], '');
+    let body;
+    try {
+      body = await send('/api/jobs/check', { file: sheet });
+    } catch (err) {
+      say(err.unconfirmed ? 'The sheet could not be checked. Drop it again.' : err.message, 'bad');
+      return;
+    }
+    const { job, lines, warnings } = body;
+    const flagged = lines.filter((l) => l.flag).length;
+    showLines(lines, '<h2>Job ' + esc(job.number) + (job.name ? ' · ' + esc(job.name) : '') + '</h2><p class="sub">Delivery ' +
+      (job.delivery_date ? esc(showDate(job.delivery_date + 'T12:00:00Z')) : '—') + '. ' +
+      (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p><p>' +
+      '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>Commit job</button> ' +
+      '<button type="button" class="ghost" id="clear-job">Clear</button>' +
+      (flagged ? ' <span class="sub">Fix the flagged ' + (flagged === 1 ? 'line' : 'lines') + ' first.</span>' : '') + '</p>');
+  }
 
   // One request, built once with its retry key, so "Try again" after an
   // unconfirmed save sends the very same one and acts once.
   async function commit(request) {
     say('');
-    refusedLines = [];
     try {
-      const { job, warnings } = await send('/api/jobs/commit', request);
-      say(job.unchanged ? 'Job ' + job.number + ' is already committed from this sheet; nothing changed.'
-        : 'Job ' + job.number + ' committed.' + (warnings.length ? ' Notes from the sheet: ' + warnings.join(' ') : ''), 'ok');
+      const { job } = await send('/api/jobs/commit', request);
+      showLines([], '');
+      say(job.unchanged ? 'Job ' + job.number + ' is already committed from this sheet; nothing changed.' : 'Job ' + job.number + ' committed.', 'ok');
       loadBoard();
     } catch (err) {
       say(err.message, 'bad', err.unconfirmed ? () => commit(request) : null);
-      refusedLines = err.reply?.lines || [];
+      if (err.reply?.lines) showLines(err.reply.lines, '');
     }
-    el('problems').innerHTML = refusedLines.length ? '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
-      refusedLines.map((l, i) => '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + '</td><td>' + esc(l.quantity) + '</td><td>' +
-        flagsHtml(l.flag, String(i), l.family) + '</td></tr>').join('') + '</tbody></table>' : '';
   }
 
-  // Fixes a refused line's catalog flag (PlannerUI.flagFixes), then commits
-  // the sheet again. A save that was not confirmed offers "Try again", which
-  // resends only the saves still to do, each with its own retry key.
+  // Fixes a line's catalog flag (PlannerUI.flagFixes), then checks the sheet
+  // again. A save that was not confirmed offers "Try again", which resends
+  // only the saves still to do, each with its own retry key.
   async function fixAll(requests) {
     try {
       while (requests.length) {
@@ -115,17 +140,19 @@
       say(err.message, 'bad', err.unconfirmed ? () => fixAll(requests) : null);
       return;
     }
-    if (sheet) commit({ key: crypto.randomUUID(), file: sheet });
+    if (sheet) check();
   }
-  el('problems').addEventListener('click', (e) => {
+  el('sheet-view').addEventListener('click', (e) => {
+    if (e.target.id === 'commit-job') commit({ key: crypto.randomUUID(), file: sheet });
+    if (e.target.id === 'clear-job') { sheet = null; say(''); showLines([], ''); }
     const button = e.target.closest('[data-flag-do]');
-    if (button) fixAll(PlannerUI.flagFixes(button.dataset.flagDo, refusedLines[Number(button.dataset.flagKey)].flag));
+    if (button) fixAll(PlannerUI.flagFixes(button.dataset.flagDo, shownLines[Number(button.dataset.flagKey)].flag));
   });
 
   async function take(file) {
     if (!file) return;
     sheet = { name: file.name, text: await file.text() };
-    commit({ key: crypto.randomUUID(), file: sheet });
+    check();
   }
   el('file').addEventListener('change', (e) => { take(e.target.files[0]); e.target.value = ''; });
   const drop = el('drop');

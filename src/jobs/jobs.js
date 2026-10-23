@@ -47,64 +47,84 @@ function readSheet(text) {
   return { meta, lines: [...lines.values()], warnings };
 }
 
-// Each line's one active catalog item, or the line with the Planner's flag
-// for what fixes it (catalogFlag). A line whose one item is retired is
-// flagged but keeps that item in `matched`, in sheet order, so a retry sends
-// the request it repeats. `several` names a line that two active items
-// share, which a person settles by retiring one.
+// Each line with its one active catalog item, or with the Planner's flag for
+// what fixes it (catalogFlag). A line whose one item is retired is flagged
+// but keeps that item, so a retry sends the request it repeats. `several`
+// names a line that two active items share, which a person settles by
+// retiring one.
 function matchLines(lines, behindByFamily) {
-  const matched = [];
-  const flagged = [];
+  const rows = [];
   const several = [];
   for (const { family, key, sku, quantity } of lines) {
     const behind = behindByFamily[family].get(key) ?? [];
     const active = behind.filter((i) => i.active);
-    if (active.length === 1) matched.push({ item_id: active[0].id, quantity });
-    else if (active.length > 1) several.push(`${sku} (${active.map((i) => i.sku).join(', ')})`);
-    else {
-      if (behind.length === 1) matched.push({ item_id: behind[0].id, quantity });
-      flagged.push({ family, sku, quantity, flag: catalogFlag(family, behind, sku) });
-    }
+    if (active.length > 1) several.push(`${sku} (${active.map((i) => i.sku).join(', ')})`);
+    else if (active.length === 1) rows.push({ family, sku, quantity, flag: null, item_id: active[0].id });
+    else rows.push({ family, sku, quantity, flag: catalogFlag(family, behind, sku), item_id: behind.length === 1 ? behind[0].id : null });
   }
-  return { matched, flagged, several };
+  return { rows, several };
 }
 
-// Commits the job on the dropped sheet as `person`. Returns { status, body };
-// the database's own refusals are thrown, for the app's error shaping.
-async function commitSheet(database, person, { key, file } = {}) {
-  if (!isCsvFile(file)) return { status: 400, body: { ok: false, error: 'The sheet must carry a name and its text.' } };
+// The dropped file read and matched to the catalog: { refusal } for a file
+// that cannot be committed whatever is fixed, else { sheet, rows }.
+async function matchSheet(database, file) {
+  if (!isCsvFile(file)) return { refusal: { status: 400, body: { ok: false, error: 'The sheet must carry a name and its text.' } } };
   const sheet = readSheet(file.text);
-  if (sheet.error) return { status: 400, body: { ok: false, error: sheet.error } };
+  if (sheet.error) return { refusal: { status: 400, body: { ok: false, error: sheet.error } } };
   const number = sheet.meta.job_number;
   if (!sheet.lines.length) {
-    return { status: 400, body: { ok: false, error: `Job ${number} has no plate or hanger lines to commit.` } };
+    return { refusal: { status: 400, body: { ok: false, error: `Job ${number} has no plate or hanger lines to commit.` } } };
   }
   // One family after the other: each read holds two of the pool's three connections.
   const behindByFamily = {};
   for (const family of Object.keys(FAMILIES)) {
     behindByFamily[family] = itemsByKey(family, (await readInventory(database, family)).items);
   }
-  const { matched, flagged, several } = matchLines(sheet.lines, behindByFamily);
+  const { rows, several } = matchLines(sheet.lines, behindByFamily);
   if (several.length) {
-    return { status: 422, body: { ok: false,
-      error: `Job ${number} was not committed: ${several.join('; ')} each match more than one catalog item. Retire the one not used.` } };
+    return { refusal: { status: 422, body: { ok: false,
+      error: `Job ${number} cannot be committed: ${several.join('; ')} each match more than one catalog item. Retire the one not used.` } } };
   }
+  return { sheet, rows };
+}
+
+// What committing the dropped sheet would save, shown before the person
+// commits it (Q27): the job and every line, each with what fixes it. Saves
+// nothing. The database answers "already committed" only on the commit.
+async function checkSheet(database, { file } = {}) {
+  const { refusal, sheet, rows } = await matchSheet(database, file);
+  if (refusal) return refusal;
+  const { job_number: number, job_name: name, delivery_date } = sheet.meta;
+  return { status: 200, body: { ok: true,
+    job: { number, name, delivery_date },
+    lines: rows.map(({ item_id, ...line }) => line),
+    warnings: sheet.warnings } };
+}
+
+// Commits the job on the dropped sheet as `person`. Returns { status, body };
+// the database's own refusals are thrown, for the app's error shaping.
+async function commitSheet(database, person, { key, file } = {}) {
+  const { refusal, sheet, rows } = await matchSheet(database, file);
+  if (refusal) return refusal;
+  const number = sheet.meta.job_number;
+  const flagged = rows.filter((r) => r.flag).map(({ item_id, ...line }) => line);
   const n = flagged.length;
-  const refusal = { status: 422, body: { ok: false,
+  const refused = { status: 422, body: { ok: false,
     error: `Job ${number} was not committed: ${n === 1 ? '1 line is' : `${n} lines are`} not in the catalog or ${n === 1 ? 'is' : 'are'} retired.`,
     lines: flagged } };
   // A line not in the catalog was never committed; a retired line may have
   // been, so the database answers first: a retry answers as the commit it
   // repeats, the same sheet again is unchanged (S20, S22), and a different
   // sheet is refused as one. Otherwise it refuses the retired lines.
-  if (matched.length < sheet.lines.length) return refusal;
+  if (rows.some((r) => !r.item_id)) return refused;
   try {
     const job = await database.save('commit_job', [person.id, key, {
-      number, name: sheet.meta.job_name, delivery_date: sheet.meta.delivery_date, lines: matched,
+      number, name: sheet.meta.job_name, delivery_date: sheet.meta.delivery_date,
+      lines: rows.map(({ item_id, quantity }) => ({ item_id, quantity })),
     }]);
     return { status: 200, body: { ok: true, job, warnings: sheet.warnings } };
   } catch (err) {
-    if (n && err.code === 'IV422' && err.detail === 'inactive items') return refusal;
+    if (n && err.code === 'IV422' && err.detail === 'inactive items') return refused;
     throw err;
   }
 }
@@ -128,4 +148,4 @@ function listJobs(database) {
      ORDER BY last.at DESC`, [FAMILY_ORDER]);
 }
 
-module.exports = { commitSheet, listJobs };
+module.exports = { checkSheet, commitSheet, listJobs };

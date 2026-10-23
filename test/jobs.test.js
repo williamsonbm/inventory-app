@@ -189,6 +189,39 @@ async function board(ctx) {
   return (await res.json()).jobs;
 }
 
+function checkFile(ctx, text = SHEET) {
+  return post(ctx.base, '/api/jobs/check', { file: { name: '33864R-materials.csv', text } }, ctx.cookie);
+}
+
+test('a dropped sheet shows its job and every line, each with what fixes it, and saves nothing (story 1, Q27)', async () => {
+  const ctx = await appWithCatalog({ plates: ['MT20 3x4'], hangers: ['LUS28', 'HUS26'] });
+  const { LUS28 } = ctx.items;
+  const retired = await post(ctx.base, '/api/items/retire', { key: crypto.randomUUID(), id: LUS28.id, version: LUS28.version }, ctx.cookie);
+  assert.equal(retired.status, 200, await retired.clone().text());
+  const before = await contents(ctx.db);
+
+  const res = await checkFile(ctx);
+  assert.equal(res.status, 200, await res.clone().text());
+  const { warnings, ...body } = await res.json();
+  assert.deepEqual(body, {
+    ok: true,
+    job: { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-02' },
+    lines: [
+      { family: 'plates', sku: 'MT20 3x4', quantity: 930, flag: null },
+      { family: 'hangers', sku: 'LUS28', quantity: 12, flag: { retired: [{ id: LUS28.id, version: LUS28.version + 1 }] } },
+      { family: 'hangers', sku: 'HUS26', quantity: 8, flag: null },
+      { family: 'hangers', sku: 'TC26', quantity: 6,
+        flag: { notInCatalog: true, addToCatalog: { family: 'hangers', identity: { sku: 'TC26' } } } },
+    ],
+  });
+  assert.ok(warnings.some((w) => /Two HUS26/.test(w)), 'the ply word is shown before the commit too');
+  assert.deepEqual(await contents(ctx.db), before, 'nothing saved');
+
+  const bad = await checkFile(ctx, 'not a sheet');
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).ok, false);
+});
+
 test('a job sheet commits its plate and hanger lines and shows on the Job board (stories 1, 2, 11, 35, 36)', async () => {
   const ctx = await appWithCatalog();
   const { db, items } = ctx;

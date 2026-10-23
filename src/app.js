@@ -22,7 +22,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { commitSheet, listJobs } = require('./jobs/jobs.js');
+const { checkSheet, commitSheet, listJobs } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -205,6 +205,10 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
   // Jobs (#97): everyone commits a job and reads the Job board.
   app.get('/api/jobs', catchAsync(async (_req, res) => {
     res.json({ ok: true, jobs: await listJobs(database) });
+  }));
+  app.post('/api/jobs/check', catchAsync(async (req, res) => {
+    const { status, body } = await checkSheet(database, req.body);
+    res.status(status).json(body);
   }));
   app.post('/api/jobs/commit', catchAsync(async (req, res) => {
     const { status, body } = await commitSheet(database, req.user, req.body);
