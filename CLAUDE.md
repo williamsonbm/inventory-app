@@ -13,10 +13,12 @@ under `claude-pod` they are at `/workspace/`.
 - **Delete before you add.** New files, dependencies and status docs earn their keep.
 - **Try the simpler thing first, and say you did.** Before new machinery, test the version
   without it; report both results. Name inherited assumptions before building on them.
-- **Spec before code for a feature.** The owner runs `/to-spec` — agents cannot — to put the
-  spec in a tracker issue. Implement logic with `/tdd`; then `/simplify`, re-run tests, ask
-  to commit. `/simplify` is this repo's refactor stage, including where `tdd` says
-  "the review stage"; it can break passing code.
+- **Spec before code for a feature.** The owner runs `/to-spec`, then `/to-tickets` — agents
+  can run neither. `/to-spec` puts the spec in a tracker issue; `/to-tickets` splits it into
+  ticket issues, one slice each, with "Blocked by" links. Build one ticket at a time.
+  Implement logic with `/tdd`; then `/simplify`, re-run tests, ask to commit. `/simplify`
+  is this repo's refactor stage, including where `tdd` says "the review stage"; it can
+  break passing code.
 - **Check the web app first.** Before a spec is drafted and before each ticket is built, read
   how hanger-web-app does the same thing. List each difference in what a person sees or does,
   and ask the owner which to follow before writing code.
