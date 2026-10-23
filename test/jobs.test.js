@@ -11,15 +11,19 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, as, APP, firstUser, call, logRows, refused, contents } = require('./support/database.js');
+const { freshDatabase, as, APP, firstUser, call, logRows, refused, contents, goLive, figure } = require('./support/database.js');
 const { withAdmin, get, post } = require('./support/app.js');
 
-// A database with Ann, a plate and two hangers in the catalog.
+// A database with Ann, a supplier, a plate and two hangers in the catalog;
+// receive(item, quantity) receives from the supplier.
 async function withCatalog() {
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const add = (family, sku) => call(db, 'add_item', ann.id, crypto.randomUUID(), family, { sku });
-  return { db, ann, plate: await add('plates', 'MT20 3x4'), lus28: await add('hangers', 'LUS28'), hus: await add('hangers', 'HUS26') };
+  const supplier = await call(db, 'add_supplier', ann.id, crypto.randomUUID(), 'Simpson');
+  const receive = (item, quantity) => call(db, 'receive', ann.id, crypto.randomUUID(), null, null, supplier.id, null,
+    JSON.stringify([{ item_id: item.id, quantity }]));
+  return { db, ann, receive, plate: await add('plates', 'MT20 3x4'), lus28: await add('hangers', 'LUS28'), hus: await add('hangers', 'HUS26') };
 }
 
 // Commits a job as Ann. `lines` are [item, quantity] pairs.
@@ -139,6 +143,43 @@ test('a saved sheet and its lines cannot be changed, even by the owner (design t
     await refused(owner.query('UPDATE inv.job_lines SET quantity = 1'), 'IV422', 'edit a line');
     await refused(owner.query('DELETE FROM inv.job_sheets'), 'IV422', 'delete a sheet');
   });
+});
+
+// ── Seam 1: committed and available through the one calculation (#98) ───────
+
+test('a committed job commits its lines; available is on hand minus committed, and Reorder follows; a family not live shows no change (#98, J4)', async () => {
+  const ctx = await withCatalog();
+  const { db, ann, plate, lus28, hus } = ctx;
+  await call(db, 'edit_item', ann.id, crypto.randomUUID(), lus28.id, lus28.version, { threshold: 3 });
+  await goLive(db, 'hangers');
+  await ctx.receive(lus28, 12);
+  await commit(ctx, [[plate, 30], [lus28, 5]]);
+  await commit(ctx, [[lus28, 4], [hus, 2]], { number: '33865R' });
+
+  // Plates are not live, so the plate line is not tracked yet (J4). On hand
+  // alone would leave LUS28 (12 > 3) and HUS26 (0) OK.
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 9, [hus.id]: 2 });
+  assert.deepEqual(await figure(db, 'available'), { [plate.id]: 0, [lus28.id]: 3, [hus.id]: -2 });
+  assert.deepEqual(await figure(db, 'reorder'), { [plate.id]: 'OK', [lus28.id]: 'Low', [hus.id]: 'Short' });
+});
+
+test("an LVL depth's linear feet count what jobs commit, so its lengths turn Low together (#98, Q35)", async () => {
+  const ctx = await withCatalog();
+  const { db, ann } = ctx;
+  const lvl = (length_ft) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.0 LVL 1-3/4', size: '11-7/8', length_ft });
+  const long = await lvl(16);
+  const short = await lvl(12);
+  await call(db, 'set_lvl_depth_threshold', ann.id, crypto.randomUUID(), '11-7/8', null, 960);
+  await goLive(db, 'lvl');
+  await ctx.receive(long, 70);
+  // 70 × 16′ = 1,120 LF on hand; the job takes 10 × 16′, leaving 960 LF, at the threshold.
+  await commit(ctx, [[long, 10]]);
+
+  const reorder = await figure(db, 'reorder');
+  assert.deepEqual([reorder[long.id], reorder[short.id]], ['Low', 'Low']);
+  const depths = await as(db, APP, async (app) => (await app.query(
+    'SELECT depth, available_lf, reorder FROM inv.lvl_depth_figures')).rows);
+  assert.deepEqual(depths, [{ depth: '11-7/8', available_lf: 960, reorder: 'Low' }]);
 });
 
 // ── Seam 2: the commit route over HTTP ──────────────────────────────────────

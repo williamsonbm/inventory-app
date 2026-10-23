@@ -52,7 +52,7 @@ async function listCatalog(database) {
     readFamilies(database),
     database.read(`
       SELECT i.id::int, i.family, i.sku, i.product, i.size, i.grade, i.length_ft, i.stocking, i.threshold, i.note,
-             i.active, i.version, f.incoming, f.on_hand, f.reorder, f.counted_at,
+             i.active, i.version, f.incoming, f.on_hand, f.committed, f.available, f.reorder, f.counted_at,
              coalesce(f.counted_at < pg_catalog.now() - interval '65 days', false) AS counted_long_ago
         FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
        ORDER BY i.family, i.sku, i.product, i.size, i.grade, i.length_ft`),

@@ -90,6 +90,18 @@ test('a live family plans against the database, a dropped file ignored; a family
   assert.equal(plates.stockFileName, 'plate-stock.csv');
 });
 
+test('a live family plans against available: on hand minus what committed jobs need (#98)', async () => {
+  const ctx = await setUp();
+  const hus26 = await ctx.add('hangers', { sku: 'HUS26' });
+  await goLive(ctx.db, 'hangers');
+  await ctx.receive(hus26, 4);
+  await call(ctx.db, 'commit_job', ctx.ann.id, crypto.randomUUID(),
+    { number: '33864R', name: 'Smith Residence', delivery_date: null, lines: [{ item_id: hus26.id, quantity: 3 }] });
+
+  const line = hangerLine(await ctx.plan('/api/hangers/plan', { files: [HANGER_SHEET] }), 'HUS26');
+  assert.deepEqual([line.onHand, line.committed, line.available, line.shortfall], [4, 3, 1, 8], 'the sheet asks for 9');
+});
+
 // Plate pack sizes live in the database only (#81 change item 3): a plan
 // prices a shortfall with them, whether or not plates are live.
 test('a plate plan prices with the database\'s pack sizes; a Settings change reaches the next plan; a request cannot bring its own (Q175, Q180)', async () => {
@@ -192,27 +204,27 @@ test('running all four plans, one family live and one on a dropped file, changes
 // reader, gives the database's figures (#81 Testing Decisions).
 test('the on-hand text built from the database reads back as the same figures in every family\'s own reader', () => {
   const plates = parsePlateStockCsv(onHandText('plates', [
-    { sku: 'MT20 2x4', on_hand: 40, incoming: 12, threshold: 100, last_counted: '2026-10-01' },
-    { sku: 'MT18AHS 3x8', on_hand: -6, incoming: 0, threshold: null, last_counted: null },
+    { sku: 'MT20 2x4', on_hand: 40, committed: 5, available: 35, incoming: 12, threshold: 100, last_counted: '2026-10-01' },
+    { sku: 'MT18AHS 3x8', on_hand: -6, committed: 0, available: -6, incoming: 0, threshold: null, last_counted: null },
   ]));
   const mt20 = plates.bySku.get('MT202X4');
   assert.deepEqual([mt20.availableRaw, mt20.onHand, mt20.committed, mt20.incoming, mt20.threshold, mt20.lastCounted],
-    [40, 40, 0, 12, 100, '2026-10-01']);
+    [35, 40, 5, 12, 100, '2026-10-01']);
   const mt18 = plates.bySku.get('MT18AHS3X8');
   assert.deepEqual([mt18.availableRaw, mt18.threshold, mt18.lastCounted], [-6, null, null]);
   assert.equal(plates.lastCounted, '2026-10-01');
 
   const hangers = parseHangerStockCsv(onHandText('hangers', [
-    { sku: 'LUS28', on_hand: 7, incoming: 3, threshold: 20, last_counted: '2026-10-01' },
-    { sku: 'HUS26, "special"', on_hand: -2, incoming: 0, threshold: null, last_counted: null },
+    { sku: 'LUS28', on_hand: 7, committed: 2, available: 5, incoming: 3, threshold: 20, last_counted: '2026-10-01' },
+    { sku: 'HUS26, "special"', on_hand: -2, committed: 0, available: -2, incoming: 0, threshold: null, last_counted: null },
   ]));
   const lus28 = hangers.byKey.get('LUS28');
-  assert.deepEqual([lus28.availableRaw, lus28.onHand, lus28.committed, lus28.incoming, lus28.threshold], [7, 7, 0, 3, 20]);
+  assert.deepEqual([lus28.availableRaw, lus28.onHand, lus28.committed, lus28.incoming, lus28.threshold], [5, 7, 2, 3, 20]);
   assert.deepEqual(hangers.rows.map((r) => r.sku), ['LUS28', 'HUS26, "special"'], 'a SKU with a comma and quotes stays one cell');
 
   const lumber = parseLumberStockCsv(onHandText('lumber', [
-    { size: '2x4', grade: '#2', length_ft: 8, on_hand: 10, incoming: 4, threshold: null },
-    { size: '2x4', grade: '#2', length_ft: 16, on_hand: 5, incoming: 0, threshold: 30 },
+    { size: '2x4', grade: '#2', length_ft: 8, on_hand: 10, committed: 0, available: 10, incoming: 4, threshold: null },
+    { size: '2x4', grade: '#2', length_ft: 16, on_hand: 5, committed: 0, available: 5, incoming: 0, threshold: 30 },
   ]));
   const group = lumber.byKey.get('2x4|#2');
   assert.deepEqual(group.boards, [{ span: 8, qty: 10 }, { span: 16, qty: 5 }]);
@@ -220,7 +232,7 @@ test('the on-hand text built from the database reads back as the same figures in
   assert.equal(group.incomingLf, 32);
 
   const lvl = parseStockCsv(onHandText('lvl', [
-    { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 24, on_hand: 3, incoming: 2, threshold: null },
+    { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 24, on_hand: 3, committed: 1, available: 2, incoming: 2, threshold: null },
   ]));
-  assert.deepEqual(lvl.items, [{ source: 'inventory', item: '2.1 RigidLam LVL 1-3/4 x 11-7/8', depth: '11-78', span: 24, qty: 3, incoming: 2 }]);
+  assert.deepEqual(lvl.items, [{ source: 'inventory', item: '2.1 RigidLam LVL 1-3/4 x 11-7/8', depth: '11-78', span: 24, qty: 2, incoming: 2 }]);
 });

@@ -25,8 +25,7 @@ const { parseLumberStockCsv } = require('../lumber/readLumberStockCsv.js');
 const { parseStockCsv } = require('../ewp/readStockCsv.js');
 
 // Each family's columns in the web app's export, and one item's cells.
-// Committed is zero until jobs exist (step 4), so available is on hand.
-const figures = (i) => [i.on_hand, 0, i.on_hand, i.incoming, i.threshold];
+const figures = (i) => [i.on_hand, i.committed, i.available, i.incoming, i.threshold];
 const SKU_EXPORT = {
   header: 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted',
   cells: (i) => [i.sku, ...figures(i), '', i.last_counted],
@@ -40,7 +39,7 @@ const ON_HAND_FILES = {
   },
   lvl: {
     header: 'item,span,depth,on_hand,committed,committed_incoming,available,incoming,threshold,flag',
-    cells: (i) => [`${i.product} x ${i.size}`, i.length_ft, i.size, i.on_hand, 0, 0, i.on_hand, i.incoming, i.threshold, ''],
+    cells: (i) => [`${i.product} x ${i.size}`, i.length_ft, i.size, i.on_hand, i.committed, 0, i.available, i.incoming, i.threshold, ''],
   },
 };
 
@@ -57,7 +56,7 @@ async function readInventory(database, family) {
   const [[{ live }], items] = await Promise.all([
     database.read('SELECT live FROM inv.families WHERE code = $1', [family]),
     database.read(`
-    SELECT i.id::int, i.version, i.active, i.sku, i.product, i.size, i.grade, i.length_ft, i.threshold, f.on_hand, f.incoming,
+    SELECT i.id::int, i.version, i.active, i.sku, i.product, i.size, i.grade, i.length_ft, i.threshold, f.on_hand, f.committed, f.available, f.incoming,
            pg_catalog.to_char(f.counted_at AT TIME ZONE $2, 'YYYY-MM-DD') AS last_counted
       FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
      WHERE i.family = $1
