@@ -172,8 +172,10 @@ BEGIN
     FROM inv.sheet_lines(v_lines) AS s LEFT JOIN inv.items i ON i.id = s.item_id
    WHERE NOT coalesce(i.active, false);
   IF v_bad IS NOT NULL THEN
+    -- DETAIL tells this refusal from "already committed": the server shows
+    -- the lines with what fixes each only for this one (src/jobs/jobs.js).
     RAISE EXCEPTION 'Job % was not committed: % is not in the catalog or is retired.', v_number, v_bad
-      USING ERRCODE = 'IV422';
+      USING ERRCODE = 'IV422', DETAIL = 'inactive items';
   END IF;
 
   INSERT INTO inv.jobs (number, name, delivery_date)

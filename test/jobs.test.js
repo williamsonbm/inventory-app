@@ -251,6 +251,12 @@ test('a retry after a line is retired answers as the first commit did; the same 
   const again = await commitFile(ctx);
   assert.equal(again.status, 200, await again.clone().text());
   assert.equal((await again.json()).job.unchanged, true);
+
+  // A different sheet is refused as one, not for its retired line: un-retiring would not commit it.
+  const changed = await commitFile(ctx, SHEET.replace('12,Hanger,LUS28', '13,Hanger,LUS28'));
+  assert.equal(changed.status, 422);
+  assert.deepEqual(Object.keys(await changed.clone().json()), ['ok', 'error']);
+  assert.match((await changed.json()).error, /^Job 33864R was already committed by Ann Lee on /);
 });
 
 test('a sheet with an unknown or a retired line is refused whole, each line with what fixes it (J8)', async () => {
@@ -273,6 +279,13 @@ test('a sheet with an unknown or a retired line is refused whole, each line with
     ],
   });
   assert.deepEqual(await contents(ctx.db), before, 'nothing saved');
+
+  // With every line in the catalog, the database refuses the retired line, and the lines still say what fixes it.
+  const added = await post(ctx.base, '/api/items/add', { key: crypto.randomUUID(), family: 'hangers', identity: { sku: 'TC26' } }, cookie);
+  assert.equal(added.status, 200, await added.clone().text());
+  const retiredOnly = await commitFile(ctx);
+  assert.equal(retiredOnly.status, 422);
+  assert.deepEqual((await retiredOnly.json()).lines.map((l) => [l.sku, Object.keys(l.flag)]), [['LUS28', ['retired']]]);
 });
 
 test('a file that is not a job material sheet is refused with the reason', async () => {

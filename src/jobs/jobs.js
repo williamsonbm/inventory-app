@@ -95,8 +95,8 @@ async function commitSheet(database, person, { key, file } = {}) {
     lines: flagged } };
   // A line not in the catalog was never committed; a retired line may have
   // been, so the database answers first: a retry answers as the commit it
-  // repeats, and the same sheet again is unchanged (S20, S22). Otherwise it
-  // refuses the retired lines, as this file does.
+  // repeats, the same sheet again is unchanged (S20, S22), and a different
+  // sheet is refused as one. Otherwise it refuses the retired lines.
   if (matched.length < sheet.lines.length) return refusal;
   try {
     const job = await database.save('commit_job', [person.id, key, {
@@ -104,7 +104,7 @@ async function commitSheet(database, person, { key, file } = {}) {
     }]);
     return { status: 200, body: { ok: true, job, warnings: sheet.warnings } };
   } catch (err) {
-    if (n && err.code === 'IV422') return refusal;
+    if (n && err.code === 'IV422' && err.detail === 'inactive items') return refusal;
     throw err;
   }
 }
