@@ -22,7 +22,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { checkSheet, commitSheet, listJobs } = require('./jobs/jobs.js');
+const { checkSheet, commitSheet, listJobs, pullList } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -213,6 +213,12 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
   app.post('/api/jobs/commit', catchAsync(async (req, res) => {
     const { status, body } = await commitSheet(database, req.user, req.body);
     res.status(status).json(body);
+  }));
+  // A job's lumber pull list, a page to print (#99).
+  app.get('/api/jobs/pull-list', catchAsync(async (req, res) => {
+    const { status, html, error } = await pullList(database, req.query.number);
+    if (error) return res.status(status).json({ ok: false, error });
+    res.type('html').send(html);
   }));
 
   // The Activity Log, its own mode (owner, 2026-10-01). Everyone can read it.

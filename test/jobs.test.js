@@ -145,6 +145,80 @@ test('a saved sheet and its lines cannot be changed, even by the owner (design t
   });
 });
 
+// ── Seam 1: lumber lines and the saved cut plan (#99) ──────────────────────
+
+// The catalog with two 2x4 #2 lengths; lumberJob(ctx) is p_job's lumber for
+// a sheet that asks for 6 pieces at 8′ and 4 at 5′: 6 boards of 8′ whole,
+// and 2 boards of 10′ cut 2 × 5′ each.
+async function withLumber() {
+  const ctx = await withCatalog();
+  const add = (length_ft) => call(ctx.db, 'add_item', ctx.ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft });
+  return { ...ctx, at8: await add(8), at10: await add(10) };
+}
+function lumberJob({ at8, at10 }) {
+  return {
+    demand: [{ material: '2x4 SP No.2', qty: 6, length: '8-00-00' }, { material: '2x4 SP No.2', qty: 4, length: '5-00-00' }],
+    plan: [{ label: '2x4 #2', draws: [
+      { item_id: at10.id, stock_length_ft: 10, boards: 2, required_length_ft: 5, contents: null, waste_ft: 0 },
+      { item_id: at8.id, stock_length_ft: 8, boards: 6, required_length_ft: 8, contents: null, waste_ft: 0 },
+    ] }],
+  };
+}
+
+// The saved cut plan of job `number`'s current sheet, or null.
+async function savedPlan(db, number) {
+  return as(db, APP, async (app) => (await app.query(`
+    SELECT p.plan FROM inv.lumber_cut_plans p JOIN inv.job_sheets s ON s.id = p.sheet_id
+      JOIN inv.jobs j ON j.id = s.job_id
+     WHERE j.number = $1 ORDER BY s.revision DESC LIMIT 1`, [number])).rows[0]?.plan ?? null);
+}
+
+test("a job's lumber lines are the boards of its cut plan, saved with its sheet (#99, story 13)", async () => {
+  const ctx = await withLumber();
+  const { db, plate, at8, at10 } = ctx;
+  const lumber = lumberJob(ctx);
+  await call(db, 'commit_job', ctx.ann.id, crypto.randomUUID(), {
+    number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-02',
+    lines: [{ item_id: plate.id, quantity: 930 }], lumber,
+  });
+  assert.deepEqual(await currentLines(db, '33864R'), { [plate.id]: 930, [at8.id]: 6, [at10.id]: 2 });
+  assert.deepEqual(await savedPlan(db, '33864R'), lumber.plan);
+});
+
+test('the same sheet after the buying options change is unchanged, and keeps its saved plan (#99, story 13, S20)', async () => {
+  const ctx = await withLumber();
+  const { db, at10 } = ctx;
+  const job = (lumber) => call(db, 'commit_job', ctx.ann.id, crypto.randomUUID(), { number: '33864R', lines: [], lumber });
+  const first = lumberJob(ctx);
+  await job(first);
+  // 10′ switched off: the plan would now cut the 5′ pieces from 8′ boards.
+  const replanned = { ...first, plan: [{ label: '2x4 #2', draws: [{ ...first.plan[0].draws[1], boards: 10 }] }] };
+  assert.equal((await job(replanned)).unchanged, true);
+  assert.deepEqual(await savedPlan(db, '33864R'), first.plan);
+
+  const otherSheet = { ...first, demand: [{ material: '2x4 SP No.2', qty: 7, length: '8-00-00' }] };
+  await refused(job(otherSheet), 'IV422', 'a different sheet is not the same sheet');
+});
+
+test('lumber comes only from the cut plan, which holds only lumber; a retired board refuses the sheet (#99, J8)', async () => {
+  const ctx = await withLumber();
+  const { db, ann, plate, at8, at10 } = ctx;
+  const job = (p) => call(db, 'commit_job', ann.id, crypto.randomUUID(), { number: '33864R', lines: [], ...p });
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), at10.id, at10.version);
+  const before = await contents(db);
+  await refused(job({ lines: [{ item_id: at8.id, quantity: 6 }] }), 'IV400', 'a lumber line beside the plan');
+  await refused(job({ lumber: { demand: [], plan: [{ label: 'MT20', draws: [{ item_id: plate.id, boards: 1 }] }] } }), 'IV400', 'a plate in the plan');
+  await refused(job({ lumber: { demand: [], plan: [{ label: '2x4 #2' }] } }), 'IV400', 'a plan entry with no draws');
+  const err = await refused(job({ lumber: lumberJob(ctx) }), 'IV422', 'a retired board');
+  assert.match(err.message, /not in the catalog or is retired/);
+  assert.deepEqual(await contents(db), before);
+
+  await job({ lines: [{ item_id: plate.id, quantity: 1 }], lumber: { demand: [], plan: [{ label: '2x4 #2', draws: [{ item_id: at8.id, boards: 1 }] }] } });
+  await as(db, null, async (owner) => {
+    await refused(owner.query('UPDATE inv.lumber_cut_plans SET plan = \'[]\''), 'IV422', 'edit a saved plan');
+  });
+});
+
 // ── Seam 1: committed and available through the one calculation (#98) ───────
 
 test('a committed job commits its lines; available is on hand minus committed, and Reorder follows; a family not live shows no change (#98, J4)', async () => {
@@ -184,15 +258,16 @@ test("an LVL depth's linear feet count what jobs commit, so its lengths turn Low
 
 // ── Seam 2: the commit route over HTTP ──────────────────────────────────────
 
-// One job's material sheet in MiTek's layout: plates, hangers, and a lumber
-// line that waits for #99. "MT20  3x4" has two spaces, as MiTek writes it;
-// "Two HUS26" is 2 per unit; STC26 is bought as TC26.
+// One job's material sheet in MiTek's layout: plates and hangers, and a
+// lumber section with no lines. "MT20  3x4" has two spaces, as MiTek writes
+// it; "Two HUS26" is 2 per unit; STC26 is bought as TC26.
 const SHEET = [
   'Quote Date:,1/5/2026,Job Number:,33864R',
   'Order Date:,1/12/2026,Product:,Roof',
   'Delivery Date:,11/2/2026,,',
   'Job Name:,Smith Residence,Delivery Area,',
   'LUMBER SUMMARY,,,,',
+  'SKU,Qty,LENGTH,MATERIAL NAME,USAGE',
   'PLATE SUMMARY,,,,',
   'SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES',
   ',,,,',
@@ -254,6 +329,7 @@ test('a dropped sheet shows its job and every line, each with what fixes it, and
       { family: 'hangers', sku: 'TC26', quantity: 6,
         flag: { notInCatalog: true, addToCatalog: { family: 'hangers', identity: { sku: 'TC26' } } } },
     ],
+    lvl_by_depth: [],
   });
   assert.ok(warnings.some((w) => /Two HUS26/.test(w)), 'the ply word is shown before the commit too');
   assert.deepEqual(await contents(ctx.db), before, 'nothing saved');
@@ -292,7 +368,7 @@ test('a job sheet commits its plate and hanger lines and shows on the Job board 
     number: '33864R', name: 'Smith Residence', status: 'committed', delivery_date: '2026-11-02',
     // Neither family is live in a fresh database, so both are kept but not tracked yet (J4).
     families: [{ name: 'Plates', live: false }, { name: 'Hangers', live: false }],
-    changed_by: 'Ann Lee', changed_at: 'string',
+    pull_list: false, changed_by: 'Ann Lee', changed_at: 'string',
   });
 
   // The Activity Log names the job, and its family filter finds it by its lines.
@@ -380,7 +456,117 @@ test('a file that is not a job material sheet is refused with the reason', async
   assert.match((await res.json()).error, /Job Number/);
   const none = await commitFile(ctx, SHEET.replace(/PLATE SUMMARY[^]*$/, ''));
   assert.equal(none.status, 400);
-  assert.equal((await none.json()).error, 'Job 33864R has no plate or hanger lines to commit.');
+  assert.equal((await none.json()).error, 'Job 33864R has no lines to commit.');
+});
+
+// ── Seam 2: lumber and LVL over HTTP (#99) ─────────────────────────────────
+
+// A job with lumber and LVL only. The lumber asks for 6 pieces of 2x4 #2 at
+// 8′, 4 at 5′ and 3 of 2x6 DSS at 16′; the LVL is 4 × 20′ and 4 × 12′ of
+// 11-7/8 and 2 × 14′ of 14.
+const LUMBER_SHEET = [
+  'Quote Date:,1/5/2026,Job Number:,33865R',
+  'Order Date:,1/12/2026,Product:,Roof',
+  'Delivery Date:,11/3/2026,,',
+  'Job Name:,Jones Garage,Delivery Area,',
+  'LUMBER SUMMARY,,,,,,,,',
+  'SKU,Qty,LENGTH,MATERIAL NAME,USAGE,SQ. FEET,LINEAL FEET,BOARD FOOT,COST,COST PER,TOTAL',
+  '2x4sp2,6,8-00-00,2x4 SP No.2,Regular,,48.00,,,,',
+  '2x4sp2,4,5-00-00,2x4 SP No.2,Regular,,20.00,,,,',
+  '2x6spdss,3,16-00-00,2x6 SP DSS,Regular,,48.00,,,,',
+  'Rectangular EWP,,,,,,,',
+  'LABEL,SIZE,QTY,LENGTH,,,,',
+  '1BM1-4,2.1 RigidLam DF LVL 1-3/4 x 11-7/8,4,20-00-00,,,,',
+  '1BM4-4,2.1 RigidLam DF LVL 1-3/4 x 11-7/8,4,12-00-00,,,,',
+  '1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 14,2,14-00-00,,,,',
+].join('\n');
+
+// The app with Ann signed in and LUMBER_SHEET's boards and LVL in the catalog.
+async function appWithLumber() {
+  const ctx = await withAdmin();
+  const items = {};
+  const add = async (family, identity, name) => {
+    const res = await post(ctx.base, '/api/items/add', { key: crypto.randomUUID(), family, identity }, ctx.cookie);
+    assert.equal(res.status, 200, `adding ${name}: ${await res.clone().text()}`);
+    items[name] = (await res.json()).item;
+  };
+  for (const length_ft of [8, 10]) await add('lumber', { size: '2x4', grade: '#2', length_ft }, `2x4 #2 ${length_ft}`);
+  await add('lumber', { size: '2x6', grade: 'DSS', length_ft: 16 }, '2x6 DSS 16');
+  for (const [size, length_ft] of [['11-7/8', 20], ['11-7/8', 12], ['14', 14]]) {
+    await add('lvl', { product: '2.1 RigidLam LVL 1-3/4', size, length_ft }, `LVL ${size} ${length_ft}`);
+  }
+  return { ...ctx, items };
+}
+
+const lumberFile = (text = LUMBER_SHEET) => ({ name: '33865R-materials.csv', text });
+
+test('a lumber and LVL sheet commits the boards of its cut plan and its LVL lengths (#99, stories 1, 13)', async () => {
+  const ctx = await appWithLumber();
+  const { db, items } = ctx;
+  const res = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile() }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  // 6 whole 8′ boards; the four 5′ pieces two to a 10′ board.
+  assert.deepEqual(await currentLines(db, '33865R'), {
+    [items['2x4 #2 8'].id]: 6, [items['2x4 #2 10'].id]: 2, [items['2x6 DSS 16'].id]: 3,
+    [items['LVL 11-7/8 20'].id]: 4, [items['LVL 11-7/8 12'].id]: 4, [items['LVL 14 14'].id]: 2,
+  });
+  const [row] = await board(ctx);
+  assert.deepEqual(row.families.map((f) => f.name), ['Lumber', 'LVL']);
+});
+
+test('the check shows each board of the cut plan, each LVL length with its linear feet, and LVL feet by depth (#99, Q59)', async () => {
+  const ctx = await appWithLumber();
+  const res = await post(ctx.base, '/api/jobs/check', { file: lumberFile() }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  const { lines, lvl_by_depth } = await res.json();
+  assert.deepEqual(lines, [
+    { family: 'lumber', sku: '2x4 #2 10′', quantity: 2, flag: null },
+    { family: 'lumber', sku: '2x4 #2 8′', quantity: 6, flag: null },
+    { family: 'lumber', sku: '2x6 DSS 16′', quantity: 3, flag: null },
+    { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 11-7/8 · 20′', quantity: 4, lf: 80, flag: null },
+    { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 11-7/8 · 12′', quantity: 4, lf: 48, flag: null },
+    { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 14 · 14′', quantity: 2, lf: 28, flag: null },
+  ]);
+  assert.deepEqual(lvl_by_depth, [{ label: '11-7/8"', lf: 128 }, { label: '14"', lf: 28 }]);
+});
+
+test('a lumber line the plan cannot place refuses the whole job, with the reason on the line (#99, J58)', async () => {
+  const ctx = await appWithLumber();
+  // 18′ is longer than any 2x6 DSS length bought; No.3 is a grade not bought.
+  const text = LUMBER_SHEET.replace('2x6spdss,3,16-00-00', '2x6spdss,3,18-00-00')
+    .replace('Rectangular EWP', '2x4sp3,5,8-00-00,2x4 SP No.3,Regular,,40.00,,,,\nRectangular EWP');
+  const before = await contents(ctx.db);
+  const res = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile(text) }, ctx.cookie);
+  assert.equal(res.status, 422, await res.clone().text());
+  const body = await res.json();
+  assert.equal(body.error, 'Job 33865R was not committed: 2 lumber lines cannot be planned with the lengths we buy.');
+  assert.deepEqual(body.lines.map((l) => [l.sku, l.quantity, Object.keys(l.flag)]), [
+    ['2x4 SP No.3', 5, ['notPlanned']], ['2x6 DSS 18′', 3, ['notPlanned']],
+  ]);
+  assert.deepEqual(await contents(ctx.db), before, 'nothing saved');
+});
+
+test('the lumber pull list prints the saved cut plan, after the buying options change too (#99, story 48, story 13, Q57)', async () => {
+  const ctx = await appWithLumber();
+  const { db, ann } = ctx;
+  const res = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile() }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  // 10′ 2x4 #2 no longer bought: a new plan would cut the 5′ pieces from 6′ boards.
+  const [{ version }] = await as(db, APP, async (app) => (await app.query(
+    "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '#2'")).rows);
+  await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '#2', version, [6, 7, 8, 12, 14, 16, 20]);
+
+  const page = await get(ctx.base, '/api/jobs/pull-list?number=33865r', ctx.cookie);
+  assert.equal(page.status, 200, await page.clone().text());
+  assert.match(page.headers.get('content-type'), /text\/html/);
+  const text = (await page.text()).replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
+  assert.match(text, /Pull List — Job 33865R Jones Garage Delivery 11\/3\/2026/);
+  assert.match(text, /2x4 #2 Boards Length Cut instruction LF ×2 10′ 2 × 5′ per board 20 ×6 8′ full length 48 /);
+  assert.match(text, /2x6 DSS Boards Length Cut instruction LF ×3 16′ full length 48 /);
+  assert.match(text, /11 boards 116 LF 0 ft scrap/);
+
+  assert.deepEqual((await board(ctx)).map((j) => j.pull_list), [true]);
+  assert.equal((await get(ctx.base, '/api/jobs/pull-list?number=99999', ctx.cookie)).status, 404);
 });
 
 test('Jobs is in the header of every signed-in page (J9)', async () => {

@@ -211,4 +211,4 @@ async function planFromInventory(database, route, reqBody) {
   return result;
 }
 
-module.exports = { planFromInventory, onHandText, readInventory, itemsByKey, catalogFlag };
+module.exports = { planFromInventory, onHandText, readInventory, itemsByKey, catalogFlag, PLAN_OPTIONS };

@@ -498,3 +498,10 @@ test('flagsHtml: not in the catalog adds in one click where the plan says how, e
   const lvl = flagsHtml({ notInCatalog: true }, '9-12', 'lvl', { size: '9-1/2' });
   assert.ok(lvl.includes('href="/inventory?add=lvl&amp;size=9-1%2F2"'), 'LVL links to Overview, adding the line\'s depth (Q210)');
 });
+
+test('flagsHtml: a lumber line the plan cannot place says so, with the reason, escaped (#99, J58)', () => {
+  const html = flagsHtml({ notPlanned: 'Exceeds longest <16′>' }, 'k', 'lumber');
+  assert.ok(html.includes('>Cannot be planned<'), 'the chip shows');
+  assert.ok(html.includes('Exceeds longest &lt;16′&gt;'), 'the reason shows, escaped');
+  assert.ok(!html.includes('<button'), 'no fix in one click: the lengths we buy are changed in the Planner');
+});

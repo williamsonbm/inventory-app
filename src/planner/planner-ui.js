@@ -55,6 +55,17 @@
     return `${f}′ ${inch}″`;
   }
 
+  // A lumber draw's cut instruction, from the draw alone: the Planner's cut
+  // plan and a job's pull list (src/jobs/jobs.js) say it the same way.
+  // Lengths within 1/16″ are one length.
+  const TOL_FT = 0.0052;
+  function cutInstruction({ stockLengthFt, requiredLengthFt: req, contents }) {
+    if (Array.isArray(contents)) return `cut ${contents.map(ftLabel).join(' + ')} from one board`;
+    if (req == null || Math.abs(req - stockLengthFt) <= TOL_FT) return 'full length';
+    const n = Math.floor((stockLengthFt + TOL_FT) / req);
+    return n >= 2 ? `${n} × ${ftLabel(req)} per board` : `cut to ${ftLabel(req)}`;
+  }
+
   // Read one File to { name, text }.
   function readFile(file) {
     return new Promise((resolve, reject) => {
@@ -905,6 +916,10 @@
         ? button('add', 'Add to catalog')
         : ' <a class="no-print" href="' + esc('/inventory?' + new URLSearchParams({ add: family, ...fill })) + '">+ Add item in Inventory</a>');
     }
+    // A lumber line a job's cut plan cannot place (#99, J58).
+    if (flag.notPlanned) {
+      h += ' <span class="chip bad">Cannot be planned</span> <span class="sub">' + esc(flag.notPlanned) + '</span>';
+    }
     if (flag.lastCounted) {
       h += '<br><span class="spare">' + (flag.lastCounted === 'never' ? 'never counted' : 'last counted ' + esc(flag.lastCounted)) + '</span>';
     }
@@ -923,7 +938,7 @@
 
   if (typeof window !== 'undefined') {
     window.PlannerUI = {
-      esc, fmtInt, fmtNum, ftLabel, buyLf, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
+      esc, fmtInt, fmtNum, ftLabel, cutInstruction, buyLf, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
       wireSort, drilldowns, wireExpandAll, resetExpandAll, expandAllButtonHtml, dropZones, debounce,
       stockProductHints, looksLikePlateOrHangerStock, includedJobs, flagsHtml, flagFixes,
     };
@@ -946,6 +961,7 @@
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
       looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml,
+      esc, fmtInt, fmtNum, ftLabel, cutInstruction,
     };
   }
 })();
