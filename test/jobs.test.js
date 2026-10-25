@@ -569,6 +569,56 @@ test('the lumber pull list prints the saved cut plan, after the buying options c
   assert.equal((await get(ctx.base, '/api/jobs/pull-list?number=99999', ctx.cookie)).status, 404);
 });
 
+test('a committed job keeps its saved cut plan after the buying options change: the check shows it, the same sheet is unchanged, a retry answers as before (#99, S20, S22)', async () => {
+  const ctx = await appWithLumber();
+  const { db, ann } = ctx;
+  const key = crypto.randomUUID();
+  const first = await post(ctx.base, '/api/jobs/commit', { key, file: lumberFile() }, ctx.cookie);
+  assert.equal(first.status, 200, await first.clone().text());
+  const committed = await first.json();
+  // 10′ 2x4 #2 no longer bought: a new plan would use a 20′ board, not in the catalog.
+  const [{ version }] = await as(db, APP, async (app) => (await app.query(
+    "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '#2'")).rows);
+  await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '#2', version, [6, 7, 8, 12, 14, 16, 20]);
+
+  const check = await (await post(ctx.base, '/api/jobs/check', { file: lumberFile() }, ctx.cookie)).json();
+  assert.deepEqual(check.lines.filter((l) => l.family === 'lumber'), [
+    { family: 'lumber', sku: '2x4 #2 10′', quantity: 2, flag: null },
+    { family: 'lumber', sku: '2x4 #2 8′', quantity: 6, flag: null },
+    { family: 'lumber', sku: '2x6 DSS 16′', quantity: 3, flag: null },
+  ]);
+  const again = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile() }, ctx.cookie);
+  assert.equal(again.status, 200, await again.clone().text());
+  assert.equal((await again.json()).job.unchanged, true);
+  const retry = await post(ctx.base, '/api/jobs/commit', { key, file: lumberFile() }, ctx.cookie);
+  assert.equal(retry.status, 200, await retry.clone().text());
+  assert.deepEqual(await retry.json(), committed);
+});
+
+test('an LVL line shows its linear feet to two decimals (#99, Q59)', async () => {
+  const ctx = await appWithLumber();
+  const text = LUMBER_SHEET.replace('1-3/4 x 14,2,14-00-00', '1-3/4 x 14,3,11-04-00');
+  const { lines } = await (await post(ctx.base, '/api/jobs/check', { file: lumberFile(text) }, ctx.cookie)).json();
+  assert.equal(lines.at(-1).lf, 34);
+});
+
+test('LVL lines whose depth cannot be read stay separate lines (#99)', async () => {
+  const ctx = await appWithLumber();
+  const text = LUMBER_SHEET.replace('1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 14,2,14-00-00',
+    '1BM3-2,Mystery Beam A,2,14-00-00,,,,\n1BM5-3,Mystery Beam B,3,20-00-00,,,,');
+  const { lines } = await (await post(ctx.base, '/api/jobs/check', { file: lumberFile(text) }, ctx.cookie)).json();
+  assert.deepEqual(lines.filter((l) => /Mystery/.test(l.sku)).map(({ sku, quantity, lf }) => [sku, quantity, lf]), [
+    ['Mystery Beam A · 14′', 2, 28], ['Mystery Beam B · 20′', 3, 60],
+  ]);
+});
+
+test('the pull list with no job number asks for one (#99)', async () => {
+  const ctx = await withAdmin();
+  const res = await get(ctx.base, '/api/jobs/pull-list', ctx.cookie);
+  assert.equal(res.status, 400);
+  assert.equal((await res.json()).error, 'Name the job whose pull list to print.');
+});
+
 test('Jobs is in the header of every signed-in page (J9)', async () => {
   const ctx = await withAdmin();
   for (const page of ['/', '/jobs', '/inventory', '/inventory/receive', '/inventory/count', '/inventory/month-end',

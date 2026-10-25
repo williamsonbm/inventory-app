@@ -3,8 +3,10 @@
 -- Every name is fully qualified (#28).
 --
 -- Reach: one new table; inv.sheet_fingerprint and inv.commit_job replaced.
--- A sheet with no lumber fingerprints as before, so a job already committed
--- still finds its own sheet unchanged. No existing row changes.
+-- A sheet with no lumber and no LVL fingerprints as before, so a job committed
+-- from it still finds its own sheet unchanged; a job committed before 010
+-- from a sheet with lumber or LVL finds that sheet different (Production had
+-- no jobs when 010 was written). No existing row changes.
 -- Recovery: nothing to restore; the table holds only what Jobs writes.
 
 -- The cut plan of one saved sheet, worked out at commit with the Planner's
