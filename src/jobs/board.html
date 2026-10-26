@@ -86,12 +86,12 @@
 <script>
 (async () => {
   const { esc, flagsHtml, sortRows, sortIcon, wireSort, jobTabs, boardJobs, renderBreakdown } = PlannerUI;
-  const { say, send, getAll, askTiming, showTime, showDate } = AppHeader;
+  const { say, send, getAll, askTiming, showTime, showDay } = AppHeader;
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
 
   // A delivery date as the board shows it, or — for none.
-  const dayText = (d) => (d ? esc(showDate(d + 'T12:00:00Z')) : '—');
+  const dayText = (d) => esc(showDay(d));
 
   // A family not live in Inventory is kept on the job, not tracked yet (J4).
   const familyText = (f) => (f.live ? esc(f.name) : '<span class="not-tracked">' + esc(f.name) + ' (not tracked yet)</span>');

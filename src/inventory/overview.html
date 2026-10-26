@@ -90,7 +90,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, monthName, countKind } = AppHeader;
+  const { send, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, showDay, monthName, countKind } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -390,7 +390,7 @@
     return '<h4>Driving demand — ' + itemJobs.length + ' job(s) for ' + esc(itemLabel(i)) + '</h4>' +
       '<div class="tw"><table><thead><tr><th>Job #</th><th>Name</th><th class="num">Qty</th><th>Delivery</th></tr></thead><tbody>' +
       itemJobs.map((j) => '<tr><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td class="num">' +
-        inUnit(i, inOrderUnit(j.quantity, i, orderUnit(i.family))) + '</td><td>' + (j.delivery_date ? showDate(j.delivery_date) : '—') + '</td></tr>').join('') +
+        inUnit(i, inOrderUnit(j.quantity, i, orderUnit(i.family))) + '</td><td>' + esc(showDay(j.delivery_date)) + '</td></tr>').join('') +
       '</tbody></table></div>';
   }
 
