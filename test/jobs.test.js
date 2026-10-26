@@ -1045,10 +1045,43 @@ test('Cancel, Un-build and Un-ship refuse a stale save; a retry acts once (#101,
   assert.deepEqual(await contents(db), before, 'nothing saved');
 
   const key = crypto.randomUUID();
+  const logged = (await logRows(db)).length;
   const first = await undo(ctx, 'unbuild_job', '33864R', { key });
   const again = await call(db, 'unbuild_job', ctx.ann.id, key, '33864R', 2);
   assert.deepEqual(again, first, 'the retry answers as the first save did');
   assert.equal((await figure(db, 'on_hand'))[plate.id], 100, 'given back once');
+  assert.equal((await logRows(db)).length, logged + 1, 'one Activity Log row for the save and its retry');
+});
+
+test('a job shipped or built again after an undo consumes once more, and each undo gives back once (#101, J85)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28 } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await ctx.receive(plate, 100);
+  await ctx.receive(lus28, 20);
+  await commit(ctx, [[plate, 30], [lus28, 12]]);
+  const figures = async () => {
+    const [onHand, committed] = [await figure(db, 'on_hand'), await figure(db, 'committed')];
+    return [onHand[plate.id], committed[plate.id], onHand[lus28.id], committed[lus28.id]];
+  };
+  // Each step, then [plate on hand, plate committed, LUS28 on hand, LUS28 committed] after it.
+  const steps = [
+    [() => mark(ctx, 'shipped', ['33864R']), 'mark shipped', [70, 0, 8, 0]],
+    [() => undo(ctx, 'unship_job', '33864R'), 'un-ship', [70, 0, 20, 12]],
+    [() => mark(ctx, 'shipped', ['33864R']), 'mark shipped', [70, 0, 8, 0]],
+    [() => undo(ctx, 'unship_job', '33864R'), 'un-ship', [70, 0, 20, 12]],
+    [() => undo(ctx, 'unbuild_job', '33864R'), 'un-build', [100, 30, 20, 12]],
+    [() => mark(ctx, 'built', ['33864R']), 'mark built', [70, 0, 20, 12]],
+    [() => undo(ctx, 'unbuild_job', '33864R'), 'un-build', [100, 30, 20, 12]],
+  ];
+  for (const [step, action, after] of steps) {
+    const logged = (await logRows(db)).length;
+    await step();
+    const log = await logRows(db);
+    assert.deepEqual([log.length, log.at(-1).action], [logged + 1, action], `${action}: one Activity Log row`);
+    assert.deepEqual(await figures(), after, `after ${action}`);
+  }
 });
 
 test('the board says what each job can undo; the confirmation lists what comes back; Un-ship shows in History and the Activity Log (#101, stories 23, 24, 43; J85–J87)', async () => {
@@ -1081,8 +1114,9 @@ test('the board says what each job can undo; the confirmation lists what comes b
   assert.equal((await res.json()).job.status, 'built');
   assert.deepEqual(can((await board(ctx))[0]), ['built', true, true, false]);
 
-  const cancel = await (await get(ctx.base, '/api/jobs/to-give-back?action=cancel&number=33864R', ctx.cookie)).json();
-  assert.deepEqual([cancel.to, cancel.lines], ['cancelled', hangers], 'the plates stay consumed; the hangers return to available');
+  const cancel = await (await get(ctx.base, '/api/jobs/to-give-back?action=cancel&number=%2033864r%20', ctx.cookie)).json();
+  assert.deepEqual([cancel.to, cancel.lines], ['cancelled', hangers],
+    'the plates stay consumed; the hangers return to available; the number matches as inv.undo_job matches it');
 
   const history = await (await get(ctx.base, `/api/items/history?id=${ctx.items.LUS28.id}`, ctx.cookie)).json();
   const [back, out] = history.entries;
@@ -1096,7 +1130,7 @@ test('the board says what each job can undo; the confirmation lists what comes b
   assert.equal((await bad.json()).error, 'Cancel, un-build or un-ship a job.');
 });
 
-test('a sheet for a job cancelled or un-shipped is refused with who did that, not who committed it (#101, S28)', async () => {
+test('a sheet for a job cancelled, un-built or un-shipped is refused with who did that and what they did (#101, S28, J92)', async () => {
   const ctx = await withCatalog();
   const { db, ann, plate, lus28 } = ctx;
   const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
@@ -1107,7 +1141,14 @@ test('a sheet for a job cancelled or un-shipped is refused with who did that, no
     await call(db, action, bob.id, crypto.randomUUID(), number, (await onBoard(db, number)).version);
   }
   const unshipped = await refused(commit(ctx, [[plate, 6], [lus28, 2]], { number: '1S' }), 'IV422', 'a sheet for an un-shipped job');
-  assert.equal(unshipped.message, `Job 1S was already built by Bob Ray on ${today()}.`);
+  assert.equal(unshipped.message, `Job 1S was already built (un-shipped by Bob Ray on ${today()}).`);
   const cancelled = await refused(commit(ctx, [[plate, 6]], { number: '2C' }), 'IV422', 'a sheet for a cancelled job');
   assert.equal(cancelled.message, `Job 2C was already cancelled by Bob Ray on ${today()}.`);
+
+  await commit(ctx, [[plate, 5]], { number: '3U' });
+  await goLive(db, 'plates');
+  await mark(ctx, 'built', ['3U']);
+  await call(db, 'unbuild_job', bob.id, crypto.randomUUID(), '3U', (await onBoard(db, '3U')).version);
+  const unbuilt = await refused(commit(ctx, [[plate, 6]], { number: '3U' }), 'IV422', 'a sheet for an un-built job');
+  assert.equal(unbuilt.message, `Job 3U was already committed (un-built by Bob Ray on ${today()}), from a different sheet.`);
 });

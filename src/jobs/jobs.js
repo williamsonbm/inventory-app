@@ -386,7 +386,7 @@ async function toGiveBack(database, action, number) {
                              UNION ALL
                              SELECT c.item_id, c.quantity FROM inv.job_to_consume(j, 'shipped') c WHERE $1 = 'cancel job' AND c.live) c
                        JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family), '[]') AS lines
-      FROM inv.jobs j WHERE pg_catalog.upper(j.number) = pg_catalog.upper($2)`, [UNDO[action].logged, number ?? '', FAMILY_ORDER]);
+      FROM inv.jobs j WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($2))`, [UNDO[action].logged, number ?? '', FAMILY_ORDER]);
   if (!job) return { status: 404, body: { ok: false, error: `Job ${number} is not in the app.` } };
   return { status: 200, body: { ok: true, ...job } };
 }

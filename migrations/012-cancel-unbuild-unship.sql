@@ -4,7 +4,8 @@
 --
 -- Reach: three new actions; ledger_job_check and inv.check_reversal
 -- redefined so a reversal carries the job of the row it reverses;
--- inv.job_handled redefined to name who cancelled, un-built or un-shipped;
+-- inv.job_handled redefined to name who cancelled, un-built or un-shipped
+-- (and, for the last two, that they did);
 -- new functions. No existing row changes meaning: 011 allowed no reversal
 -- with a job, so every row today passes both the old and the new rule.
 -- Recovery: before any job is un-built or un-shipped, rerun 011's
@@ -119,12 +120,16 @@ END
 $$;
 
 -- 011's inv.job_handled, now naming who cancelled, un-built or un-shipped
--- the job when that brought it to its status. 011's comment stands.
+-- the job when that brought it to its status, and, for Un-build and Un-ship,
+-- what they did: "built (un-shipped by Bob Ray on October 26, 2026)", as
+-- Bob did not build the job (J92). 011's comment stands.
 CREATE OR REPLACE FUNCTION inv.job_handled(p_job inv.jobs) RETURNS text
 LANGUAGE sql STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
-  SELECT p_job.status || ' by ' || u.name || ' on ' || pg_catalog.to_char(l.at AT TIME ZONE 'America/New_York', 'FMMonth FMDD, YYYY')
+  SELECT p_job.status || CASE l.action WHEN 'un-build' THEN ' (un-built' WHEN 'un-ship' THEN ' (un-shipped' ELSE '' END
+         || ' by ' || u.name || ' on ' || pg_catalog.to_char(l.at AT TIME ZONE 'America/New_York', 'FMMonth FMDD, YYYY')
+         || CASE WHEN l.action IN ('un-build', 'un-ship') THEN ')' ELSE '' END
     FROM inv.activity_log l JOIN inv.users u ON u.id = l.actor_id
    WHERE l.target_table = 'jobs' AND l.target_id = p_job.id
      AND l.action IN ('commit job', 'mark built', 'mark shipped', 'cancel job', 'un-build', 'un-ship')

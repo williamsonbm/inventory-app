@@ -91,7 +91,7 @@
   // the confirmation's words, and its buttons: the row's label and `no` (J87).
   const UNDO = {
     cancel: { can: (j) => j.can_cancel, label: 'Cancel job', title: 'Cancel', back: 'Returns to available', no: 'Keep job',
-      note: 'This is final. To put the job back, commit its sheet again.' },
+      note: 'This is final.' },
     unbuild: { can: (j) => j.can_unbuild, label: 'Un-build', title: 'Un-build', back: 'Back to on hand', no: 'Close' },
     unship: { can: (j) => j.can_unship, label: 'Un-ship', title: 'Un-ship', back: 'Back to on hand', no: 'Close' },
   };
