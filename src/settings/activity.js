@@ -55,7 +55,7 @@ async function readActivity(database, { person, action, family, from, to, before
              WHEN l.target_table = 'jobs'
                THEN EXISTS (SELECT FROM inv.job_sheets js JOIN inv.job_lines jl ON jl.sheet_id = js.id
                               JOIN inv.items i ON i.id = jl.item_id
-                             WHERE js.action_id = l.id AND i.family = $7)
+                             WHERE js.job_id = l.target_id AND i.family = $7)
              WHEN l.target_table = 'purchase_orders'
                THEN EXISTS (SELECT FROM inv.po_lines pl JOIN inv.items i ON i.id = pl.item_id
                              WHERE pl.po_id = l.target_id AND i.family = $7)
@@ -247,7 +247,7 @@ const describeSettingChange = (was, now) => SETTINGS[now.name].describe(was, now
 // other change lists each field that differs.
 const CHANGED = {
   purchase_orders: describePoChange, counts: describeCountChange, settings: describeSettingChange,
-  'correct month-end': describeMonthEndChange,
+  'correct month-end': describeMonthEndChange, jobs: (was, now) => `status: ${was.status} → ${now.status}${timed(now)}`,
 };
 
 // What a change did, in words, for the "Was → now" column: an addition (no

@@ -16,7 +16,7 @@ const {
 
 // Each ledger row of the item, with what its detail is made from. A trim's
 // other row (pair: a correction is one row, a trim two) gives the other length; a reversal's original (o), the
-// action it reverses. reversed says a later reversal undid the row.
+// action it reverses; a build or ship row's job. reversed says a later reversal undid the row.
 const LEDGER_ROWS = `
   SELECT g.effective_at AS at, l.id AS log_id, g.id, who.name AS who, l.action, g.quantity, g.note,
          ol.action AS reverses, EXISTS (SELECT FROM inv.ledger x WHERE x.reverses_id = g.id) AS reversed,
@@ -24,7 +24,7 @@ const LEDGER_ROWS = `
          inv.po_line_number(g.po_line_id) AS po_line, g.packs, g.pack_size, g.pack_kind, g.loose,
          l.new_value -> 'pack_sizes_added' AS pack_sizes_added, inv.item_label(i) AS item, other.length_ft AS other_length,
          (l.new_value ->> 'item_added')::boolean AS added, (l.new_value ->> 'item_unretired')::boolean AS unretired,
-         l.new_value -> 'timed' AS timed
+         l.new_value -> 'timed' AS timed, jb.number AS job_number, jb.name AS job_name
     FROM inv.ledger g
     JOIN inv.items i ON i.id = g.item_id
     JOIN inv.activity_log l ON l.id = g.action_id
@@ -37,6 +37,7 @@ const LEDGER_ROWS = `
     LEFT JOIN inv.items other ON other.id = pair.item_id
     LEFT JOIN inv.ledger o ON o.id = g.reverses_id
     LEFT JOIN inv.activity_log ol ON ol.id = o.action_id
+    LEFT JOIN inv.jobs jb ON jb.id = g.job_id
    WHERE g.item_id = $1`;
 
 // Each change to the item itself or to one of its pack sizes, as the
@@ -100,7 +101,11 @@ const DETAIL = {
   trim: (g) => `trimmed ${g.quantity < 0 ? 'to' : 'from'} ${g.other_length}′${
     g.quantity < 0 ? '' : g.added ? ' and added as Non-Stock' : g.unretired ? ' and put back in use' : ''}${noted(g)}`,
   reverse: (g) => `reverses ${ENTRY_NAMES[g.reverses]}${noted(g)}`,
+  'mark built': (g) => jobWords(g),
+  'mark shipped': (g) => jobWords(g),
 };
+
+const jobWords = (g) => `Job ${g.job_number}${g.job_name ? `, ${g.job_name}` : ''}`;
 
 // Answers { error } for an item not in the catalog, else { entries }.
 async function readHistory(database, id) {
@@ -113,7 +118,10 @@ async function readHistory(database, id) {
       detail: DETAIL[g.reverses ? 'reverse' : g.action](g) + timed(g), reversed: g.reversed,
       // A reversal row, whether Reverse or a replacing entry wrote it: never
       // reversed again (Q44), so the page offers no Reverse on it.
-      reversal: g.reverses !== null })),
+      reversal: g.reverses !== null,
+      // A job's build or ship row: inv.reverse_entry refuses it (#101 undoes
+      // it from the job), so the page offers no Reverse on it.
+      from_job: g.job_number !== null })),
     ...settings.map((s) => ({ at: s.at, log_id: s.log_id, who: s.who, action: s.action, change: null,
       detail: describeChange(s.action, s.target_table, s.was, s.now) })),
     // No id: a count is never reversed; a new count replaces it.

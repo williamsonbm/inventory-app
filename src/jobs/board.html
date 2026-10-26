@@ -21,18 +21,21 @@
   .drop.over { background: var(--hover, rgba(0, 0, 0, .05)); }
   .not-tracked { font-style: italic; }
   details.print { position: relative; }
+  .mark-bar { display: flex; gap: .5rem; align-items: center; margin: .5rem 0; }
   details.print > div { position: absolute; right: 0; z-index: 1; background: var(--bg, #fff); border: 1px solid var(--line, #999); border-radius: 6px; padding: .4rem .6rem; white-space: nowrap; }
 </style>
 </head>
 <body>
 <!--
-  board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it; and
-  the Job board, one row per job, with a Print menu for a job with a lumber pull list (#99).
+  board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it, or
+  Deduct directly (#100); and the Job board, one row per job, with a Print menu for a job with a lumber
+  pull list (#99), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68).
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
   repo has no DOM harness. Reading the sheet, matching its lines, the refusals
   and the board's rows are tested over HTTP in test/jobs.test.js; the page is
-  checked by hand on Preview (#96, Testing Decisions).
+  checked by hand on Preview (#96, Testing Decisions). What marking consumes,
+  and marking itself, are tested over HTTP and in the database.
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -52,8 +55,14 @@
   </label>
   <div id="message" role="status"></div>
   <div id="sheet-view"></div>
+  <div id="confirm"></div>
+  <div class="mark-bar" id="mark-bar" hidden>
+    <span id="selected"></span>
+    <button type="button" data-mark="built">Mark built</button>
+    <button type="button" data-mark="shipped">Mark shipped</button>
+  </div>
   <table class="log">
-    <thead><tr><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th><th></th></tr></thead>
+    <thead><tr><th><input type="checkbox" id="select-all" aria-label="Select every job"></th><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th><th></th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
 </div>
@@ -63,25 +72,96 @@
 <script>
 (async () => {
   const { esc, flagsHtml } = PlannerUI;
-  const { say, send, getAll, showTime, showDate } = AppHeader;
+  const { say, send, getAll, askTiming, showTime, showDate } = AppHeader;
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
 
   // A family not live in Inventory is kept on the job, not tracked yet (J4).
   const familyText = (f) => (f.live ? esc(f.name) : '<span class="not-tracked">' + esc(f.name) + ' (not tracked yet)</span>');
 
+  // What each job can be marked, as the server says (story 18; #96, "Database rules").
+  const canMark = { built: (j) => j.can_build, shipped: (j) => j.can_ship };
+  const markButton = (to, j) => (canMark[to](j)
+    ? '<button type="button" class="ghost" data-mark="' + to + '" data-number="' + esc(j.number) + '">' + (to === 'built' ? 'Built' : 'Shipped') + '</button> '
+    : '');
+
+  // The board as last loaded, by job number, for its versions.
+  let jobs = new Map();
+
   async function loadBoard() {
     const [body] = (await getAll(['/api/jobs'])) ?? [];
     if (!body) return;
-    el('rows').innerHTML = body.jobs.map((j) => '<tr><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td>' +
+    jobs = new Map(body.jobs.map((j) => [j.number, j]));
+    el('select-all').checked = false;
+    el('rows').innerHTML = body.jobs.map((j) => '<tr><td>' +
+      (canMark.shipped(j) ? '<input type="checkbox" class="select" value="' + esc(j.number) + '" aria-label="Select job ' + esc(j.number) + '">' : '') +
+      '</td><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td>' +
       j.families.map(familyText).join(', ') + '</td><td>' + esc(j.status) + '</td><td>' +
       (j.delivery_date ? esc(showDate(j.delivery_date + 'T12:00:00Z')) : '—') + '</td><td>' +
-      esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td><td>' + (j.pull_list
+      esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td><td>' + markButton('built', j) + markButton('shipped', j) + (j.pull_list
         ? '<details class="print"><summary>Print</summary><div><a target="_blank" href="' +
           esc('/api/jobs/pull-list?' + new URLSearchParams({ number: j.number })) + '">Lumber pull list</a></div></details>'
         : '') + '</td></tr>').join('')
-      || '<tr><td colspan="7" class="sub">No jobs yet.</td></tr>';
+      || '<tr><td colspan="8" class="sub">No jobs yet.</td></tr>';
+    showSelected();
   }
+
+  const selected = () => [...document.querySelectorAll('.select:checked')].map((t) => t.value);
+  function showSelected() {
+    const n = selected().length;
+    el('mark-bar').hidden = !n;
+    el('selected').textContent = n + (n === 1 ? ' job selected' : ' jobs selected');
+  }
+  el('rows').addEventListener('change', showSelected);
+  el('select-all').addEventListener('change', (e) => {
+    for (const t of document.querySelectorAll('.select')) t.checked = e.target.checked;
+    showSelected();
+  });
+
+  // One confirmation for every job marked (story 20): what each consumes,
+  // a family not live listed as not tracked yet (J4). Nothing is saved
+  // until the person confirms.
+  async function confirmMark(to, numbers) {
+    say('');
+    const refused = numbers.find((n) => !canMark[to](jobs.get(n)));
+    if (refused) {
+      say('Job ' + refused + ' cannot be marked ' + to + '. Clear its box, then try again.', 'bad');
+      return;
+    }
+    const query = new URLSearchParams([['to', to], ...numbers.map((n) => ['number', n])]);
+    const [body] = (await getAll(['/api/jobs/to-consume?' + query])) ?? [];
+    if (!body) return;
+    const lineText = (l) => esc(l.quantity) + ' × ' + esc(l.item) + (l.live ? '' : ' <span class="not-tracked">(' + esc(l.family) + ', not tracked yet)</span>');
+    el('confirm').innerHTML = '<h2>Mark ' + (numbers.length === 1 ? 'job ' + esc(numbers[0]) : numbers.length + ' jobs') + ' ' + to + '?</h2><ul>' +
+      body.jobs.map((j) => '<li><b>Job ' + esc(j.number) + '</b>' + (j.name ? ' · ' + esc(j.name) : '') + ': ' +
+        (j.lines.length ? j.lines.map(lineText).join(', ') : 'nothing left to consume') + '</li>').join('') + '</ul><p>' +
+      '<button type="button" id="confirm-mark">Mark ' + to + '</button> <button type="button" class="ghost" id="cancel-mark">Cancel</button></p>';
+    el('confirm-mark').addEventListener('click', () => mark({
+      key: crypto.randomUUID(), to, jobs: numbers.map((n) => ({ number: n, version: jobs.get(n).version })),
+    }));
+    el('cancel-mark').addEventListener('click', () => { el('confirm').innerHTML = ''; });
+  }
+
+  // One request, built once with its retry key, so "Try again" after an
+  // unconfirmed save sends the very same one and acts once. A save near a
+  // count asks "before or after the count?" first (story 21).
+  async function mark(request) {
+    say('');
+    try {
+      const { jobs: marked } = await send('/api/jobs/mark', request);
+      el('confirm').innerHTML = '';
+      say((marked.length === 1 ? 'Job ' + marked[0].number : marked.length + ' jobs') + ' marked ' + request.to + '.', 'ok');
+      loadBoard();
+    } catch (err) {
+      if (askTiming(err, (timing) => mark({ ...request, timing }))) return;
+      say(err.message, 'bad', err.unconfirmed ? () => mark(request) : null);
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const button = e.target.closest('[data-mark]');
+    if (button) confirmMark(button.dataset.mark, button.dataset.number ? [button.dataset.number] : selected());
+  });
 
   // The sheet last dropped, checked before it is committed (J27).
   let sheet = null;
@@ -115,21 +195,26 @@
       (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p>' +
       (depths.length ? '<p class="sub">LVL by depth: ' + depths.map((d) => esc(d.label) + ' ' + esc(d.lf) + ' LF').join(', ') + '</p>' : '') + '<p>' +
       '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>Commit job</button> ' +
+      '<button type="button" class="ghost" id="deduct-job"' + (flagged ? ' disabled' : '') + '>Deduct directly (already shipped)</button> ' +
       '<button type="button" class="ghost" id="clear-job">Clear</button>' +
       (flagged ? ' <span class="sub">Fix the flagged ' + (flagged === 1 ? 'line' : 'lines') + ' first.</span>' : '') + '</p>');
   }
 
   // One request, built once with its retry key, so "Try again" after an
   // unconfirmed save sends the very same one and acts once.
-  async function commit(request) {
+  // Deduct directly (story 19) sends the same request to its own route, and
+  // near a count asks "before or after the count?" first.
+  async function commit(request, route = '/api/jobs/commit') {
     say('');
     try {
-      const { job } = await send('/api/jobs/commit', request);
+      const { job } = await send(route, request);
       showLines([], '');
-      say(job.unchanged ? 'Job ' + job.number + ' is already committed from this sheet; nothing changed.' : 'Job ' + job.number + ' committed.', 'ok');
+      say(job.unchanged ? 'Job ' + job.number + ' is already committed from this sheet; nothing changed.'
+        : 'Job ' + job.number + (job.status === 'shipped' ? ' committed and marked shipped.' : ' committed.'), 'ok');
       loadBoard();
     } catch (err) {
-      say(err.message, 'bad', err.unconfirmed ? () => commit(request) : null);
+      if (askTiming(err, (timing) => commit({ ...request, timing }, route))) return;
+      say(err.message, 'bad', err.unconfirmed ? () => commit(request, route) : null);
       if (err.reply?.lines) showLines(err.reply.lines, '');
     }
   }
@@ -151,6 +236,7 @@
   }
   el('sheet-view').addEventListener('click', (e) => {
     if (e.target.id === 'commit-job') commit({ key: crypto.randomUUID(), file: sheet });
+    if (e.target.id === 'deduct-job') commit({ key: crypto.randomUUID(), file: sheet }, '/api/jobs/deduct');
     if (e.target.id === 'clear-job') { sheet = null; say(''); showLines([], ''); }
     const button = e.target.closest('[data-flag-do]');
     if (button) fixAll(PlannerUI.flagFixes(button.dataset.flagDo, shownLines[Number(button.dataset.flagKey)].flag));
