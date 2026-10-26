@@ -4,12 +4,13 @@
 --
 -- Reach: two new columns with defaults (jobs.version, families.
 -- consumed_when), one on the ledger (job_id, empty on every row today), the
--- ledger's kind list widened, inv.time_entry and inv.item_figures redefined,
--- and new functions. No existing row changes meaning: no job is built or
--- shipped before this file, so Committed and Available read the same.
--- Recovery: before any job is marked, rerun 009's view and 006's
--- inv.time_entry. After one is, its build and ship ledger rows are what on
--- hand reads; keep them.
+-- ledger's kind list widened, inv.time_entry, inv.reverse_entry and
+-- inv.item_figures redefined, and new functions. No existing row changes
+-- meaning: no job is built or shipped before this file, so Committed and
+-- Available read the same.
+-- Recovery: before any job is marked, rerun 009's view, 006's inv.time_entry
+-- and 004's inv.reverse_entry. After one is, its build and ship ledger rows
+-- are what on hand reads; keep them.
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('mark built', false), ('mark shipped', false);
 
@@ -34,6 +35,49 @@ ALTER TABLE inv.ledger ADD CONSTRAINT ledger_job_check
   CHECK ((kind IN ('build', 'ship')) = (job_id IS NOT NULL) AND (job_id IS NULL OR quantity < 0));
 CREATE INDEX ledger_job_idx ON inv.ledger (job_id, item_id);
 
+-- 004's inv.reverse_entry, refusing a job's build or ship row; 004's
+-- comment stands. Un-build and Un-ship undo those (#101).
+CREATE OR REPLACE FUNCTION inv.reverse_entry(p_log_id bigint, p_id bigint, p_note text) RETURNS bigint
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  o inv.ledger;
+  g inv.ledger;
+  v_first bigint;
+  v_id bigint;
+BEGIN
+  SELECT x.* INTO o FROM inv.ledger x WHERE x.id = p_id FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'That entry is not in the records.' USING ERRCODE = 'IV400';
+  END IF;
+  IF o.kind = 'reversal' THEN
+    RAISE EXCEPTION 'A reversal cannot be reversed. Enter the original again instead.' USING ERRCODE = 'IV422';
+  ELSIF o.job_id IS NOT NULL THEN
+    -- Its reversal would carry no job (ledger_job_check), so the job would
+    -- still read the pieces as consumed: on hand back up, committed not.
+    RAISE EXCEPTION 'A job''s Built or Shipped cannot be reversed here.' USING ERRCODE = 'IV422';
+  END IF;
+  FOR g IN SELECT x.* FROM inv.ledger x
+            WHERE x.action_id = o.action_id AND x.kind <> 'reversal' AND (x.id = o.id OR o.receipt_id IS NULL)
+            ORDER BY x.id FOR UPDATE LOOP
+    BEGIN
+      INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, po_line_id, reverses_id, note)
+      VALUES (g.item_id, -g.quantity, 'reversal', g.effective_at, p_log_id, g.po_line_id, g.id, p_note)
+      RETURNING id INTO v_id;
+    EXCEPTION WHEN unique_violation THEN
+      RAISE EXCEPTION 'That entry is already reversed.' USING ERRCODE = 'IV422';
+    END;
+    -- A receipt line's PO now has less received, so a screen that read it
+    -- before is stale (S41, owner Q76).
+    UPDATE inv.purchase_orders SET version = version + 1
+     WHERE id = (SELECT po_id FROM inv.po_lines WHERE id = g.po_line_id);
+    v_first := coalesce(v_first, v_id);
+  END LOOP;
+  RETURN v_first;
+END
+$$;
+
 -- One action's own retry key for each part of it: the n-th job of a batch,
 -- each with its own activity-log row (#96), all retried by the one key the
 -- screen sent.
@@ -47,12 +91,15 @@ $$;
 -- What marking job p_job p_to ('built' or 'shipped') consumes, per item on
 -- its current sheet: the line's quantity less what the job already consumed,
 -- when above zero. Built consumes the families consumed when built; Shipped
--- every family, from committed too (J5), so anything not yet consumed. live: the family is live in Inventory; a line of
--- one that is not is shown, never consumed (J4). Committed (inv.item_figures)
--- is what Shipped would consume of the live families.
+-- from committed every family (J5), and from built only the families
+-- consumed when shipped: Built settled the others, consumed or not. live: the
+-- family is live in Inventory; a line of one that is not is shown, never
+-- consumed (J4), so a family that goes live after Built is not consumed again
+-- at Shipped. Committed (inv.item_figures) is what Shipped would consume of
+-- the live families.
 CREATE FUNCTION inv.job_to_consume(p_job inv.jobs, p_to text)
 RETURNS TABLE (item_id bigint, quantity integer, live boolean)
-LANGUAGE sql STABLE SECURITY DEFINER
+LANGUAGE sql STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT l.item_id, l.quantity - c.consumed, f.live
@@ -62,13 +109,31 @@ AS $$
    CROSS JOIN LATERAL (SELECT coalesce(-pg_catalog.sum(g.quantity), 0)::integer AS consumed
                          FROM inv.ledger g WHERE g.job_id = p_job.id AND g.item_id = l.item_id) c
    WHERE l.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = p_job.id ORDER BY s.revision DESC LIMIT 1)
-     AND (p_to = 'shipped' OR f.consumed_when = 'built')
+     AND CASE WHEN p_to = 'built' THEN f.consumed_when = 'built'
+              WHEN p_job.status = 'built' THEN f.consumed_when = 'shipped'
+              ELSE true END
      AND l.quantity > c.consumed
 $$;
 
--- inv.item_figures calls it as whoever reads the view; the Planner login
--- reads no job table itself (007).
-GRANT EXECUTE ON FUNCTION inv.job_to_consume(inv.jobs, text) TO inv_app, inv_planner;
+GRANT EXECUTE ON FUNCTION inv.job_to_consume(inv.jobs, text) TO inv_app;
+
+-- Committed per item, for inv.item_figures: for each job committed or built,
+-- what Shipped would consume of a live family. inv.item_figures calls it as
+-- whoever reads the view, so it runs as its owner and answers only the
+-- totals: the Planner login reads no job and no job line (007), and the
+-- Planner run reads committed from the view as 009 made it.
+CREATE FUNCTION inv.job_committed()
+RETURNS TABLE (item_id bigint, committed integer)
+LANGUAGE sql STABLE SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT c.item_id, pg_catalog.sum(c.quantity)::integer
+    FROM inv.jobs j CROSS JOIN LATERAL inv.job_to_consume(j, 'shipped') c
+   WHERE j.status IN ('committed', 'built') AND c.live
+   GROUP BY c.item_id
+$$;
+
+GRANT EXECUTE ON FUNCTION inv.job_committed() TO inv_app, inv_planner;
 
 -- 006's inv.time_entry for the rows of several actions at once: a batch of
 -- jobs asks "before or after the count?" once, about every count near any of
@@ -167,6 +232,13 @@ BEGIN
   IF pg_catalog.jsonb_typeof(p_jobs) IS DISTINCT FROM 'array' OR pg_catalog.jsonb_array_length(p_jobs) = 0 THEN
     RAISE EXCEPTION 'Pick the jobs to mark %.', p_to USING ERRCODE = 'IV400';
   END IF;
+  -- Deliberately every job of the batch locked first, in id order, not each
+  -- in the loop in the order the screen sent: two batches of the same jobs
+  -- in different orders would each hold one the other waits for, and one
+  -- would end in a bare deadlock error instead of waiting its turn.
+  PERFORM FROM inv.jobs
+   WHERE pg_catalog.upper(number) IN (SELECT pg_catalog.upper(inv.tidy(e ->> 'number')) FROM pg_catalog.jsonb_array_elements(p_jobs) e)
+   ORDER BY id FOR UPDATE;
   FOR r, n IN SELECT e, o FROM pg_catalog.jsonb_array_elements(p_jobs) WITH ORDINALITY AS x(e, o) LOOP
     a := inv.claim_action(p_actor, inv.sub_key(p_key, n::integer), 'mark ' || p_to, 'jobs', NULL, v_request);
     -- One transaction: a retry finds every job of its batch done, or none.
@@ -297,9 +369,11 @@ BEGIN
   SELECT * INTO v_job FROM inv.jobs WHERE pg_catalog.upper(number) = pg_catalog.upper(v_number);
   IF FOUND THEN
     SELECT * INTO v_current FROM inv.job_sheets WHERE job_id = v_job.id ORDER BY revision DESC LIMIT 1;
-    -- The same sheet again is a no-op, unless this is a retry of the commit
-    -- that saved it, which answers as that commit did (inv.claim_action).
-    IF v_current.fingerprint = v_fingerprint AND v_job.status IN ('committed', 'built') AND NOT p_deduct
+    -- The same sheet again is a no-op for a committed job, unless this is a
+    -- retry of the commit that saved it, which answers as that commit did
+    -- (inv.claim_action). For a job built or shipped it is refused below with
+    -- who handled it (S28, J75).
+    IF v_current.fingerprint = v_fingerprint AND v_job.status = 'committed' AND NOT p_deduct
        AND NOT EXISTS (SELECT 1 FROM inv.activity_log WHERE retry_key = p_key) THEN
       RETURN inv.job_json(v_job, v_current.revision) || '{"unchanged": true}';
     END IF;
@@ -367,10 +441,9 @@ $$;
 
 GRANT EXECUTE ON FUNCTION inv.deduct_directly(bigint, uuid, jsonb, jsonb) TO inv_app;
 
--- 009's view, with committed read from inv.job_to_consume: for each job
--- committed or built, what Shipped would consume of a live family, so a
--- built job still commits its hangers but no longer its plates, lumber or
--- LVL (#96, "Committed and Available"). Otherwise as 009.
+-- 009's view, with committed read from inv.job_committed, so a built job
+-- still commits its hangers but no longer its plates, lumber or LVL (#96,
+-- "Committed and Available"). Otherwise as 009.
 CREATE OR REPLACE VIEW inv.item_figures AS
 SELECT d.item_id, d.incoming, d.on_hand, d.depth_lf,
        CASE WHEN d.available < 0 THEN 'Short'
@@ -388,9 +461,6 @@ SELECT d.item_id, d.incoming, d.on_hand, d.depth_lf,
                                coalesce(jc.committed, 0) AS committed
                           FROM inv.items i
                           LEFT JOIN inv.po_lines l ON l.item_id = i.id AND l.closed_reason_id IS NULL
-                          LEFT JOIN (SELECT c.item_id, pg_catalog.sum(c.quantity)::integer AS committed
-                                       FROM inv.jobs j CROSS JOIN LATERAL inv.job_to_consume(j, 'shipped') c
-                                      WHERE j.status IN ('committed', 'built') AND c.live
-                                      GROUP BY c.item_id) jc ON jc.item_id = i.id
+                          LEFT JOIN inv.job_committed() jc ON jc.item_id = i.id
                          GROUP BY i.id, jc.committed) f) a) d
   LEFT JOIN inv.lvl_depth_thresholds t ON d.family = 'lvl' AND t.depth = d.size;

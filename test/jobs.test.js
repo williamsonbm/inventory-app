@@ -750,12 +750,13 @@ test('count 8:00, Built 11:00, approval 14:00: on hand includes the build (ADR 0
 // Today as a refusal says it: October 26, 2026.
 const today = () => new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric' });
 
-test('a sheet for a job already built or shipped is refused with who handled it and when; the same sheet for a built job is unchanged (S28)', async () => {
+test('a sheet for a job already built or shipped is refused with who handled it and when, the same sheet too (S28, J75)', async () => {
   const ctx = await withCatalog();
   const { plate, lus28 } = ctx;
   await commit(ctx, [[plate, 5], [lus28, 2]]);
   await mark(ctx, 'built', ['33864R']);
-  assert.equal((await commit(ctx, [[plate, 5], [lus28, 2]])).unchanged, true, 'the same sheet, built');
+  const sameBuilt = await refused(commit(ctx, [[plate, 5], [lus28, 2]]), 'IV422', 'the same sheet, built');
+  assert.equal(sameBuilt.message, `Job 33864R was already built by Ann Lee on ${today()}.`);
   const changed = await refused(commit(ctx, [[plate, 6], [lus28, 2]]), 'IV422', 'a different sheet, built');
   assert.equal(changed.message, `Job 33864R was already built by Ann Lee on ${today()}.`);
 
@@ -834,4 +835,92 @@ test('Deduct directly takes the dropped sheet, commits it and marks it shipped (
   assert.equal(res.status, 200, await res.clone().text());
   assert.deepEqual((await res.json()).job, { number: '33864R', name: 'Smith Residence', status: 'shipped', version: 2 });
   assert.equal((await figure(ctx.db, 'on_hand'))[ctx.items.LUS28.id], -12);
+});
+
+test('a job\'s build or ship row cannot be reversed from History (review of #115, 1)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28, hus } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await ctx.receive(plate, 1000);
+  await ctx.receive(lus28, 20);
+  await commit(ctx, [[plate, 930], [lus28, 12]]);
+  await mark(ctx, 'built', ['33864R']);
+  await mark(ctx, 'shipped', ['33864R']);
+  const rows = await as(db, APP, async (app) => (await app.query(
+    'SELECT id, kind FROM inv.ledger WHERE job_id IS NOT NULL ORDER BY id')).rows);
+  assert.deepEqual(rows.map((r) => r.kind), ['build', 'ship']);
+  for (const row of rows) {
+    const err = await refused(call(db, 'reverse', ctx.ann.id, crypto.randomUUID(), row.id, 'by mistake'), 'IV422', `reversing a ${row.kind} row`);
+    assert.equal(err.message, 'A job\'s Built or Shipped cannot be reversed here.');
+  }
+  assert.deepEqual(await figure(db, 'on_hand'), { [plate.id]: 70, [lus28.id]: 8, [hus.id]: 0 });
+});
+
+test('a family that goes live after Built is not consumed again at Shipped (review of #115, 2; J4)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28 } = ctx;
+  await goLive(db, 'hangers');
+  await ctx.receive(lus28, 20);
+  await commit(ctx, [[plate, 930], [lus28, 12]]);
+  await mark(ctx, 'built', ['33864R']);
+  await goLive(db, 'plates');
+  await ctx.receive(plate, 70);   // the go-live count: what is left after the shop cut the 930
+  assert.equal((await figure(db, 'committed'))[plate.id], 0, 'the plates were cut at Built');
+
+  await mark(ctx, 'shipped', ['33864R']);
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 70);
+  assert.equal((await figure(db, 'on_hand'))[lus28.id], 8);
+});
+
+test('two batches of the same jobs in a different order wait for each other instead of deadlocking (review of #115, 5)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate } = ctx;
+  await commit(ctx, [[plate, 10]], { number: '1P' });
+  await commit(ctx, [[plate, 20]], { number: '2P' });
+  const { Client } = require('pg');
+  const url = new URL(process.env.TEST_DATABASE_URL);
+  url.pathname = `/${db}`;
+  const other = new Client({ connectionString: url.toString() });
+  const marker = new Client({ connectionString: url.toString() });
+  await other.connect();
+  await marker.connect();
+  try {
+    // Another save holds 1P; a batch listing 2P first must take no lock
+    // while it waits, so the other save can still take 2P.
+    await other.query('BEGIN');
+    await other.query("SELECT 1 FROM inv.jobs WHERE number = '1P' FOR UPDATE");
+    const batch = marker.query('SELECT inv.mark_built($1, $2, $3, NULL)', [ctx.ann.id, crypto.randomUUID(),
+      JSON.stringify([{ number: '2P', version: 1 }, { number: '1P', version: 1 }])]);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await other.query("SELECT 1 FROM inv.jobs WHERE number = '2P' FOR UPDATE NOWAIT").then(
+      () => {}, (err) => assert.fail(`the batch holds 2P while it waits for 1P: ${err.message}`));
+    await other.query('ROLLBACK');
+    await batch;
+  } finally {
+    await other.end();
+    await marker.end();
+  }
+});
+
+test('History names the job behind a build or ship row and offers no Reverse on it; the Activity Log says the change of status (review of #115)', async () => {
+  const ctx = await appWithCatalog();
+  await goLive(ctx.db, 'hangers');
+  assert.equal((await commitFile(ctx)).status, 200);
+  const [job] = await board(ctx);
+  const marked = await post(ctx.base, '/api/jobs/mark',
+    { key: crypto.randomUUID(), to: 'shipped', jobs: [{ number: job.number, version: job.version }] }, ctx.cookie);
+  assert.equal(marked.status, 200, await marked.clone().text());
+
+  const res = await get(ctx.base, `/api/items/history?id=${ctx.items.LUS28.id}`, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  const [shipped] = (await res.json()).entries;
+  assert.deepEqual([shipped.action, shipped.change, shipped.detail, shipped.from_job], ['mark shipped', -12, 'Job 33864R, Smith Residence', true]);
+
+  const { describeChange } = require('../src/settings/activity.js');
+  const was = { number: '33864R', name: 'Smith Residence', status: 'committed', version: 1 };
+  assert.equal(describeChange('mark built', 'jobs', was, { ...was, status: 'built', version: 2 }), 'status: committed → built');
+  assert.match(describeChange('mark built', 'jobs', was,
+    { ...was, status: 'built', version: 2, timed: { before: true, counted_at: '2026-10-26T12:00:00Z' } }),
+  /^status: committed → built; timed before the count of Oct 26, 2026, 8:00\sAM$/);
 });

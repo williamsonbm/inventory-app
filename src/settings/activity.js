@@ -247,7 +247,7 @@ const describeSettingChange = (was, now) => SETTINGS[now.name].describe(was, now
 // other change lists each field that differs.
 const CHANGED = {
   purchase_orders: describePoChange, counts: describeCountChange, settings: describeSettingChange,
-  'correct month-end': describeMonthEndChange,
+  'correct month-end': describeMonthEndChange, jobs: (was, now) => `status: ${was.status} → ${now.status}${timed(now)}`,
 };
 
 // What a change did, in words, for the "Was → now" column: an addition (no

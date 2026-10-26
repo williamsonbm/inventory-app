@@ -29,7 +29,7 @@
 <!--
   board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it, or
   Deduct directly (#100); and the Job board, one row per job, with a Print menu for a job with a lumber
-  pull list (#99), Built and Shipped on each row, and tick boxes to mark several jobs at once (#100, J68).
+  pull list (#99), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68).
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
   repo has no DOM harness. Reading the sheet, matching its lines, the refusals
@@ -57,12 +57,12 @@
   <div id="sheet-view"></div>
   <div id="confirm"></div>
   <div class="mark-bar" id="mark-bar" hidden>
-    <span id="ticked"></span>
+    <span id="selected"></span>
     <button type="button" data-mark="built">Mark built</button>
     <button type="button" data-mark="shipped">Mark shipped</button>
   </div>
   <table class="log">
-    <thead><tr><th><input type="checkbox" id="tick-all" aria-label="Tick every job"></th><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th><th></th></tr></thead>
+    <thead><tr><th><input type="checkbox" id="select-all" aria-label="Select every job"></th><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th><th></th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
 </div>
@@ -92,9 +92,9 @@
     const [body] = (await getAll(['/api/jobs'])) ?? [];
     if (!body) return;
     jobs = new Map(body.jobs.map((j) => [j.number, j]));
-    el('tick-all').checked = false;
+    el('select-all').checked = false;
     el('rows').innerHTML = body.jobs.map((j) => '<tr><td>' +
-      (canMark.shipped(j) ? '<input type="checkbox" class="tick" value="' + esc(j.number) + '" aria-label="Tick job ' + esc(j.number) + '">' : '') +
+      (canMark.shipped(j) ? '<input type="checkbox" class="select" value="' + esc(j.number) + '" aria-label="Select job ' + esc(j.number) + '">' : '') +
       '</td><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td>' +
       j.families.map(familyText).join(', ') + '</td><td>' + esc(j.status) + '</td><td>' +
       (j.delivery_date ? esc(showDate(j.delivery_date + 'T12:00:00Z')) : '—') + '</td><td>' +
@@ -103,19 +103,19 @@
           esc('/api/jobs/pull-list?' + new URLSearchParams({ number: j.number })) + '">Lumber pull list</a></div></details>'
         : '') + '</td></tr>').join('')
       || '<tr><td colspan="8" class="sub">No jobs yet.</td></tr>';
-    showTicked();
+    showSelected();
   }
 
-  const ticked = () => [...document.querySelectorAll('.tick:checked')].map((t) => t.value);
-  function showTicked() {
-    const n = ticked().length;
+  const selected = () => [...document.querySelectorAll('.select:checked')].map((t) => t.value);
+  function showSelected() {
+    const n = selected().length;
     el('mark-bar').hidden = !n;
-    el('ticked').textContent = n + (n === 1 ? ' job ticked' : ' jobs ticked');
+    el('selected').textContent = n + (n === 1 ? ' job selected' : ' jobs selected');
   }
-  el('rows').addEventListener('change', showTicked);
-  el('tick-all').addEventListener('change', (e) => {
-    for (const t of document.querySelectorAll('.tick')) t.checked = e.target.checked;
-    showTicked();
+  el('rows').addEventListener('change', showSelected);
+  el('select-all').addEventListener('change', (e) => {
+    for (const t of document.querySelectorAll('.select')) t.checked = e.target.checked;
+    showSelected();
   });
 
   // One confirmation for every job marked (story 20): what each consumes,
@@ -125,7 +125,7 @@
     say('');
     const refused = numbers.find((n) => !canMark[to](jobs.get(n)));
     if (refused) {
-      say('Job ' + refused + ' cannot be marked ' + to + '. Untick it, then try again.', 'bad');
+      say('Job ' + refused + ' cannot be marked ' + to + '. Clear its box, then try again.', 'bad');
       return;
     }
     const query = new URLSearchParams([['to', to], ...numbers.map((n) => ['number', n])]);
@@ -160,7 +160,7 @@
 
   document.addEventListener('click', (e) => {
     const button = e.target.closest('[data-mark]');
-    if (button) confirmMark(button.dataset.mark, button.dataset.number ? [button.dataset.number] : ticked());
+    if (button) confirmMark(button.dataset.mark, button.dataset.number ? [button.dataset.number] : selected());
   });
 
   // The sheet last dropped, checked before it is committed (J27).

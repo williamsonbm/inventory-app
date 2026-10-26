@@ -418,9 +418,10 @@
   // settings change has none. A receipt line, a correction or a trim not yet
   // reversed has "Reverse…" while its family is live; one reversed says so
   // (stories 42, 49). A reversal itself is never reversed (Q44), nor is an
-  // approved count (Q120): the server sends neither with an id.
+  // approved count (Q120): the server sends neither with an id. Nor is a
+  // job's Built or Shipped (from_job; #101 undoes it from the job).
   function historyTable(i) {
-    const canReverse = (e) => e.id && !e.reversed && !e.reversal && family(i.family).live;
+    const canReverse = (e) => e.id && !e.reversed && !e.reversal && !e.from_job && family(i.family).live;
     const last = (e) => (e.reversed ? '<span class="chip">reversed</span>'
       : canReverse(e) ? '<button type="button" class="ghost" data-do="reverse" data-entry="' + e.id + '">Reverse…</button>' : '');
     const rows = historyEntries === null ? '<tr><td colspan="6" class="sub">Loading…</td></tr>'
