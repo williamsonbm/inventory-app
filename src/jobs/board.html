@@ -244,7 +244,9 @@
     showSelected();
   });
   el('rows').addEventListener('input', (e) => {
-    if (e.target.id === 'date') opened.draft = e.target.value;
+    // A part-typed date reads as blank; keep no draft of it, or a repaint
+    // would turn it into a valid blank that clears the date.
+    if (e.target.id === 'date') opened.draft = e.target.validity.badInput ? undefined : e.target.value;
   });
   el('head').addEventListener('change', (e) => {
     if (e.target.id !== 'select-all') return;
@@ -259,7 +261,9 @@
     say('');
     const refused = numbers.find((n) => !canMark[to](jobs.get(n)));
     if (refused) {
-      say('Job ' + refused + ' cannot be marked ' + to + '. Clear its box, then try again.', 'bad');
+      const hidden = !document.querySelector('.select[value="' + CSS.escape(refused) + '"]');
+      say('Job ' + refused + ' cannot be marked ' + to + '. Clear its box, then try again.' +
+        (hidden ? ' It is hidden by the search or a filter.' : ''), 'bad');
       return;
     }
     const query = new URLSearchParams([['to', to], ...numbers.map((n) => ['number', n])]);
