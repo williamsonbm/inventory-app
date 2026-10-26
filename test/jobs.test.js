@@ -367,7 +367,7 @@ test('a job sheet commits its plate and hanger lines and shows on the Job board 
   assert.deepEqual({ ...row, changed_at: typeof row.changed_at }, {
     number: '33864R', name: 'Smith Residence', status: 'committed', delivery_date: '2026-11-02',
     // Neither family is live in a fresh database, so both are kept but not tracked yet (J4).
-    families: [{ name: 'Plates', live: false }, { name: 'Hangers', live: false }],
+    families: [{ code: 'plates', name: 'Plates', live: false }, { code: 'hangers', name: 'Hangers', live: false }],
     version: 1, can_build: true, can_ship: true, can_cancel: true, can_unbuild: false, can_unship: false, pull_list: false, changed_by: 'Ann Lee', changed_at: 'string',
   });
 
@@ -1151,4 +1151,126 @@ test('a sheet for a job cancelled, un-built or un-shipped is refused with who di
   await call(db, 'unbuild_job', bob.id, crypto.randomUUID(), '3U', (await onBoard(db, '3U')).version);
   const unbuilt = await refused(commit(ctx, [[plate, 6]], { number: '3U' }), 'IV422', 'a sheet for an un-built job');
   assert.equal(unbuilt.message, `Job 3U was already committed (un-built by Bob Ray on ${today()}), from a different sheet.`);
+});
+
+// Sets job `number`'s delivery date as Ann, at the version the board shows now.
+async function setDate(ctx, number, date, { key = crypto.randomUUID() } = {}) {
+  const { version } = await onBoard(ctx.db, number);
+  return call(ctx.db, 'set_delivery_date', ctx.ann.id, key, number, version, date);
+}
+
+// The delivery date and its override flag of job `number`.
+async function dated(db, number) {
+  return as(db, APP, async (app) => (await app.query(
+    'SELECT delivery_date::text AS delivery_date, delivery_date_edited FROM inv.jobs WHERE number = $1', [number])).rows[0]);
+}
+
+test('editing the delivery date saves it, sets the override flag and logs one row; clearing it is an edit too (#102, story 33, J103)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate } = ctx;
+  await commit(ctx, [[plate, 30]]);
+  assert.deepEqual(await dated(db, '33864R'), { delivery_date: '2026-11-02', delivery_date_edited: false }, 'a committed sheet\'s date is not an edit');
+
+  const job = await setDate(ctx, '33864R', '2026-11-09');
+  assert.deepEqual(job, { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-09', version: 2 });
+  assert.deepEqual(await dated(db, '33864R'), { delivery_date: '2026-11-09', delivery_date_edited: true });
+  const log = (await logRows(db)).at(-1);
+  assert.deepEqual([log.action, log.target_table, log.old_value.delivery_date, log.new_value], ['set delivery date', 'jobs', '2026-11-02', job]);
+
+  await call(db, 'set_delivery_date', ctx.ann.id, crypto.randomUUID(), ' 33864r ', 2, null);
+  assert.deepEqual(await dated(db, '33864R'), { delivery_date: null, delivery_date_edited: true });
+});
+
+test('a delivery date save refuses a stale screen and a cancelled job; a retry acts once (#102, Q48, S22, J103)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate } = ctx;
+  await commit(ctx, [[plate, 30]]);
+  const stale = await onBoard(db, '33864R');
+  await setDate(ctx, '33864R', '2026-11-09');
+
+  const before = await contents(db);
+  const err = await refused(call(db, 'set_delivery_date', ctx.ann.id, crypto.randomUUID(), '33864R', stale.version, '2026-11-16'),
+    'IV409', 'a save from the screen as it was before the first edit');
+  assert.equal(err.message, 'Someone else changed job 33864R since you opened this screen.');
+  assert.deepEqual(await contents(db), before, 'nothing saved');
+
+  const key = crypto.randomUUID();
+  const first = await setDate(ctx, '33864R', '2026-11-16', { key });
+  const logged = (await logRows(db)).length;
+  assert.deepEqual(await call(db, 'set_delivery_date', ctx.ann.id, key, '33864R', 2, '2026-11-16'), first, 'the retry answers as the first save did');
+  assert.equal((await logRows(db)).length, logged, 'a retry writes no row');
+
+  await mark(ctx, 'built', ['33864R']);
+  await setDate(ctx, '33864R', '2026-11-20');
+  assert.equal((await dated(db, '33864R')).delivery_date, '2026-11-20', 'a built job takes a new date');
+  await undo(ctx, 'cancel_job', '33864R');
+  const cancelled = await refused(setDate(ctx, '33864R', '2026-11-23'), 'IV422', 'a cancelled job');
+  assert.equal(cancelled.message, 'Job 33864R is cancelled, so its delivery date cannot be changed.');
+  await refused(call(db, 'set_delivery_date', ctx.ann.id, crypto.randomUUID(), '99999X', 1, '2026-11-23'), 'IV400', 'a job not in the app');
+});
+
+test('a delivery date edit moves the version, so a Built from the board as it was is refused (#102, Q48)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate } = ctx;
+  await commit(ctx, [[plate, 30]]);
+  const stale = await onBoard(db, '33864R');
+  await setDate(ctx, '33864R', '2026-11-09');
+  await refused(call(db, 'mark_built', ctx.ann.id, crypto.randomUUID(), JSON.stringify([stale]), null), 'IV409', 'Built from before the date edit');
+});
+
+test('the job view shows the saved lines, the delivery date and its History; a date edit there sets the override flag and shows in History and the Activity Log (#102, stories 33, 40, 43; J103, J105)', async () => {
+  const ctx = await appWithCatalog();
+  assert.equal((await commitFile(ctx)).status, 200);
+  const view = async (number) => {
+    const res = await get(ctx.base, '/api/jobs/view?' + new URLSearchParams({ number }), ctx.cookie);
+    assert.equal(res.status, 200, await res.clone().text());
+    return res.json();
+  };
+  const first = await view(' 33864r ');
+  assert.deepEqual({ ...first, history: first.history.map(({ at, ...h }) => ({ ...h, at: typeof at })) }, {
+    ok: true,
+    job: { number: '33864R', name: 'Smith Residence', version: 1, delivery_date: '2026-11-02', delivery_date_edited: false, can_set_date: true },
+    lines: [
+      { family: 'plates', label: 'MT20 3x4', length_ft: null, quantity: 930 },
+      { family: 'hangers', label: 'HUS26', length_ft: null, quantity: 8 },
+      { family: 'hangers', label: 'LUS28', length_ft: null, quantity: 12 },
+      { family: 'hangers', label: 'TC26', length_ft: null, quantity: 6 },
+    ],
+    history: [{ action: 'commit job', by: 'Ann Lee', change: 'added: Smith Residence, revision 1', at: 'string' }],
+  });
+
+  const set = (body) => post(ctx.base, '/api/jobs/delivery-date', { key: crypto.randomUUID(), number: '33864R', ...body }, ctx.cookie);
+  const res = await set({ version: 1, delivery_date: '2026-11-09' });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal((await res.json()).job.delivery_date, '2026-11-09');
+
+  const now = await view('33864R');
+  assert.deepEqual([now.job.delivery_date, now.job.delivery_date_edited, now.job.version], ['2026-11-09', true, 2]);
+  assert.deepEqual(now.history.map((h) => [h.action, h.change]), [
+    ['set delivery date', 'delivery date: 2026-11-02 → 2026-11-09'],
+    ['commit job', 'added: Smith Residence, revision 1'],
+  ], 'newest first');
+  const log = await (await get(ctx.base, '/api/activity?action=set+delivery+date', ctx.cookie)).json();
+  assert.deepEqual(log.entries.map(({ target, change }) => [target, change]), [['Job 33864R', 'delivery date: 2026-11-02 → 2026-11-09']]);
+  const [row] = await board(ctx);
+  assert.equal(row.delivery_date, '2026-11-09', 'the board shows the new date');
+
+  const stale = await set({ version: 1, delivery_date: '2026-11-16' });
+  assert.equal(stale.status, 409);
+  assert.equal((await stale.json()).error, 'Someone else changed job 33864R since you opened this screen.');
+  const cleared = await set({ version: 2, delivery_date: '' });
+  assert.equal(cleared.status, 200, 'a blank date clears it: ' + await cleared.clone().text());
+  assert.equal((await view('33864R')).history[0].change, 'delivery date: 2026-11-09 → none');
+
+  const missing = await get(ctx.base, '/api/jobs/view?number=99999X', ctx.cookie);
+  assert.equal(missing.status, 404);
+  assert.equal((await missing.json()).error, 'Job 99999X is not in the app.');
+});
+
+test('the Job board names the families for its family filter (#102, story 39)', async () => {
+  const ctx = await appWithCatalog();
+  const res = await get(ctx.base, '/api/jobs', ctx.cookie);
+  assert.deepEqual((await res.json()).families, [
+    { code: 'lumber', name: 'Lumber' }, { code: 'plates', name: 'Plates' }, { code: 'hangers', name: 'Hangers' }, { code: 'lvl', name: 'LVL' },
+  ]);
 });

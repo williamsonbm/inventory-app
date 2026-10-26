@@ -18,7 +18,7 @@
    badgeFor), and includedJobs, read CsvPile or the DOM, and this repo has no
    Node DOM harness. They are checked by hand in the browser.
    test/planner-ui.test.js covers the pure helpers (looksLikePlateOrHangerStock,
-   redact, jobBreakdown, renderBreakdown, and pickOnHand, which decides each
+   redact, jobBreakdown, renderBreakdown, jobTabs, and pickOnHand, which decides each
    family's on-hand file: the server takes that file as given, so a wrong pick
    would mis-plan).
    ============================================================= */
@@ -729,11 +729,14 @@
   // renders these with renderBreakdown, and Jobs will too (spec #72, step 4).
   // A column is { label, cls?, strong? } — cls is the cell class ('n'
   // right-aligns a number, 'mono' sets a code in monospace); strong bolds it.
+  // A table or column marked sheetOnly shows what only the sheet carries;
+  // Jobs keeps an item and its quantity (J105), so a saved job leaves it out.
   const JOB_BREAKDOWN = {
     lumber: {
       lines: (j) => j.items || [],
       tables: [
         {
+          sheetOnly: true,
           heading: (j, lines) => 'Line items — ' + lines.length + " row(s) on " + (j.jobNumber || j.name) + "'s material sheet",
           columns: [{ label: 'Material' }, { label: 'Qty', cls: 'n' }, { label: 'Length', cls: 'mono' }],
           rows: (j, lines) => lines.map((it) => [it.material, fmtInt(it.qty), it.length]),
@@ -766,7 +769,7 @@
       lines: (j) => j.lines || [],
       tables: [{
         heading: (j, lines) => 'Material list — ' + lines.length + ' hanger line(s) on ' + (j.jobNumber || j.name) + "'s sheet",
-        columns: [{ label: 'Size', cls: 'mono' }, { label: 'Qty', cls: 'n' }, { label: 'Section' }],
+        columns: [{ label: 'Size', cls: 'mono' }, { label: 'Qty', cls: 'n' }, { label: 'Section', sheetOnly: true }],
         rows: (j, lines) => lines.map((it) => [it.sku, fmtInt(it.qty), it.section || 'Hangers']),
       }],
     },
@@ -776,7 +779,7 @@
       lines: (j) => j.items || [],
       tables: [{
         heading: (j, lines) => 'Line items — ' + lines.length + ' row(s) on ' + (j.jobNumber || j.name) + "'s material sheet",
-        columns: [{ label: 'Label', cls: 'mono' }, { label: 'Size' }, { label: 'Qty', cls: 'n' }, { label: 'Length', cls: 'mono' }],
+        columns: [{ label: 'Label', cls: 'mono', sheetOnly: true }, { label: 'Size' }, { label: 'Qty', cls: 'n' }, { label: 'Length', cls: 'mono' }],
         rows: (j, lines) => lines.map((it) => [it.label || '—', it.size, fmtNum(it.qty), it.length]),
       }],
     },
@@ -796,19 +799,57 @@
 
   // A job with no lines for this family has no breakdown. Otherwise every
   // table that has rows: a lumber job with nothing to cut shows its lines alone.
-  function jobBreakdown(family, job) {
+  // `saved`: a job as Jobs saved it, without what only the sheet carries.
+  function jobBreakdown(family, job, { saved = false } = {}) {
     const { lines: linesOf, tables } = JOB_BREAKDOWN[family];
     const lines = linesOf(job);
     if (!lines.length) return [];
-    return tables
+    const shown = (part) => !(saved && part.sheetOnly);
+    return tables.filter(shown)
       .map((t) => ({
         heading: t.heading(job, lines),
         title: t.title,
-        columns: t.columns,
-        rows: t.rows(job, lines),
+        columns: t.columns.filter(shown),
+        rows: t.rows(job, lines).map((r) => r.filter((_, i) => shown(t.columns[i]))),
         footer: t.footer && t.footer(job),
       }))
       .filter((t) => t.rows.length > 0);
+  }
+
+  // A saved job's lines of one family ({ label, length_ft, quantity }, as
+  // GET /api/jobs/view answers them) as the Planner's job reads them. A
+  // lumber job's items are its boards: its sheet's own lines are not kept.
+  const skuQty = (lines) => lines.map((l) => ({ sku: l.label, qty: l.quantity }));
+  const SAVED_JOB = {
+    lumber: (lines) => {
+      const groups = new Map();
+      for (const l of lines) {
+        groups.set(l.label, [...(groups.get(l.label) || []), { stockLengthFt: l.length_ft, boards: l.quantity }]);
+      }
+      return {
+        items: lines,
+        byGroup: [...groups].map(([label, buyByLength]) => ({ label, buyByLength })),
+        totalPieces: lines.reduce((n, l) => n + l.quantity, 0),
+      };
+    },
+    plates: (lines) => ({ items: skuQty(lines) }),
+    hangers: (lines) => ({ lines: skuQty(lines) }),
+    lvl: (lines) => ({ items: lines.map((l) => ({ size: l.label, qty: l.quantity, length: ftLabel(l.length_ft) })) }),
+  };
+
+  // A saved job's family tabs in Jobs (#102, stories 40–42): one per family
+  // on the job, in `families`' order ([{ code, name }]), labelled with its
+  // line count, each the Planner's breakdown of what Jobs saved. `open` is
+  // the tab the job opens on: the family `filter` names, or else the first,
+  // which is Lumber when the job has lumber: Lumber leads the families' order.
+  function jobTabs(job, families, filter) {
+    const tabs = families.flatMap(({ code, name }) => {
+      const lines = job.lines.filter((l) => l.family === code);
+      const tables = jobBreakdown(code, { jobNumber: job.number, ...SAVED_JOB[code](lines) }, { saved: true });
+      return tables.length ? [{ family: code, label: name + ' (' + fmtInt(lines.length) + ')', tables }] : [];
+    });
+    const open = tabs.find((t) => t.family === filter) || tabs[0];
+    return { tabs, open: open && open.family };
   }
 
   // One <td> for a column: its class, and bold where the column asks.
@@ -940,18 +981,18 @@
     window.PlannerUI = {
       esc, fmtInt, fmtNum, ftLabel, cutInstruction, buyLf, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
       wireSort, drilldowns, wireExpandAll, resetExpandAll, expandAllButtonHtml, dropZones, debounce,
-      stockProductHints, looksLikePlateOrHangerStock, includedJobs, flagsHtml, flagFixes,
+      stockProductHints, looksLikePlateOrHangerStock, includedJobs, flagsHtml, flagFixes, jobTabs, renderBreakdown,
     };
   }
 
   // Node (tests): the pure helpers only — looksLikePlateOrHangerStock, redact(),
-  // jobBreakdown(), renderBreakdown(), pickOnHand() and flagsHtml(), which their own tests
+  // jobBreakdown(), renderBreakdown(), pickOnHand(), flagsHtml() and jobTabs(), which their own tests
   // drive directly. Everything else here (dropZones, drilldowns, sorting, …)
-  // touches the DOM and has no Node caller. redact(), jobBreakdown() and
-  // renderBreakdown() are NOT put on window.PlannerUI: getJobs()/getOnHand()
-  // and includedJobs() call them from this closure, so a browser export would
-  // have no reader — and an export with no reader does not ship (issue #39).
-  // Jobs (spec #72, step 4) puts jobBreakdown on it when it calls it.
+  // touches the DOM and has no Node caller. redact() and jobBreakdown() are
+  // NOT put on window.PlannerUI: getJobs()/getOnHand(), includedJobs() and
+  // jobTabs() call them from this closure, so a browser export would have no
+  // reader — and an export with no reader does not ship (issue #39). The Job
+  // board (#102) reads jobTabs() and renderBreakdown() there.
   // looksLikeAnyStock and looksLikeItemSpanQtyStock are held back for the same
   // reason: dropZones calls them from this closure, and their only outside
   // reader, the EWP tab's isStockFile, left with the tab (#41).
@@ -960,7 +1001,7 @@
   // drives it through them (#74).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml,
+      looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml, jobTabs,
       esc, fmtInt, fmtNum, ftLabel, cutInstruction,
     };
   }

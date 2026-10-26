@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml, cutInstruction } = require('../src/planner/planner-ui.js');
+const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml, cutInstruction, jobTabs } = require('../src/planner/planner-ui.js');
 
 const REAL_HANGER_STOCK = `sku,on_hand,committed,available,incoming,threshold,flag,last_counted
 HUS26,20,5,15,0,0,OK,
@@ -511,4 +511,63 @@ test('cutInstruction: says each kind of cut as the Planner and the pull list pri
   assert.equal(cutInstruction({ stockLengthFt: 10, requiredLengthFt: 5 }), '2 × 5′ per board');
   assert.equal(cutInstruction({ stockLengthFt: 8, requiredLengthFt: 5.5 }), 'cut to 5′ 6″');
   assert.equal(cutInstruction({ stockLengthFt: 12, requiredLengthFt: 7, contents: [7, 4.5] }), 'cut 7′ + 4′ 6″ from one board');
+});
+
+// ── jobTabs(): a saved job's family tabs in Jobs (#102, stories 40–42) ──────
+// A job as GET /api/jobs/view answers it: its current sheet's lines, each an
+// item's label (its name without the length), length and quantity (J105).
+const FAMILIES = [
+  { code: 'lumber', name: 'Lumber' }, { code: 'plates', name: 'Plates' },
+  { code: 'hangers', name: 'Hangers' }, { code: 'lvl', name: 'LVL' },
+];
+const SAVED = {
+  number: '33864R',
+  lines: [
+    { family: 'lumber', label: '2x4 #2', length_ft: 10, quantity: 12 },
+    { family: 'lumber', label: '2x4 #2', length_ft: 16, quantity: 4 },
+    { family: 'lumber', label: '2x6 #2', length_ft: 12, quantity: 3 },
+    { family: 'plates', label: 'MT20 3x4', length_ft: null, quantity: 930 },
+    { family: 'hangers', label: 'LUS28', length_ft: null, quantity: 1200 },
+    { family: 'hangers', label: 'HUS26', length_ft: null, quantity: 8 },
+    { family: 'lvl', label: '2.1 RigidLam LVL 1-3/4 x 11-7/8', length_ft: 20, quantity: 4 },
+  ],
+};
+
+test('jobTabs: one tab per family on the job, in the families\' order, each with its line count (#102, story 40)', () => {
+  const { tabs } = jobTabs(SAVED, FAMILIES, 'all');
+  assert.deepEqual(tabs.map((t) => [t.family, t.label]), [
+    ['lumber', 'Lumber (3)'], ['plates', 'Plates (1)'], ['hangers', 'Hangers (2)'], ['lvl', 'LVL (1)'],
+  ]);
+});
+
+test('jobTabs: each tab is the Planner\'s breakdown of what Jobs saved, without the sheet-only columns (#102, story 42, J105)', () => {
+  const [lumber, plates, hangers, lvl] = jobTabs(SAVED, FAMILIES, 'all').tabs.map((t) => t.tables);
+  assert.deepEqual(lumber, [{
+    heading: 'Boards to cut — 19 total',
+    title: 'Cut per job, on its own — totals run higher than the pooled order above, since pooling shares boards across jobs.',
+    columns: [{ label: 'Size / Grade', strong: true }, { label: 'Stock length', cls: 'mono' }, { label: 'Boards', cls: 'n', strong: true }],
+    rows: [['2x4 #2', '10′', '12'], ['', '16′', '4'], ['2x6 #2', '12′', '3']],
+    footer: ['Total LF', '220'],
+  }], 'the boards only: Jobs keeps no sheet line items for lumber');
+  assert.deepEqual(plates.map((t) => [t.heading, t.columns.map((c) => c.label), t.rows]),
+    [["Material list — 1 plate line(s) on 33864R's sheet", ['SKU', 'Qty'], [['MT20 3x4', '930']]]]);
+  assert.deepEqual(hangers.map((t) => [t.heading, t.columns.map((c) => c.label), t.rows]),
+    [["Material list — 2 hanger line(s) on 33864R's sheet", ['Size', 'Qty'], [['LUS28', '1,200'], ['HUS26', '8']]]],
+    'no Section: Jobs keeps no sheet section');
+  assert.deepEqual(lvl.map((t) => [t.columns.map((c) => c.label), t.rows]),
+    [[['Size', 'Qty', 'Length'], [['2.1 RigidLam LVL 1-3/4 x 11-7/8', '4', '20′']]]], 'no Label: Jobs keeps no sheet label');
+});
+
+test('jobTabs: the job opens on the filter\'s family, or on Lumber when the filter is All (#102, story 41)', () => {
+  assert.equal(jobTabs(SAVED, FAMILIES, 'hangers').open, 'hangers');
+  assert.equal(jobTabs(SAVED, FAMILIES, 'all').open, 'lumber');
+  const noLumber = { ...SAVED, lines: SAVED.lines.filter((l) => l.family !== 'lumber') };
+  assert.deepEqual(jobTabs(noLumber, FAMILIES, 'all').tabs.map((t) => t.family), ['plates', 'hangers', 'lvl'], 'no tab for a family not on the job');
+  assert.equal(jobTabs(noLumber, FAMILIES, 'all').open, 'plates', 'no lumber: the first tab');
+});
+
+test('jobBreakdown: the Planner keeps every column and table the sheet carries (#102)', () => {
+  const hangers = jobBreakdown('hangers', { jobNumber: '33864R', lines: [{ sku: 'LUS28', qty: 4, section: 'Roof' }] });
+  assert.deepEqual(hangers[0].columns.map((c) => c.label), ['Size', 'Qty', 'Section']);
+  assert.deepEqual(hangers[0].rows, [['LUS28', '4', 'Roof']]);
 });

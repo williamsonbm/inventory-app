@@ -248,6 +248,7 @@ const describeSettingChange = (was, now) => SETTINGS[now.name].describe(was, now
 const CHANGED = {
   purchase_orders: describePoChange, counts: describeCountChange, settings: describeSettingChange,
   'correct month-end': describeMonthEndChange, jobs: (was, now) => `status: ${was.status} → ${now.status}${timed(now)}`,
+  'set delivery date': (was, now) => `delivery date: ${was.delivery_date ?? 'none'} → ${now.delivery_date ?? 'none'}`,
 };
 
 // What a change did, in words, for the "Was → now" column: an addition (no
