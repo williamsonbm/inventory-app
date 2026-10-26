@@ -86,7 +86,7 @@
 <script>
 (async () => {
   const { esc, flagsHtml, sortRows, sortIcon, wireSort, jobTabs, boardJobs, renderBreakdown } = PlannerUI;
-  const { say, send, getAll, askTiming, showTime, showDay } = AppHeader;
+  const { say, send, getAll, askTiming, showTime, showDate, showDay } = AppHeader;
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
 
@@ -342,8 +342,11 @@
     }
   });
 
-  // The sheet last dropped, checked before it is committed (J27).
+  // The sheet last dropped, checked before it is committed (J27), and the
+  // version of its job when the check found it committed: a revised
+  // sheet's save sends it (#120).
   let sheet = null;
+  let version;
   // The lines on screen, each with its catalog flag (J8), so a fix button finds its line.
   let shownLines = [];
 
@@ -352,6 +355,28 @@
     el('sheet-view').innerHTML = !lines.length ? '' : intro + '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
       lines.map((l, i) => '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + (l.lf ? ' · ' + esc(l.lf) + ' LF' : '') + '</td><td>' + esc(l.quantity) + '</td><td>' +
         flagsHtml(l.flag, String(i), l.family) + '</td></tr>').join('') + '</tbody></table>';
+  }
+
+  // A revised sheet's change screen (#120, story 28): each line added,
+  // removed or changed against the job's current revision.
+  function changesHtml(changes) {
+    const amount = (n) => (n === null ? '—' : esc(n));
+    return '<h3>What changed</h3>' + (!changes.length ? '<p class="sub">No line changed.</p>'
+      : '<table class="log"><thead><tr><th>Family</th><th>Line</th><th>Was</th><th>Now</th><th></th></tr></thead><tbody>' +
+        changes.map((c) => '<tr><td>' + esc(c.family) + '</td><td>' + esc(c.sku) + '</td><td>' + amount(c.was) + '</td><td>' + amount(c.now) +
+          '</td><td>' + (c.was === null ? 'added' : c.now === null ? 'removed' : 'changed') + '</td></tr>').join('') + '</tbody></table>') +
+      '<h3>The revised sheet</h3>';
+  }
+
+  // Which delivery date to keep, when the revised sheet's is not the job's
+  // (story 34, J137): the job's own is chosen when a person set it by hand.
+  function dateChoiceHtml(choice, sheetDate) {
+    if (!choice) return '';
+    const byHand = choice.set_by !== null;
+    return '<p>Which delivery date should the job keep?<br>' +
+      '<label><input type="radio" name="keep-date" value="true"' + (byHand ? ' checked' : '') + '> The job\'s date, ' + dayText(choice.current) +
+      (byHand ? ' (set by hand by ' + esc(choice.set_by) + ' on ' + esc(showDate(choice.set_at)) + ')' : '') + '</label><br>' +
+      '<label><input type="radio" name="keep-date" value="false"' + (byHand ? '' : ' checked') + '> The sheet\'s date, ' + dayText(sheetDate) + '</label></p>';
   }
 
   // Shows what committing the sheet would save, with a Commit job button.
@@ -367,14 +392,18 @@
       return;
     }
     const { job, lines, lvl_by_depth: depths, warnings } = body;
+    version = job.version;
     const flagged = lines.filter((l) => l.flag).length;
+    const revising = job.unchanged === false;
     showLines(lines, '<h2>Job ' + esc(job.number) + (job.name ? ' · ' + esc(job.name) : '') + '</h2><p class="sub">Delivery ' +
       dayText(job.delivery_date) + '. ' +
-      (job.status ? 'This job is already in the app (' + esc(job.status) + '). ' : '') +
+      (revising ? 'This is a revised sheet for a job already in the app. Saving it replaces the job\'s lines. '
+        : job.status ? 'This job is already in the app (' + esc(job.status) + '). ' : '') +
       (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p>' +
-      (depths.length ? '<p class="sub">LVL by depth: ' + depths.map((d) => esc(d.label) + ' ' + esc(d.lf) + ' LF').join(', ') + '</p>' : '') + '<p>' +
-      '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>Commit job</button> ' +
-      '<button type="button" class="ghost" id="deduct-job"' + (flagged ? ' disabled' : '') + '>Deduct directly (already shipped)</button> ' +
+      (depths.length ? '<p class="sub">LVL by depth: ' + depths.map((d) => esc(d.label) + ' ' + esc(d.lf) + ' LF').join(', ') + '</p>' : '') +
+      (revising ? changesHtml(body.changes) + dateChoiceHtml(body.date_choice, job.delivery_date) : '') + '<p>' +
+      '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>' + (revising ? 'Save revision' : 'Commit job') + '</button> ' +
+      (revising ? '' : '<button type="button" class="ghost" id="deduct-job"' + (flagged ? ' disabled' : '') + '>Deduct directly (already shipped)</button> ') +
       '<button type="button" class="ghost" id="clear-job">Clear</button>' +
       (flagged ? ' <span class="sub">Fix the flagged ' + (flagged === 1 ? 'line' : 'lines') + ' first.</span>' : '') + '</p>');
   }
@@ -389,6 +418,7 @@
       const { job } = await send(route, request);
       showLines([], '');
       say(job.unchanged ? 'Job ' + job.number + ' is already committed from this sheet; nothing changed.'
+        : job.revision > 1 ? 'Job ' + job.number + ' revised: revision ' + job.revision + ' saved.'
         : 'Job ' + job.number + (job.status === 'shipped' ? ' committed and marked shipped.' : ' committed.'), 'ok');
       loadBoard();
     } catch (err) {
@@ -414,9 +444,12 @@
     if (sheet) check();
   }
   el('sheet-view').addEventListener('click', (e) => {
-    if (e.target.id === 'commit-job') commit({ key: crypto.randomUUID(), file: sheet });
+    if (e.target.id === 'commit-job') {
+      const keep = document.querySelector('input[name="keep-date"]:checked');
+      commit({ key: crypto.randomUUID(), file: sheet, version, keep_date: keep ? keep.value === 'true' : undefined });
+    }
     if (e.target.id === 'deduct-job') commit({ key: crypto.randomUUID(), file: sheet }, '/api/jobs/deduct');
-    if (e.target.id === 'clear-job') { sheet = null; say(''); showLines([], ''); }
+    if (e.target.id === 'clear-job') { sheet = null; version = undefined; say(''); showLines([], ''); }
     const button = e.target.closest('[data-flag-do]');
     if (button) fixAll(PlannerUI.flagFixes(button.dataset.flagDo, shownLines[Number(button.dataset.flagKey)].flag));
   });
