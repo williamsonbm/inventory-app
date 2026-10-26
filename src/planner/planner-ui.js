@@ -852,6 +852,16 @@
     return { tabs, open: open && open.family };
   }
 
+  // The Job board's rows (#102): the jobs whose status is in `statuses`
+  // (null: every status), with a line of `family` ('all': any), whose number
+  // or name holds `search`, in any capitals.
+  function boardJobs(jobs, { statuses, family, search }) {
+    const q = search.trim().toLowerCase();
+    return jobs.filter((j) => (!statuses || statuses.includes(j.status))
+      && (family === 'all' || j.families.some((f) => f.code === family))
+      && (!q || j.number.toLowerCase().includes(q) || (j.name || '').toLowerCase().includes(q)));
+  }
+
   // One <td> for a column: its class, and bold where the column asks.
   function cellHtml(col, text, extra) {
     const cls = col.cls ? ' class="' + col.cls + '"' : '';
@@ -981,18 +991,18 @@
     window.PlannerUI = {
       esc, fmtInt, fmtNum, ftLabel, cutInstruction, buyLf, renderStats, renderWarnings, renderRejected, sortRows, sortIcon,
       wireSort, drilldowns, wireExpandAll, resetExpandAll, expandAllButtonHtml, dropZones, debounce,
-      stockProductHints, looksLikePlateOrHangerStock, includedJobs, flagsHtml, flagFixes, jobTabs, renderBreakdown,
+      stockProductHints, looksLikePlateOrHangerStock, includedJobs, flagsHtml, flagFixes, jobTabs, boardJobs, renderBreakdown,
     };
   }
 
   // Node (tests): the pure helpers only — looksLikePlateOrHangerStock, redact(),
-  // jobBreakdown(), renderBreakdown(), pickOnHand(), flagsHtml() and jobTabs(), which their own tests
+  // jobBreakdown(), renderBreakdown(), pickOnHand(), flagsHtml(), jobTabs() and boardJobs(), which their own tests
   // drive directly. Everything else here (dropZones, drilldowns, sorting, …)
   // touches the DOM and has no Node caller. redact() and jobBreakdown() are
   // NOT put on window.PlannerUI: getJobs()/getOnHand(), includedJobs() and
   // jobTabs() call them from this closure, so a browser export would have no
   // reader — and an export with no reader does not ship (issue #39). The Job
-  // board (#102) reads jobTabs() and renderBreakdown() there.
+  // board (#102) reads jobTabs(), boardJobs() and renderBreakdown() there.
   // looksLikeAnyStock and looksLikeItemSpanQtyStock are held back for the same
   // reason: dropZones calls them from this closure, and their only outside
   // reader, the EWP tab's isStockFile, left with the tab (#41).
@@ -1001,7 +1011,7 @@
   // drives it through them (#74).
   if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-      looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml, jobTabs,
+      looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml, jobTabs, boardJobs,
       esc, fmtInt, fmtNum, ftLabel, cutInstruction,
     };
   }

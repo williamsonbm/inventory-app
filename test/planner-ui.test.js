@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml, cutInstruction, jobTabs } = require('../src/planner/planner-ui.js');
+const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml, cutInstruction, jobTabs, boardJobs } = require('../src/planner/planner-ui.js');
 
 const REAL_HANGER_STOCK = `sku,on_hand,committed,available,incoming,threshold,flag,last_counted
 HUS26,20,5,15,0,0,OK,
@@ -570,4 +570,20 @@ test('jobBreakdown: the Planner keeps every column and table the sheet carries (
   const hangers = jobBreakdown('hangers', { jobNumber: '33864R', lines: [{ sku: 'LUS28', qty: 4, section: 'Roof' }] });
   assert.deepEqual(hangers[0].columns.map((c) => c.label), ['Size', 'Qty', 'Section']);
   assert.deepEqual(hangers[0].rows, [['LUS28', '4', 'Roof']]);
+});
+
+test('boardJobs: the Job board shows the jobs of the chosen statuses and family whose number or name has the search (#102, story 39; review of #119, 8)', () => {
+  const JOBS = [
+    { number: '33864R', name: 'Smith Residence', status: 'committed', families: [{ code: 'plates' }, { code: 'hangers' }] },
+    { number: '33865R', name: 'Jones Garage', status: 'built', families: [{ code: 'lumber' }] },
+    { number: '34001J', name: null, status: 'shipped', families: [{ code: 'hangers' }] },
+    { number: '34002J', name: 'Smith Barn', status: 'cancelled', families: [{ code: 'lvl' }] },
+  ];
+  const shown = (filter) => boardJobs(JOBS, { statuses: null, family: 'all', search: '', ...filter }).map((j) => j.number);
+  assert.deepEqual(shown({}), ['33864R', '33865R', '34001J', '34002J'], 'All, all families, no search: every job');
+  assert.deepEqual(shown({ statuses: ['committed', 'built'] }), ['33864R', '33865R'], 'Open: committed and built');
+  assert.deepEqual(shown({ family: 'hangers' }), ['33864R', '34001J'], 'a job with any line of the family');
+  assert.deepEqual(shown({ search: ' smith ' }), ['33864R', '34002J'], 'the name, trimmed, in any capitals');
+  assert.deepEqual(shown({ search: '34001j' }), ['34001J'], 'the number; a job with no name is not refused');
+  assert.deepEqual(shown({ statuses: ['shipped'], family: 'lvl' }), [], 'every filter applies');
 });

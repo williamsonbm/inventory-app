@@ -1229,7 +1229,7 @@ test('the job view shows the saved lines, the delivery date and its History; a d
   const first = await view(' 33864r ');
   assert.deepEqual({ ...first, history: first.history.map(({ at, ...h }) => ({ ...h, at: typeof at })) }, {
     ok: true,
-    job: { number: '33864R', name: 'Smith Residence', version: 1, delivery_date: '2026-11-02', delivery_date_edited: false, can_set_date: true },
+    job: { number: '33864R', version: 1, delivery_date: '2026-11-02', delivery_date_edited: false, can_set_date: true },
     lines: [
       { family: 'plates', label: 'MT20 3x4', length_ft: null, quantity: 930 },
       { family: 'hangers', label: 'HUS26', length_ft: null, quantity: 8 },
@@ -1273,4 +1273,24 @@ test('the Job board names the families for its family filter (#102, story 39)', 
   assert.deepEqual((await res.json()).families, [
     { code: 'lumber', name: 'Lumber' }, { code: 'plates', name: 'Plates' }, { code: 'hangers', name: 'Hangers' }, { code: 'lvl', name: 'LVL' },
   ]);
+});
+
+test('the job view lists a job\'s lumber in the Planner\'s size and grade order, not as text (review of #119, 3)', async () => {
+  const ctx = await appWithLumber();
+  const add = await post(ctx.base, '/api/items/add', { key: crypto.randomUUID(), family: 'lumber', identity: { size: '2x10', grade: 'DSS', length_ft: 12 } }, ctx.cookie);
+  assert.equal(add.status, 200, await add.clone().text());
+  const text = LUMBER_SHEET.replace('2x6spdss,', '2x10spdss,2,12-00-00,2x10 SP DSS,Regular,,24.00,,,,\n2x6spdss,');
+  const res = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile(text) }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  const { lines } = await (await get(ctx.base, '/api/jobs/view?number=33865R', ctx.cookie)).json();
+  assert.deepEqual(lines.filter((l) => l.family === 'lumber').map((l) => l.label + ' ' + l.length_ft), [
+    '2x4 #2 8', '2x4 #2 10', '2x6 DSS 16', '2x10 DSS 12',
+  ]);
+});
+
+test('an item with no name parts is labelled by its length alone, as in 003 (review of #119, 4)', async () => {
+  const ctx = await appWithCatalog();
+  const label = await as(ctx.db, APP, async (app) => (await app.query(
+    `SELECT inv.item_label(pg_catalog.jsonb_populate_record(NULL::inv.items, '{"length_ft": 16}')) AS label`)).rows[0].label);
+  assert.equal(label, '16′');
 });

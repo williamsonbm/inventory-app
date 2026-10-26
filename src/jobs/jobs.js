@@ -18,6 +18,7 @@ const { skuKey: hangerKey } = require('../hangers/readHangerStockCsv.js');
 const { hangerCanon } = require('../hangers/hangerCanon.js');
 const { parseLumberSheet } = require('../lumber/parseLumberSheet.js');
 const { planLumber } = require('../lumber/planLumber.js');
+const { compareMenuKeys } = require('../lumber/lumberMenu.js');
 const { normalizeLumber } = require('../lumber/normalizeLumber.js');
 const { parseLvlSheet } = require('../lvl/parseLvlSheet.js');
 const { planLvl } = require('../lvl/planLvl.js');
@@ -428,16 +429,22 @@ function listJobs(database) {
 // the change in the Activity Log's words.
 async function jobView(database, number) {
   const [job] = await database.read(`
-    SELECT j.id, j.number, j.name, j.version, j.delivery_date::text AS delivery_date, j.delivery_date_edited,
+    SELECT j.id, j.number, j.version, j.delivery_date::text AS delivery_date, j.delivery_date_edited,
            j.status <> 'cancelled' AS can_set_date,
            coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
-                              'family', i.family, 'label', n.label, 'length_ft', i.length_ft, 'quantity', l.quantity)
+                              'family', i.family, 'label', n.label, 'length_ft', i.length_ft, 'quantity', l.quantity,
+                              'menu_key', i.size || '|' || i.grade)
                               ORDER BY pg_catalog.array_position($2::text[], i.family), n.label, i.length_ft)
                        FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id, LATERAL (SELECT inv.item_name(i) AS label) n
                       WHERE l.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1)), '[]') AS lines
       FROM inv.jobs j WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($1))`, [number ?? '', FAMILY_ORDER]);
   if (!job) return { status: 404, body: { ok: false, error: `Job ${number} is not in the app.` } };
-  const { id, lines, ...shown } = job;
+  const { id, lines: rows, ...shown } = job;
+  // Lumber by size, then grade, as the Planner orders its groups; the sort
+  // is stable, so each group keeps its lengths in order.
+  const lines = rows.sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family)
+      || (a.family === 'lumber' ? compareMenuKeys(a.menu_key, b.menu_key) : 0))
+    .map(({ menu_key, ...line }) => line);
   const history = await database.read(`
     SELECT l.action, l.at, u.name AS by, l.old_value, l.new_value
       FROM inv.activity_log l JOIN inv.users u ON u.id = l.actor_id

@@ -37,7 +37,7 @@ CREATE OR REPLACE FUNCTION inv.item_label(i inv.items) RETURNS text
 LANGUAGE sql IMMUTABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
-  SELECT pg_catalog.concat_ws(' ', inv.item_name(i), i.length_ft || '′')
+  SELECT pg_catalog.concat_ws(' ', NULLIF(inv.item_name(i), ''), i.length_ft || '′')
 $$;
 
 GRANT EXECUTE ON FUNCTION inv.item_name(inv.items) TO inv_app;
