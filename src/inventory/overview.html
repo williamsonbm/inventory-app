@@ -634,16 +634,21 @@
     }
     if (tr.classList.contains('item')) toggle(Number(tr.dataset.id));
   });
-  async function toggle(id) {
+  function toggle(id) {
     open = open === id ? null : id;
     mode = null;
     replacing = null;
     itemJobs = null;
     paint();
-    if (open !== id) return;
+    if (open === id) loadItemJobs(id);
+  }
+  // Reads the open item's jobs and fills the list in place: a repaint would
+  // drop what the person has begun typing. A row opens here, or when an item
+  // is added; both start from no list.
+  async function loadItemJobs(id) {
+    itemJobs = null;
     const body = await fetchItemJobs(id);
     if (open !== id) return;  // closed while loading
-    // Fills the list in place: a repaint would drop what the person has begun typing.
     if (!body.ok) { say(body.error, 'bad'); itemJobs = false; } else itemJobs = body.jobs;
     const spot = el('rows').querySelector('[data-jobs]');
     if (spot) spot.innerHTML = jobsList(items.find((i) => i.id === id));
@@ -786,6 +791,7 @@
       }
       open = i.id;
       mode = null;
+      loadItemJobs(i.id);
       return itemLabel(i) + ' was added as Special Order with no threshold. Its row is open below.';
     });
   });

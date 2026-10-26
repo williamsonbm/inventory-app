@@ -1336,13 +1336,16 @@ test('the jobs behind an item add up to its Committed, in delivery order; a buil
   await goLive(db, 'plates');
   await goLive(db, 'hangers');
   await commit(ctx, [[plate, 100], [lus28, 12], [hus, 4]], { number: '2B', deliveryDate: '2026-11-09' });
-  await commit(ctx, [[plate, 50], [lus28, 6]], { number: '1A', deliveryDate: '2026-11-02' });
   await commit(ctx, [[lus28, 3]], { number: '1B', deliveryDate: '2026-11-02' });
+  await commit(ctx, [[plate, 50], [lus28, 6]], { number: '1A', deliveryDate: '2026-11-02' });
+  await commit(ctx, [[lus28, 7]], { number: '0N', deliveryDate: null });
+  await commit(ctx, [[lus28, 2]], { number: '9E', deliveryDate: '2026-11-01' });
   await commit(ctx, [[lus28, 99]], { number: '3C', deliveryDate: '2026-11-01' });
   await mark(ctx, 'built', ['2B']);
   await mark(ctx, 'shipped', ['3C']);
 
-  assert.deepEqual(await jobsBehind(db, lus28), [['1A', 6], ['1B', 3], ['2B', 12]], 'delivery date, then job number');
+  assert.deepEqual(await jobsBehind(db, lus28), [['9E', 2], ['1A', 6], ['1B', 3], ['2B', 12], ['0N', 7]],
+    'delivery date first (9E has the highest number), then job number (1B was saved before 1A), no date last');
   assert.deepEqual(await jobsBehind(db, plate), [['1A', 50]], 'built 2B no longer commits its plates; shipped 3C is gone');
   const committed = await figure(db, 'committed');
   for (const item of [plate, lus28, hus]) {
