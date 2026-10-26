@@ -51,6 +51,15 @@ function lvlLines(text) {
     }) };
 }
 
+// The step that fixes a reason the plan gives for a line it cannot place.
+function lumberFix(reason) {
+  if (reason.startsWith('Unrecognized grade')) return 'The app does not know this grade. Ask for the grade to be added.';
+  if (reason.startsWith('Unknown size/grade')) {
+    return 'Turn on lengths for this size and grade in the Planner\'s Stock lengths panel, or redirect the grade to a stronger one.';
+  }
+  return 'Add a longer length in the Planner\'s Stock lengths panel.';
+}
+
 // Lumber's lines are the boards of the job's cut plan, worked out with the
 // shared buying options and no on-hand, as the Planner plans one job: one
 // line per size, grade and stock length. A sheet line the plan cannot place
@@ -74,7 +83,7 @@ async function lumberLines(text, database) {
     if (u.requiredLengthFt == null) byGrade.add(grade);
     else if (byGrade.has(grade)) continue;
     unplaced.push({ sku: u.material + (u.requiredLengthFt == null ? '' : ` ${feet(u.requiredLengthFt)}`), quantity: u.qty,
-      reason: `${u.reason} Change the lengths we buy in the Planner.` });
+      reason: `${u.reason.replace(/\.?$/, '.')} ${lumberFix(u.reason)}` });
   }
 
   const groups = plan.bySizeGrade.filter((g) => g.draws.length);

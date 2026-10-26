@@ -546,6 +546,21 @@ test('a lumber line the plan cannot place refuses the whole job, with the reason
   assert.deepEqual(await contents(ctx.db), before, 'nothing saved');
 });
 
+test('each lumber line the plan cannot place says its own fix (#114)', async () => {
+  const ctx = await appWithLumber();
+  // 18′ is longer than any 2x6 DSS length bought; No.3 is a grade not known; 2x8 #2 is a known grade with no lengths bought.
+  const text = LUMBER_SHEET.replace('2x6spdss,3,16-00-00', '2x6spdss,3,18-00-00')
+    .replace('Rectangular EWP', '2x4sp3,5,8-00-00,2x4 SP No.3,Regular,,40.00,,,,\n2x8sp2,2,8-00-00,2x8 SP No.2,Regular,,16.00,,,,\nRectangular EWP');
+  const res = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile(text) }, ctx.cookie);
+  assert.equal(res.status, 422, await res.clone().text());
+  const { lines } = await res.json();
+  assert.deepEqual(Object.fromEntries(lines.map((l) => [l.sku, l.flag.notPlanned])), {
+    '2x4 SP No.3': 'Unrecognized grade — not in the purchase menu. The app does not know this grade. Ask for the grade to be added.',
+    '2x8 #2 8′': 'Unknown size/grade: 2x8 #2. Turn on lengths for this size and grade in the Planner\'s Stock lengths panel, or redirect the grade to a stronger one.',
+    '2x6 DSS 18′': 'Required length 18 exceeds longest stocked length for 2x6 DSS. Add a longer length in the Planner\'s Stock lengths panel.',
+  });
+});
+
 test('the lumber pull list prints the saved cut plan, after the buying options change too (#99, story 48, story 13, Q57)', async () => {
   const ctx = await appWithLumber();
   const { db, ann } = ctx;
