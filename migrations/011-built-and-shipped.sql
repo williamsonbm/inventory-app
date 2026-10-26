@@ -30,6 +30,10 @@ ALTER TABLE inv.families ALTER COLUMN consumed_when SET NOT NULL;
 ALTER TABLE inv.ledger DROP CONSTRAINT ledger_kind_check;
 ALTER TABLE inv.ledger ADD CONSTRAINT ledger_kind_check
   CHECK (kind IN ('receipt', 'correction', 'reversal', 'build', 'ship'));
+-- The Planner login reads the ledger (007), so it sees job_id too: an
+-- internal number, with no job number, name or customer, on quantities it
+-- already reads. Deliberately left visible (owner, J78), not a column grant
+-- without it: that grant is a second way to read the ledger to keep right.
 ALTER TABLE inv.ledger ADD COLUMN job_id bigint REFERENCES inv.jobs (id);
 ALTER TABLE inv.ledger ADD CONSTRAINT ledger_job_check
   CHECK ((kind IN ('build', 'ship')) = (job_id IS NOT NULL) AND (job_id IS NULL OR quantity < 0));

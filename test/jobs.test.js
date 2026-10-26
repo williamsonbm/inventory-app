@@ -917,6 +917,9 @@ test('History names the job behind a build or ship row and offers no Reverse on 
   const [shipped] = (await res.json()).entries;
   assert.deepEqual([shipped.action, shipped.change, shipped.detail, shipped.from_job], ['mark shipped', -12, 'Job 33864R, Smith Residence', true]);
 
+  const log = await (await get(ctx.base, '/api/activity?family=hangers', ctx.cookie)).json();
+  assert.deepEqual(log.entries.slice(0, 2).map((e) => e.action), ['mark shipped', 'commit job'], 'the Hangers filter shows the mark (second review, 1)');
+
   const { describeChange } = require('../src/settings/activity.js');
   const was = { number: '33864R', name: 'Smith Residence', status: 'committed', version: 1 };
   assert.equal(describeChange('mark built', 'jobs', was, { ...was, status: 'built', version: 2 }), 'status: committed → built');

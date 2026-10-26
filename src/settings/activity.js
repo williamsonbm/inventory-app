@@ -55,7 +55,7 @@ async function readActivity(database, { person, action, family, from, to, before
              WHEN l.target_table = 'jobs'
                THEN EXISTS (SELECT FROM inv.job_sheets js JOIN inv.job_lines jl ON jl.sheet_id = js.id
                               JOIN inv.items i ON i.id = jl.item_id
-                             WHERE js.action_id = l.id AND i.family = $7)
+                             WHERE js.job_id = l.target_id AND i.family = $7)
              WHEN l.target_table = 'purchase_orders'
                THEN EXISTS (SELECT FROM inv.po_lines pl JOIN inv.items i ON i.id = pl.item_id
                              WHERE pl.po_id = l.target_id AND i.family = $7)
