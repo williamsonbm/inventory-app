@@ -9,6 +9,7 @@
 // Glue, NOT UNIT-TESTED: it needs a browser, and this repo has no DOM harness.
 // The routes it calls are tested in test/sign-in.test.js and
 // test/users.test.js; the header is checked by hand (#77, Testing Decisions).
+// The one exception is `showDay`, which test/app-header.test.js loads in a vm.
 //
 // Expects #theme-btn, #user-name and #sign-out in the page, #message
 // where it calls `say`, and #family-filter where it calls `familyBar`. The theme itself
