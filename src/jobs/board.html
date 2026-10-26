@@ -31,13 +31,18 @@
   Deduct directly (#100); and the Job board, one row per job, with a Print menu for a job with a lumber
   pull list (#99), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68);
   Cancel job, Un-build and Un-ship on each row, one job at a time, after a confirmation (#101, J86, J87).
+  The board sorts by any column, searches job number or name, filters by status and family; a job's row
+  opens its job view below it: a tab per family, History, and its delivery date to edit (#102).
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
   repo has no DOM harness. Reading the sheet, matching its lines, the refusals
   and the board's rows are tested over HTTP in test/jobs.test.js; the page is
   checked by hand on Preview (#96, Testing Decisions). What marking consumes,
   and marking itself, are tested over HTTP and in the database; so are what
-  an undo gives back and the undo itself.
+  an undo gives back and the undo itself. The board's filter is
+  PlannerUI.boardJobs and the job view's tabs PlannerUI.jobTabs, both
+  tested in test/planner-ui.test.js; the view's data and the
+  delivery date save over HTTP and in the database.
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -47,6 +52,13 @@
     <button type="button" class="ghost appbar-signout" id="sign-out">Sign out</button>
   </div>
   <nav class="appbar-nav" aria-label="Modes"><a href="/">Planner</a><a href="/jobs" class="here" aria-current="page">Jobs</a><a href="/inventory">Inventory</a><a href="/settings/users">Settings</a><a href="/activity">Activity Log</a></nav>
+  <div class="appbar-filter">
+    <span class="label" id="family-label">Family</span>
+    <div class="seg" id="family-filter" role="group" aria-labelledby="family-label"><button type="button" class="placeholder" tabindex="-1" aria-hidden="true">All</button></div>
+    <span class="label" id="status-label">Status</span>
+    <div class="seg" id="status-filter" role="group" aria-labelledby="status-label"></div>
+    <label class="label">Search <input id="search" type="search" placeholder="Job number or name"></label>
+  </div>
 </header>
 
 <div class="wrap">
@@ -64,7 +76,7 @@
     <button type="button" data-mark="shipped">Mark shipped</button>
   </div>
   <table class="log">
-    <thead><tr><th><input type="checkbox" id="select-all" aria-label="Select every job"></th><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th><th></th></tr></thead>
+    <thead id="head"></thead>
     <tbody id="rows"></tbody>
   </table>
 </div>
@@ -73,10 +85,13 @@
 <script src="/planner-ui.js"></script>
 <script>
 (async () => {
-  const { esc, flagsHtml } = PlannerUI;
+  const { esc, flagsHtml, sortRows, sortIcon, wireSort, jobTabs, boardJobs, renderBreakdown } = PlannerUI;
   const { say, send, getAll, askTiming, showTime, showDate } = AppHeader;
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
+
+  // A delivery date as the board shows it, or — for none.
+  const dayText = (d) => (d ? esc(showDate(d + 'T12:00:00Z')) : '—');
 
   // A family not live in Inventory is kept on the job, not tracked yet (J4).
   const familyText = (f) => (f.live ? esc(f.name) : '<span class="not-tracked">' + esc(f.name) + ' (not tracked yet)</span>');
@@ -98,36 +113,144 @@
   const undoButtons = (j) => Object.entries(UNDO).filter(([, u]) => u.can(j)).map(([action, u]) =>
     '<button type="button" class="ghost" data-undo="' + action + '" data-number="' + esc(j.number) + '">' + u.label + '</button> ').join('');
 
-  // The board as last loaded, by job number, for its versions.
+  // The board as last loaded, by job number, for its versions, in the
+  // server's order (last changed first); the families for the family bar.
   let jobs = new Map();
+  let families = [];
+  // What the board shows (#102, stories 37–39): open jobs first (committed
+  // or built), the family bar's choice, the search, and the sort.
+  const STATUSES = { open: { label: 'Open', has: ['committed', 'built'] }, shipped: { label: 'Shipped', has: ['shipped'] },
+    cancelled: { label: 'Cancelled', has: ['cancelled'] }, all: { label: 'All', has: null } };
+  let status = 'open';
+  let family = 'all';
+  const sort = { col: null, dir: 'asc' };
+  // Status sorts in the job's lifecycle; a job with no delivery date sorts
+  // after every dated job.
+  const LIFECYCLE = ['committed', 'built', 'shipped', 'cancelled'];
+  const NO_DATE = '9999-12-31';
+  const COLUMNS = [
+    ['num', 'Job', (j) => j.number], ['name', 'Name', (j) => j.name], ['families', 'Families', (j) => j.families.map((f) => f.name).join(', ')],
+    ['status', 'Status', (j) => LIFECYCLE.indexOf(j.status)], ['delivery', 'Delivery', (j) => j.delivery_date || NO_DATE],
+    ['changed', 'Last changed (Eastern)', (j) => j.changed_at],
+  ];
+  // The job open below its row: its view as last loaded, the tab shown, and
+  // a date typed but not saved (`draft`). The jobs selected, by number, kept
+  // across searches and filters until marked.
+  let opened = null;
+  const picked = new Set();
 
+  el('status-filter').innerHTML = Object.entries(STATUSES).map(([code, s]) =>
+    '<button type="button" data-status="' + code + '" aria-pressed="' + (code === status) + '">' + s.label + '</button>').join('');
+  el('status-filter').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-status]');
+    if (!b) return;
+    status = b.dataset.status;
+    for (const x of el('status-filter').children) x.setAttribute('aria-pressed', String(x === b));
+    paint();
+  });
+  el('search').addEventListener('input', () => paint());
+
+  // The open job's view is read again with the board, so its History
+  // shows what was just saved.
   async function loadBoard() {
-    const [body] = (await getAll(['/api/jobs'])) ?? [];
+    const [body, view] = (await getAll(['/api/jobs', ...(opened ? ['/api/jobs/view?' + new URLSearchParams({ number: opened.number })] : [])])) ?? [];
     if (!body) return;
     jobs = new Map(body.jobs.map((j) => [j.number, j]));
-    el('select-all').checked = false;
-    el('rows').innerHTML = body.jobs.map((j) => '<tr><td>' +
-      (canMark.shipped(j) ? '<input type="checkbox" class="select" value="' + esc(j.number) + '" aria-label="Select job ' + esc(j.number) + '">' : '') +
-      '</td><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td>' +
+    if (!families.length) {
+      families = body.families;
+      AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => { family = f; paint(); });
+    }
+    for (const n of picked) if (!jobs.has(n) || !canMark.shipped(jobs.get(n))) picked.delete(n);
+    if (opened) opened = jobs.has(opened.number) && view ? { ...opened, view, draft: undefined } : null;
+    paint();
+  }
+
+  function paint() {
+    el('head').innerHTML = '<tr><th><input type="checkbox" id="select-all" aria-label="Select every job"></th>' +
+      COLUMNS.map(([col, label]) => '<th class="sortable" data-jobsort="' + col + '">' + esc(label) + ' ' + sortIcon(sort.col === col, sort.dir) + '</th>').join('') +
+      '<th></th></tr>';
+    wireSort(el('head').closest('table'), 'jobsort', sort, paint);
+    const shown = boardJobs([...jobs.values()], { statuses: STATUSES[status].has, family, search: el('search').value });
+    const rows = sortRows(shown, sort, Object.fromEntries(COLUMNS.map(([col, , get]) => [col, get])));
+    el('rows').innerHTML = rows.map((j) => '<tr><td>' +
+      (canMark.shipped(j) ? '<input type="checkbox" class="select" value="' + esc(j.number) + '"' + (picked.has(j.number) ? ' checked' : '') + ' aria-label="Select job ' + esc(j.number) + '">' : '') +
+      '</td><td><button type="button" class="ghost" data-open="' + esc(j.number) + '" aria-expanded="' + (opened?.number === j.number) + '">' +
+      (opened?.number === j.number ? '▾ ' : '▸ ') + esc(j.number) + '</button></td><td>' + esc(j.name || '') + '</td><td>' +
       j.families.map(familyText).join(', ') + '</td><td>' + esc(j.status) + '</td><td>' +
-      (j.delivery_date ? esc(showDate(j.delivery_date + 'T12:00:00Z')) : '—') + '</td><td>' +
+      dayText(j.delivery_date) + '</td><td>' +
       esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td><td>' + markButton('built', j) + markButton('shipped', j) + undoButtons(j) + (j.pull_list
         ? '<details class="print"><summary>Print</summary><div><a target="_blank" href="' +
           esc('/api/jobs/pull-list?' + new URLSearchParams({ number: j.number })) + '">Lumber pull list</a></div></details>'
-        : '') + '</td></tr>').join('')
-      || '<tr><td colspan="8" class="sub">No jobs yet.</td></tr>';
+        : '') + '</td></tr>' +
+      (opened?.number === j.number ? '<tr class="jobs"><td colspan="8">' + viewHtml() + '</td></tr>' : '')).join('')
+      || '<tr><td colspan="8" class="sub">' + (jobs.size ? 'No jobs match.' : 'No jobs yet.') + '</td></tr>';
     showSelected();
   }
 
-  const selected = () => [...document.querySelectorAll('.select:checked')].map((t) => t.value);
+  // One job's view (#102): its delivery date, to edit unless it is
+  // cancelled (J103); a tab per family on the job (PlannerUI.jobTabs), and
+  // History, who did what and when (story 43).
+  async function loadView(number) {
+    const [body] = (await getAll(['/api/jobs/view?' + new URLSearchParams({ number })])) ?? [];
+    if (body) opened = { tab: opened?.number === number ? opened.tab : null, number, view: body };
+  }
+
+  function viewHtml() {
+    const { job, history } = opened.view;
+    const { tabs, open } = jobTabs({ number: job.number, lines: opened.view.lines }, families, family);
+    const tab = tabs.some((t) => t.family === opened.tab) || opened.tab === 'history' ? opened.tab : open || 'history';
+    const tabButton = (code, label) => '<button type="button" data-tab="' + code + '" aria-pressed="' + (code === tab) + '">' + esc(label) + '</button>';
+    const body = renderBreakdown(tab === 'history'
+      ? [{ heading: 'History — newest first', columns: [{ label: 'When (Eastern)' }, { label: 'Who' }, { label: 'Action' }, { label: 'Change' }],
+        rows: history.map((h) => [showTime(h.at), h.by, h.action, h.change]) }]
+      : tabs.find((t) => t.family === tab).tables);
+    return '<div class="drill"><p>Delivery ' + dayText(job.delivery_date) +
+      (job.delivery_date_edited ? ' (changed by hand)' : '') +
+      (job.can_set_date ? ' <input type="date" id="date" value="' + esc(opened.draft ?? job.delivery_date ?? '') + '" aria-label="New delivery date"> ' +
+        '<button type="button" class="ghost" id="save-date">Save date</button>' : '') + '</p>' +
+      '<div class="seg" role="group" aria-label="Job view">' + tabs.map((t) => tabButton(t.family, t.label)).join('') + tabButton('history', 'History') + '</div>' +
+      '<div style="margin-top:10px">' + body + '</div></div>';
+  }
+
+  async function toggleJob(number) {
+    if (opened?.number === number) opened = null;
+    else await loadView(number);
+    paint();
+  }
+
+  // One request, built once with its retry key, as for marking. A blank
+  // date clears it. A refusal shows the job as it is now.
+  async function saveDate(request) {
+    say('');
+    try {
+      const { job } = await send('/api/jobs/delivery-date', request);
+      say('Job ' + job.number + ' delivery date saved.', 'ok');
+      loadBoard();
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => saveDate(request) : null);
+      if (!err.unconfirmed) loadBoard();
+    }
+  }
+
+  const selected = () => [...picked];
   function showSelected() {
-    const n = selected().length;
+    const n = picked.size;
     el('mark-bar').hidden = !n;
     el('selected').textContent = n + (n === 1 ? ' job selected' : ' jobs selected');
   }
-  el('rows').addEventListener('change', showSelected);
-  el('select-all').addEventListener('change', (e) => {
-    for (const t of document.querySelectorAll('.select')) t.checked = e.target.checked;
+  const pick = (box) => (box.checked ? picked.add(box.value) : picked.delete(box.value));
+  el('rows').addEventListener('change', (e) => {
+    if (e.target.classList.contains('select')) pick(e.target);
+    showSelected();
+  });
+  el('rows').addEventListener('input', (e) => {
+    // A part-typed date reads as blank; keep no draft of it, or a repaint
+    // would turn it into a valid blank that clears the date.
+    if (e.target.id === 'date') opened.draft = e.target.validity.badInput ? undefined : e.target.value;
+  });
+  el('head').addEventListener('change', (e) => {
+    if (e.target.id !== 'select-all') return;
+    for (const t of document.querySelectorAll('.select')) { t.checked = e.target.checked; pick(t); }
     showSelected();
   });
 
@@ -138,7 +261,9 @@
     say('');
     const refused = numbers.find((n) => !canMark[to](jobs.get(n)));
     if (refused) {
-      say('Job ' + refused + ' cannot be marked ' + to + '. Clear its box, then try again.', 'bad');
+      const hidden = !document.querySelector('.select[value="' + CSS.escape(refused) + '"]');
+      say('Job ' + refused + ' cannot be marked ' + to + '. Clear its box, then try again.' +
+        (hidden ? ' It is hidden by the search or a filter.' : ''), 'bad');
       return;
     }
     const query = new URLSearchParams([['to', to], ...numbers.map((n) => ['number', n])]);
@@ -163,6 +288,7 @@
     try {
       const { jobs: marked } = await send('/api/jobs/mark', request);
       el('confirm').innerHTML = '';
+      picked.clear();
       say((marked.length === 1 ? 'Job ' + marked[0].number : marked.length + ' jobs') + ' marked ' + request.to + '.', 'ok');
       loadBoard();
     } catch (err) {
@@ -206,6 +332,14 @@
     if (button) confirmMark(button.dataset.mark, button.dataset.number ? [button.dataset.number] : selected());
     const undoing = e.target.closest('[data-undo]');
     if (undoing) confirmUndo(undoing.dataset.undo, undoing.dataset.number);
+    const opening = e.target.closest('[data-open]');
+    if (opening) toggleJob(opening.dataset.open);
+    const tab = e.target.closest('[data-tab]');
+    if (tab) { opened.tab = tab.dataset.tab; paint(); }
+    if (e.target.id === 'save-date') {
+      if (el('date').validity.badInput) say('Type the whole date. To remove the date, clear the box.', 'bad');
+      else saveDate({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version, delivery_date: el('date').value });
+    }
   });
 
   // The sheet last dropped, checked before it is committed (J27).
@@ -235,7 +369,7 @@
     const { job, lines, lvl_by_depth: depths, warnings } = body;
     const flagged = lines.filter((l) => l.flag).length;
     showLines(lines, '<h2>Job ' + esc(job.number) + (job.name ? ' · ' + esc(job.name) : '') + '</h2><p class="sub">Delivery ' +
-      (job.delivery_date ? esc(showDate(job.delivery_date + 'T12:00:00Z')) : '—') + '. ' +
+      dayText(job.delivery_date) + '. ' +
       (job.status ? 'This job is already in the app (' + esc(job.status) + '). ' : '') +
       (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p>' +
       (depths.length ? '<p class="sub">LVL by depth: ' + depths.map((d) => esc(d.label) + ' ' + esc(d.lf) + ' LF').join(', ') + '</p>' : '') + '<p>' +

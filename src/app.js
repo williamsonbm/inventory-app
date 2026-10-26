@@ -19,10 +19,10 @@ const { readActivity } = require('./settings/activity.js');
 const { readHistory } = require('./inventory/history.js');
 const { listMonthEnd, readMonthEnd, monthEndCsv } = require('./inventory/month-end.js');
 const {
-  listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
+  listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes, readFamilies,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { checkSheet, commitSheet, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList } = require('./jobs/jobs.js');
+const { checkSheet, commitSheet, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -204,7 +204,17 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
 
   // Jobs (#97): everyone commits a job and reads the Job board.
   app.get('/api/jobs', catchAsync(async (_req, res) => {
-    res.json({ ok: true, jobs: await listJobs(database) });
+    const jobs = await listJobs(database);
+    res.json({ ok: true, jobs, families: (await readFamilies(database)).map(({ code, name }) => ({ code, name })) });
+  }));
+  // One job opened from the board, and its delivery date (#102).
+  app.get('/api/jobs/view', catchAsync(async (req, res) => {
+    const { status, body } = await jobView(database, req.query.number);
+    res.status(status).json(body);
+  }));
+  app.post('/api/jobs/delivery-date', catchAsync(async (req, res) => {
+    const { status, body } = await setDeliveryDate(database, req.user, req.body);
+    res.status(status).json(body);
   }));
   app.post('/api/jobs/check', catchAsync(async (req, res) => {
     const { status, body } = await checkSheet(database, req.body);

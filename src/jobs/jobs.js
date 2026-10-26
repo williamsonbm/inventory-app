@@ -18,6 +18,7 @@ const { skuKey: hangerKey } = require('../hangers/readHangerStockCsv.js');
 const { hangerCanon } = require('../hangers/hangerCanon.js');
 const { parseLumberSheet } = require('../lumber/parseLumberSheet.js');
 const { planLumber } = require('../lumber/planLumber.js');
+const { compareMenuKeys } = require('../lumber/lumberMenu.js');
 const { normalizeLumber } = require('../lumber/normalizeLumber.js');
 const { parseLvlSheet } = require('../lvl/parseLvlSheet.js');
 const { planLvl } = require('../lvl/planLvl.js');
@@ -26,7 +27,7 @@ const { isCsvFile } = require('../planner/server.js');
 const { esc, fmtInt, fmtNum, ftLabel: feet, cutInstruction } = require('../planner/planner-ui.js');
 const { readInventory, itemsByKey, catalogFlag, PLAN_OPTIONS } = require('../inventory/planner-inventory.js');
 const { FAMILY_ORDER } = require('../inventory/catalog.js');
-const { OFFICE_TIME_ZONE } = require('../settings/activity.js');
+const { OFFICE_TIME_ZONE, describeChange } = require('../settings/activity.js');
 
 // A plate or hanger sheet's lines; the SKU as it is bought (a hanger's
 // STC26 is TC26), which "Add to catalog" adds.
@@ -405,7 +406,7 @@ function listJobs(database) {
            j.status IN ('committed', 'built') AS can_cancel,
            j.status = 'built' AS can_unbuild,
            j.status = 'shipped' AS can_unship,
-           (SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('name', f.name, 'live', f.live)
+           (SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('code', f.code, 'name', f.name, 'live', f.live)
                      ORDER BY pg_catalog.array_position($1::text[], f.code))
               FROM inv.families f
              WHERE f.code IN (SELECT i.family FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id
@@ -420,4 +421,44 @@ function listJobs(database) {
      ORDER BY last.at DESC`, [FAMILY_ORDER]);
 }
 
-module.exports = { checkSheet, commitSheet, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList };
+// One job opened from the board (#102, stories 33, 40–43): its delivery
+// date, whether a person set it by hand (J103) and whether it can be set
+// (as inv.set_delivery_date allows), its version for that; its current
+// sheet's lines, each an item's name without the length (J105), in the
+// Planner's order; and its History, newest first: who did what, when, and
+// the change in the Activity Log's words.
+async function jobView(database, number) {
+  const [job] = await database.read(`
+    SELECT j.id, j.number, j.version, j.delivery_date::text AS delivery_date, j.delivery_date_edited,
+           j.status <> 'cancelled' AS can_set_date,
+           coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                              'family', i.family, 'label', n.label, 'length_ft', i.length_ft, 'quantity', l.quantity,
+                              'menu_key', i.size || '|' || i.grade)
+                              ORDER BY n.label, i.length_ft)
+                       FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id, LATERAL (SELECT inv.item_name(i) AS label) n
+                      WHERE l.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1)), '[]') AS lines
+      FROM inv.jobs j WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($1))`, [number ?? '']);
+  if (!job) return { status: 404, body: { ok: false, error: `Job ${number} is not in the app.` } };
+  const { id, lines: rows, ...shown } = job;
+  // In the families' order; lumber by size, then grade, as the Planner
+  // orders its groups. The sort is stable, so lines keep the query's order
+  // by name and length.
+  const lines = rows.sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family)
+      || (a.family === 'lumber' ? compareMenuKeys(a.menu_key, b.menu_key) : 0))
+    .map(({ menu_key, ...line }) => line);
+  const history = await database.read(`
+    SELECT l.action, l.at, u.name AS by, l.old_value, l.new_value
+      FROM inv.activity_log l JOIN inv.users u ON u.id = l.actor_id
+     WHERE l.target_table = 'jobs' AND l.target_id = $1 ORDER BY l.id DESC`, [id]);
+  return { status: 200, body: { ok: true, job: shown, lines,
+    history: history.map((h) => ({ action: h.action, at: h.at, by: h.by, change: describeChange(h.action, 'jobs', h.old_value, h.new_value) })) } };
+}
+
+// Sets job `number`'s delivery date, as the job view showed it at
+// `version` (story 33, J103); a blank date clears it.
+async function setDeliveryDate(database, person, { key, number, version, delivery_date: date } = {}) {
+  const job = await database.save('set_delivery_date', [person.id, key, number, version, date || null]);
+  return { status: 200, body: { ok: true, job } };
+}
+
+module.exports = { checkSheet, commitSheet, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate };
