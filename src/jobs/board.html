@@ -234,7 +234,7 @@
 
   const selected = () => [...picked];
   function showSelected() {
-    const n = selected().length;
+    const n = picked.size;
     el('mark-bar').hidden = !n;
     el('selected').textContent = n + (n === 1 ? ' job selected' : ' jobs selected');
   }
@@ -332,10 +332,9 @@
     if (opening) toggleJob(opening.dataset.open);
     const tab = e.target.closest('[data-tab]');
     if (tab) { opened.tab = tab.dataset.tab; paint(); }
-    if (e.target.id === 'save-date' && el('date').validity.badInput) {
-      say('Type the whole date. To remove the date, clear the box.', 'bad');
-    } else if (e.target.id === 'save-date') {
-      saveDate({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version, delivery_date: el('date').value });
+    if (e.target.id === 'save-date') {
+      if (el('date').validity.badInput) say('Type the whole date. To remove the date, clear the box.', 'bad');
+      else saveDate({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version, delivery_date: el('date').value });
     }
   });
 

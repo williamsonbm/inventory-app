@@ -434,14 +434,15 @@ async function jobView(database, number) {
            coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
                               'family', i.family, 'label', n.label, 'length_ft', i.length_ft, 'quantity', l.quantity,
                               'menu_key', i.size || '|' || i.grade)
-                              ORDER BY pg_catalog.array_position($2::text[], i.family), n.label, i.length_ft)
+                              ORDER BY n.label, i.length_ft)
                        FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id, LATERAL (SELECT inv.item_name(i) AS label) n
                       WHERE l.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1)), '[]') AS lines
-      FROM inv.jobs j WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($1))`, [number ?? '', FAMILY_ORDER]);
+      FROM inv.jobs j WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($1))`, [number ?? '']);
   if (!job) return { status: 404, body: { ok: false, error: `Job ${number} is not in the app.` } };
   const { id, lines: rows, ...shown } = job;
-  // Lumber by size, then grade, as the Planner orders its groups; the sort
-  // is stable, so each group keeps its lengths in order.
+  // In the families' order; lumber by size, then grade, as the Planner
+  // orders its groups. The sort is stable, so lines keep the query's order
+  // by name and length.
   const lines = rows.sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family)
       || (a.family === 'lumber' ? compareMenuKeys(a.menu_key, b.menu_key) : 0))
     .map(({ menu_key, ...line }) => line);
