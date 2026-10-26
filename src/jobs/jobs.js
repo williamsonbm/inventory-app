@@ -254,9 +254,11 @@ function refusalText(number, flagged) {
   return `Job ${number} was not committed: ${why.join('; ')}.`;
 }
 
-// Commits the job on the dropped sheet as `person`. Returns { status, body };
+// Commits the job on the dropped sheet as `person`, or, with `deduct`,
+// commits it and marks it shipped in one save (Deduct directly, story 19);
+// `timing` answers "before or after the count?". Returns { status, body };
 // the database's own refusals are thrown, for the app's error shaping.
-async function commitSheet(database, person, { key, file } = {}) {
+async function commitSheet(database, person, { key, file, timing = null } = {}, { deduct = false } = {}) {
   const { refusal, sheet, rows, plan } = await matchSheet(database, file);
   if (refusal) return refusal;
   const number = sheet.meta.job_number;
@@ -269,11 +271,11 @@ async function commitSheet(database, person, { key, file } = {}) {
   // sheet is refused as one. Otherwise it refuses the retired lines.
   if (rows.some((r) => !r.item_id)) return refused;
   try {
-    const job = await database.save('commit_job', [person.id, key, {
+    const job = await database.save(deduct ? 'deduct_directly' : 'commit_job', [person.id, key, {
       number, name: sheet.meta.job_name, delivery_date: sheet.meta.delivery_date,
       lines: rows.filter((r) => r.family !== 'lumber').map(({ item_id, quantity }) => ({ item_id, quantity })),
       ...(plan && { lumber: { demand: sheet.lumber.demand, plan } }),
-    }]);
+    }, ...(deduct ? [timing] : [])]);
     return { status: 200, body: { ok: true, job, warnings: sheet.warnings } };
   } catch (err) {
     if (n && err.code === 'IV422' && err.detail === 'inactive items') return refused;
@@ -325,12 +327,44 @@ ${sections.join('\n')}
   return { status: 200, html };
 }
 
+// Marks jobs built or shipped (stories 15–17, 20): `jobs` are [{number,
+// version}] as the board showed them; `timing` answers "before or after the
+// count?". One save for every job, so one refusal saves none (S21).
+const MARK = { built: 'mark_built', shipped: 'mark_shipped' };
+
+async function markJobs(database, person, { key, to, jobs, timing = null } = {}) {
+  if (!MARK[to]) return { status: 400, body: { ok: false, error: 'Mark jobs built or shipped.' } };
+  return { status: 200, body: { ok: true, ...await database.save(MARK[to], [person.id, key, JSON.stringify(jobs), timing]) } };
+}
+
+// What marking jobs `numbers` built or shipped (`to`) consumes, per job,
+// for the confirmation (story 20): each line's item, family and quantity,
+// and whether its family is live; one that is not is not tracked yet (J4).
+async function toConsume(database, to, numbers) {
+  if (!MARK[to]) return { status: 400, body: { ok: false, error: 'Mark jobs built or shipped.' } };
+  const jobs = await database.read(`
+    SELECT j.number, j.name,
+           coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                              'item', inv.item_label(i), 'family', f.name, 'quantity', c.quantity, 'live', c.live)
+                              ORDER BY pg_catalog.array_position($3::text[], f.code), inv.item_label(i))
+                       FROM inv.job_to_consume(j, $1) c
+                       JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family), '[]') AS lines
+      FROM inv.jobs j
+     WHERE pg_catalog.upper(j.number) = ANY (SELECT pg_catalog.upper(n) FROM pg_catalog.unnest($2::text[]) n)
+     ORDER BY j.number`, [to, [].concat(numbers ?? []), FAMILY_ORDER]);
+  return { status: 200, body: { ok: true, jobs } };
+}
+
 // The Job board: one row per job, with the families on its current sheet
-// (in the Planner's order, live or not yet), whether it has a lumber pull
+// (in the Planner's order, live or not yet), whether it can be marked
+// built or shipped (as inv.mark_jobs allows) and its version for that,
+// whether it has a lumber pull
 // list, and who changed it last, when.
 function listJobs(database) {
   return database.read(`
-    SELECT j.number, j.name, j.status, j.delivery_date::text AS delivery_date,
+    SELECT j.number, j.name, j.status, j.version, j.delivery_date::text AS delivery_date,
+           j.status = 'committed' AND EXISTS (SELECT 1 FROM inv.job_to_consume(j, 'built')) AS can_build,
+           j.status IN ('committed', 'built') AS can_ship,
            (SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('name', f.name, 'live', f.live)
                      ORDER BY pg_catalog.array_position($1::text[], f.code))
               FROM inv.families f
@@ -346,4 +380,4 @@ function listJobs(database) {
      ORDER BY last.at DESC`, [FAMILY_ORDER]);
 }
 
-module.exports = { checkSheet, commitSheet, listJobs, pullList };
+module.exports = { checkSheet, commitSheet, markJobs, toConsume, listJobs, pullList };

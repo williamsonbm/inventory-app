@@ -368,7 +368,7 @@ test('a job sheet commits its plate and hanger lines and shows on the Job board 
     number: '33864R', name: 'Smith Residence', status: 'committed', delivery_date: '2026-11-02',
     // Neither family is live in a fresh database, so both are kept but not tracked yet (J4).
     families: [{ name: 'Plates', live: false }, { name: 'Hangers', live: false }],
-    pull_list: false, changed_by: 'Ann Lee', changed_at: 'string',
+    version: 1, can_build: true, can_ship: true, pull_list: false, changed_by: 'Ann Lee', changed_at: 'string',
   });
 
   // The Activity Log names the job, and its family filter finds it by its lines.
@@ -627,4 +627,211 @@ test('Jobs is in the header of every signed-in page (J9)', async () => {
     assert.equal(res.status, 200, page);
     assert.match(await res.text(), /<nav class="appbar-nav"[^>]*>.*<a href="\/jobs"[^>]*>Jobs<\/a>/, `${page} links to Jobs`);
   }
+});
+
+// ── Seam 1: Built, Shipped and Deduct directly (#100) ───────────────────────
+
+// The job's number and version as the board shows them, for marking.
+async function onBoard(db, number) {
+  return as(db, APP, async (app) =>
+    (await app.query('SELECT number, version FROM inv.jobs WHERE number = $1', [number])).rows[0]);
+}
+
+// Marks jobs `numbers` built or shipped (`status`) as Ann, at the versions
+// the board shows now.
+async function mark(ctx, status, numbers, { timing = null, key = crypto.randomUUID() } = {}) {
+  const jobs = await Promise.all(numbers.map((n) => onBoard(ctx.db, n)));
+  return call(ctx.db, `mark_${status}`, ctx.ann.id, key, JSON.stringify(jobs), timing && JSON.stringify(timing));
+}
+
+test('Built consumes the plates; the hangers stay committed until Shipped (stories 15, 16)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28 } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await ctx.receive(plate, 1000);
+  await ctx.receive(lus28, 20);
+  await commit(ctx, [[plate, 930], [lus28, 12]]);
+
+  const [built] = (await mark(ctx, 'built', ['33864R'])).jobs;
+  assert.deepEqual([built.number, built.status, built.version], ['33864R', 'built', 2]);
+  assert.deepEqual(await figure(db, 'on_hand'), { [plate.id]: 70, [lus28.id]: 20, [ctx.hus.id]: 0 });
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 12, [ctx.hus.id]: 0 });
+
+  await mark(ctx, 'shipped', ['33864R']);
+  assert.deepEqual(await figure(db, 'on_hand'), { [plate.id]: 70, [lus28.id]: 8, [ctx.hus.id]: 0 });
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 0, [ctx.hus.id]: 0 });
+  const log = (await logRows(db)).slice(-2).map((l) => l.action);
+  assert.deepEqual(log, ['mark built', 'mark shipped']);
+});
+
+test('Shipped from committed consumes everything; a family not live in Inventory writes no ledger rows (stories 17, 22; J4, J5)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28, hus } = ctx;
+  await goLive(db, 'hangers');
+  await ctx.receive(lus28, 20);
+  await commit(ctx, [[plate, 930], [lus28, 12], [hus, 4]]);
+
+  const [shipped] = (await mark(ctx, 'shipped', ['33864R'])).jobs;
+  assert.equal(shipped.status, 'shipped');
+  assert.deepEqual(await figure(db, 'on_hand'), { [plate.id]: 0, [lus28.id]: 8, [hus.id]: -4 });
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 0, [hus.id]: 0 });
+  const rows = await as(db, APP, async (app) => (await app.query(
+    "SELECT item_id::int, quantity, kind FROM inv.ledger WHERE kind <> 'receipt' ORDER BY item_id")).rows);
+  assert.deepEqual(rows, [{ item_id: lus28.id, quantity: -12, kind: 'ship' }, { item_id: hus.id, quantity: -4, kind: 'ship' }],
+    'no plate row: plates are not live');
+});
+
+test('Built and Shipped follow the allowed paths; Built is refused on a job with no plates, lumber or LVL (stories 18; #96 "Database rules")', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28 } = ctx;
+  await commit(ctx, [[lus28, 2]], { number: '1H' });
+  await commit(ctx, [[plate, 5]], { number: '2P' });
+  const before = (await logRows(db)).length;
+  const hangersOnly = await refused(mark(ctx, 'built', ['1H']), 'IV422', 'Built on a hangers-only job');
+  assert.equal(hangersOnly.message, 'Job 1H has no plates, lumber or LVL to build; mark it shipped.');
+
+  await mark(ctx, 'built', ['2P']);
+  const twice = await refused(mark(ctx, 'built', ['2P']), 'IV422', 'Built twice');
+  assert.equal(twice.message, 'Job 2P is built, so it cannot be marked built.');
+  await mark(ctx, 'shipped', ['2P']);
+  for (const to of ['built', 'shipped']) {
+    const err = await refused(mark(ctx, to, ['2P']), 'IV422', `a shipped job marked ${to}`);
+    assert.equal(err.message, `Job 2P is shipped, so it cannot be marked ${to}.`);
+  }
+  assert.equal((await logRows(db)).length, before + 2, 'only the two allowed marks are logged');
+});
+
+test('a stale save is refused; a batch that fails on one job saves none; a retry acts once (Q48, S21, S22)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate } = ctx;
+  await goLive(db, 'plates');
+  await ctx.receive(plate, 100);
+  await commit(ctx, [[plate, 10]], { number: '1P' });
+  await commit(ctx, [[plate, 20]], { number: '2P' });
+  const stale = [await onBoard(db, '1P'), await onBoard(db, '2P')];
+  await mark(ctx, 'built', ['2P']);
+
+  const before = await contents(db);
+  const err = await refused(call(db, 'mark_built', ctx.ann.id, crypto.randomUUID(), JSON.stringify(stale), null),
+    'IV409', 'the board showed 2P before it was built');
+  assert.equal(err.message, 'Someone else changed job 2P since you opened this screen.');
+  assert.deepEqual(await contents(db), before, '1P is not built either');
+
+  const key = crypto.randomUUID();
+  const first = await mark(ctx, 'shipped', ['1P', '2P'], { key });
+  const again = await call(db, 'mark_shipped', ctx.ann.id, key,
+    JSON.stringify([{ number: '1P', version: 1 }, { number: '2P', version: 2 }]), null);
+  assert.deepEqual(again, first, 'the retry answers as the first save did');
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 70, 'consumed once: 100 − 10 − 20');
+  assert.deepEqual(first.jobs.map((j) => [j.number, j.status, j.version]), [['1P', 'shipped', 2], ['2P', 'shipped', 3]]);
+});
+
+test('count 8:00, Built 11:00, approval 14:00: on hand includes the build (ADR 0002; story 21)', async () => {
+  const ctx = await withCatalog();
+  const { db, ann, plate } = ctx;
+  await goLive(db, 'plates');
+  await ctx.receive(plate, 100);
+  await commit(ctx, [[plate, 30]]);
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
+  const started = await call(db, 'start_count', ann.id, crypto.randomUUID(), 'plates', 'spot check', null);
+  const lines = JSON.stringify([{ item_id: plate.id, loose: 100 }]);
+  const count = await call(db, 'submit_count', ann.id, crypto.randomUUID(), started.id, started.version, started.closes, lines);
+
+  const asked = await refused(mark(ctx, 'built', ['33864R']), 'IV409', 'Built after a count, with no answer');
+  assert.equal(asked.message, 'Was this before or after the count? Pick one, then save again.');
+  const [built] = (await mark(ctx, 'built', ['33864R'], { timing: { after: count.id } })).jobs;
+  assert.deepEqual(built.timed, { before: false, counted_at: count.counted_at });
+
+  await call(db, 'approve_count', bob.id, crypto.randomUUID(), count.id, count.version, '{}');
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 70, "the count's 100 less the build's 30");
+});
+
+// Today as a refusal says it: October 26, 2026.
+const today = () => new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric' });
+
+test('a sheet for a job already built or shipped is refused with who handled it and when; the same sheet for a built job is unchanged (S28)', async () => {
+  const ctx = await withCatalog();
+  const { plate, lus28 } = ctx;
+  await commit(ctx, [[plate, 5], [lus28, 2]]);
+  await mark(ctx, 'built', ['33864R']);
+  assert.equal((await commit(ctx, [[plate, 5], [lus28, 2]])).unchanged, true, 'the same sheet, built');
+  const changed = await refused(commit(ctx, [[plate, 6], [lus28, 2]]), 'IV422', 'a different sheet, built');
+  assert.equal(changed.message, `Job 33864R was already built by Ann Lee on ${today()}.`);
+
+  await mark(ctx, 'shipped', ['33864R']);
+  const same = await refused(commit(ctx, [[plate, 5], [lus28, 2]]), 'IV422', 'the same sheet, shipped');
+  assert.equal(same.message, `Job 33864R was already shipped by Ann Lee on ${today()}.`);
+});
+
+// Deduct directly as Ann: commits the job and marks it shipped.
+function deduct(ctx, lines, { number = '33864R', key = crypto.randomUUID(), timing = null } = {}) {
+  return call(ctx.db, 'deduct_directly', ctx.ann.id, key, {
+    number, name: 'Smith Residence', delivery_date: '2026-11-02',
+    lines: lines.map(([item, quantity]) => ({ item_id: item.id, quantity })),
+  }, timing && JSON.stringify(timing));
+}
+
+test('Deduct directly commits a sheet and marks it shipped in one step; a retry acts once; a job already in the app is refused (story 19, S22, S28)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28 } = ctx;
+  await goLive(db, 'plates');
+  await ctx.receive(plate, 100);
+  const key = crypto.randomUUID();
+  const job = await deduct(ctx, [[plate, 30], [lus28, 2]], { key });
+  assert.deepEqual([job.number, job.status, job.version], ['33864R', 'shipped', 2]);
+  assert.deepEqual(await deduct(ctx, [[plate, 30], [lus28, 2]], { key }), job, 'the retry answers as the first did');
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 70, 'consumed once');
+  assert.equal((await figure(db, 'committed'))[plate.id], 0);
+  assert.deepEqual((await logRows(db)).slice(-2).map((l) => l.action), ['commit job', 'mark shipped']);
+
+  await commit(ctx, [[plate, 5]], { number: '2P' });
+  const committed = await refused(deduct(ctx, [[plate, 5]], { number: '2P' }), 'IV422', 'a committed job');
+  assert.equal(committed.message, `Job 2P was already committed by Ann Lee on ${today()}; mark it shipped on the Job board.`);
+  const shipped = await refused(deduct(ctx, [[plate, 30], [lus28, 2]]), 'IV422', 'a shipped job');
+  assert.equal(shipped.message, `Job 33864R was already shipped by Ann Lee on ${today()}.`);
+});
+
+// ── Seam 2: Built, Shipped and Deduct directly over HTTP (#100) ─────────────
+
+test('the board gives each job its version and what it can be marked; the confirmation lists what each job consumes; marking several jobs saves them together (stories 18, 20, 22)', async () => {
+  const ctx = await appWithCatalog();
+  await goLive(ctx.db, 'hangers');
+  assert.equal((await commitFile(ctx)).status, 200);
+  assert.equal((await commitFile(ctx, SHEET.replace('33864R', '33865R').replace(',930,MT20  3x4', ',,'))).status, 200);
+  const jobs = await board(ctx);
+  assert.deepEqual(jobs.map((j) => [j.number, j.version, j.can_build, j.can_ship]), [
+    ['33865R', 1, false, true],
+    ['33864R', 1, true, true],
+  ], 'a hangers-only job has no Built (story 18)');
+
+  const res = await get(ctx.base, '/api/jobs/to-consume?to=shipped&number=33864R&number=33865R', ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  const hangers = [
+    { item: 'HUS26', family: 'Hangers', quantity: 8, live: true },
+    { item: 'LUS28', family: 'Hangers', quantity: 12, live: true },
+    { item: 'TC26', family: 'Hangers', quantity: 6, live: true },
+  ];
+  assert.deepEqual((await res.json()).jobs, [
+    { number: '33864R', name: 'Smith Residence', lines: [{ item: 'MT20 3x4', family: 'Plates', quantity: 930, live: false }, ...hangers] },
+    { number: '33865R', name: 'Smith Residence', lines: hangers },
+  ], 'plates are listed, not tracked yet (J4)');
+
+  const marked = await post(ctx.base, '/api/jobs/mark',
+    { key: crypto.randomUUID(), to: 'shipped', jobs: jobs.map(({ number, version }) => ({ number, version })) }, ctx.cookie);
+  assert.equal(marked.status, 200, await marked.clone().text());
+  assert.deepEqual((await board(ctx)).map((j) => [j.number, j.status, j.version, j.can_build, j.can_ship]),
+    [['33865R', 'shipped', 2, false, false], ['33864R', 'shipped', 2, false, false]]);
+  const bad = await post(ctx.base, '/api/jobs/mark', { key: crypto.randomUUID(), to: 'cancelled', jobs: [] }, ctx.cookie);
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error, 'Mark jobs built or shipped.');
+});
+
+test('Deduct directly takes the dropped sheet, commits it and marks it shipped (story 19)', async () => {
+  const ctx = await appWithCatalog();
+  await goLive(ctx.db, 'hangers');
+  const res = await post(ctx.base, '/api/jobs/deduct', { key: crypto.randomUUID(), file: { name: '33864R-materials.csv', text: SHEET } }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual((await res.json()).job, { number: '33864R', name: 'Smith Residence', status: 'shipped', version: 2 });
+  assert.equal((await figure(ctx.db, 'on_hand'))[ctx.items.LUS28.id], -12);
 });

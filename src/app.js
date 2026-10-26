@@ -22,7 +22,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { checkSheet, commitSheet, listJobs, pullList } = require('./jobs/jobs.js');
+const { checkSheet, commitSheet, markJobs, toConsume, listJobs, pullList } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -212,6 +212,19 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
   }));
   app.post('/api/jobs/commit', catchAsync(async (req, res) => {
     const { status, body } = await commitSheet(database, req.user, req.body);
+    res.status(status).json(body);
+  }));
+  // Built, Shipped and Deduct directly (#100), and what marking consumes.
+  app.post('/api/jobs/deduct', catchAsync(async (req, res) => {
+    const { status, body } = await commitSheet(database, req.user, req.body, { deduct: true });
+    res.status(status).json(body);
+  }));
+  app.post('/api/jobs/mark', catchAsync(async (req, res) => {
+    const { status, body } = await markJobs(database, req.user, req.body);
+    res.status(status).json(body);
+  }));
+  app.get('/api/jobs/to-consume', catchAsync(async (req, res) => {
+    const { status, body } = await toConsume(database, req.query.to, req.query.number);
     res.status(status).json(body);
   }));
   // A job's lumber pull list, a page to print (#99).
