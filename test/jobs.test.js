@@ -11,8 +11,10 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, as, APP, firstUser, call, logRows, refused, contents, goLive, figure } = require('./support/database.js');
+const { freshDatabase, urlFor, as, APP, firstUser, call, logRows, refused, contents, goLive, figure } = require('./support/database.js');
 const { withAdmin, get, post } = require('./support/app.js');
+const { openDatabase } = require('../src/db/database.js');
+const { readItemJobs } = require('../src/inventory/item-jobs.js');
 
 // A database with Ann, a supplier, a plate and two hangers in the catalog;
 // receive(item, quantity) receives from the supplier.
@@ -1312,4 +1314,66 @@ test('an item with no name parts is labelled by its length alone, as in 003 (rev
   const label = await as(ctx.db, APP, async (app) => (await app.query(
     `SELECT inv.item_label(pg_catalog.jsonb_populate_record(NULL::inv.items, '{"length_ft": 16}')) AS label`)).rows[0].label);
   assert.equal(label, '16′');
+});
+
+// ── Jobs behind an item on the Overview (#112) ───────────────────────────────
+
+// The jobs listed behind `item`, as [number, quantity] pairs, through the
+// module the route calls.
+async function jobsBehind(db, item) {
+  const database = openDatabase(urlFor(db, 'inv_app'));
+  try {
+    const { jobs } = await readItemJobs(database, String(item.id));
+    return jobs.map((j) => [j.number, j.quantity]);
+  } finally {
+    await database.end();
+  }
+}
+
+test('the jobs behind an item add up to its Committed, in delivery order; a built job lists under a hanger only (#112)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28, hus } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await commit(ctx, [[plate, 100], [lus28, 12], [hus, 4]], { number: '2B', deliveryDate: '2026-11-09' });
+  await commit(ctx, [[plate, 50], [lus28, 6]], { number: '1A', deliveryDate: '2026-11-02' });
+  await commit(ctx, [[lus28, 3]], { number: '1B', deliveryDate: '2026-11-02' });
+  await commit(ctx, [[lus28, 99]], { number: '3C', deliveryDate: '2026-11-01' });
+  await mark(ctx, 'built', ['2B']);
+  await mark(ctx, 'shipped', ['3C']);
+
+  assert.deepEqual(await jobsBehind(db, lus28), [['1A', 6], ['1B', 3], ['2B', 12]], 'delivery date, then job number');
+  assert.deepEqual(await jobsBehind(db, plate), [['1A', 50]], 'built 2B no longer commits its plates; shipped 3C is gone');
+  const committed = await figure(db, 'committed');
+  for (const item of [plate, lus28, hus]) {
+    const sum = (await jobsBehind(db, item)).reduce((n, [, q]) => n + q, 0);
+    assert.equal(sum, committed[item.id], `the jobs behind item ${item.id} add up to its Committed`);
+  }
+});
+
+test('a family not live in Inventory shows no jobs; an unknown item is refused (#112, J4)', async () => {
+  const ctx = await withCatalog();
+  await commit(ctx, [[ctx.plate, 100], [ctx.lus28, 5]]);
+  assert.deepEqual(await jobsBehind(ctx.db, ctx.plate), [], 'plates are not live');
+  assert.deepEqual(await jobsBehind(ctx.db, ctx.lus28), [], 'hangers are not live');
+  const database = openDatabase(urlFor(ctx.db, 'inv_app'));
+  try {
+    assert.deepEqual(await readItemJobs(database, '999999'), { error: 'That item is not in the catalog.' });
+  } finally {
+    await database.end();
+  }
+});
+
+test('the route lists the jobs behind an item, and says so for a bad id (#112)', async () => {
+  const ctx = await appWithCatalog();
+  assert.equal((await commitFile(ctx)).status, 200);
+  await goLive(ctx.db, 'hangers');
+  const hanger = ctx.items.LUS28;
+  const res = await get(ctx.base, `/api/items/jobs?id=${hanger.id}`, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual((await res.json()).jobs, [
+    { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-02', quantity: 12 },
+  ]);
+  const bad = await get(ctx.base, '/api/items/jobs?id=abc', ctx.cookie);
+  assert.deepEqual([bad.status, (await bad.json()).error], [400, 'That item is not in the catalog.']);
 });

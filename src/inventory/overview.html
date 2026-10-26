@@ -119,6 +119,7 @@
   let open = null;        // the id of the item whose row is open
   let mode = null;        // what the open row's panel shows instead: 'rename', 'correct', 'trim' or 'history'
   let historyEntries = null; // the open item's History entries, once loaded
+  let itemJobs = null;    // the open item's committed jobs (#112), once loaded
   let reversing = null;   // the History entry whose Reverse form is open
   let replacing = null;   // the History entry a Correct or Trim form replaces
   let reasons = [];       // the reasons in use and not kept for another entry, for Correct on hand
@@ -126,6 +127,8 @@
   const signed = (n) => (n > 0 ? '+' : '−') + fmtInt(Math.abs(n));
   const fetchHistory = (id) => fetch('/api/items/history?id=' + id).then((r) => r.json())
     .catch(() => ({ ok: false, error: 'The History did not load. Try again.' }));
+  const fetchItemJobs = (id) => fetch('/api/items/jobs?id=' + id).then((r) => r.json())
+    .catch(() => ({ ok: false, error: 'The jobs did not load. Try again.' }));
   const family = (code) => families.find((f) => f.code === code) || { name: code };
   const familyName = (code) => family(code).name;
   const orderUnit = (code) => family(code).order_unit;
@@ -376,7 +379,19 @@
       '<button type="button" class="ghost" data-do="' + (i.active ? 'retire' : 'unretire') + '">' + (i.active ? 'Retire' : 'Un-retire') + '</button>' +
       (family(i.family).live ? '<button type="button" class="ghost" data-do="correct">Correct on hand…</button>' +
         (family(i.family).trimmable ? '<button type="button" class="ghost" data-do="trim">Trim…</button>' : '') : '');
-    return '<div class="row" style="align-items:flex-end">' + stocking + threshold + note + '<span>' + actions + '</span></div>';
+    return '<div data-jobs>' + jobsList(i) + '</div><div class="row" style="align-items:flex-end">' + stocking + threshold + note + '<span>' + actions + '</span></div>';
+  }
+
+  // The committed jobs that make up Committed (#112), in the item's unit.
+  function jobsList(i) {
+    if (itemJobs === null) return '<span class="sub">Loading jobs…</span>';
+    if (itemJobs === false) return '';
+    if (!itemJobs.length) return '<span class="sub">No committed jobs.</span>';
+    return '<h4>Driving demand — ' + itemJobs.length + ' job(s) for ' + esc(itemLabel(i)) + '</h4>' +
+      '<div class="tw"><table><thead><tr><th>Job #</th><th>Name</th><th class="num">Qty</th><th>Delivery</th></tr></thead><tbody>' +
+      itemJobs.map((j) => '<tr><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td class="num">' +
+        inUnit(i, inOrderUnit(j.quantity, i, orderUnit(i.family))) + '</td><td>' + (j.delivery_date ? showDate(j.delivery_date) : '—') + '</td></tr>').join('') +
+      '</tbody></table></div>';
   }
 
   // Correct on hand: the change in pieces, + or −, with a reason, and what on
@@ -619,11 +634,19 @@
     }
     if (tr.classList.contains('item')) toggle(Number(tr.dataset.id));
   });
-  function toggle(id) {
+  async function toggle(id) {
     open = open === id ? null : id;
     mode = null;
     replacing = null;
+    itemJobs = null;
     paint();
+    if (open !== id) return;
+    const body = await fetchItemJobs(id);
+    if (open !== id) return;  // closed while loading
+    // Fills the list in place: a repaint would drop what the person has begun typing.
+    if (!body.ok) { say(body.error, 'bad'); itemJobs = false; } else itemJobs = body.jobs;
+    const spot = el('rows').querySelector('[data-jobs]');
+    if (spot) spot.innerHTML = jobsList(items.find((i) => i.id === id));
   }
 
   // From the keyboard: Enter or Space on a focused row opens or closes it.
