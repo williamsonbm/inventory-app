@@ -26,7 +26,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml } = require('../src/planner/planner-ui.js');
+const { looksLikePlateOrHangerStock, redact, jobBreakdown, renderBreakdown, pickOnHand, flagsHtml, cutInstruction } = require('../src/planner/planner-ui.js');
 
 const REAL_HANGER_STOCK = `sku,on_hand,committed,available,incoming,threshold,flag,last_counted
 HUS26,20,5,15,0,0,OK,
@@ -497,4 +497,18 @@ test('flagsHtml: not in the catalog adds in one click where the plan says how, e
     'lumber links to Overview, adding the line\'s size and grade (Q210)');
   const lvl = flagsHtml({ notInCatalog: true }, '9-12', 'lvl', { size: '9-1/2' });
   assert.ok(lvl.includes('href="/inventory?add=lvl&amp;size=9-1%2F2"'), 'LVL links to Overview, adding the line\'s depth (Q210)');
+});
+
+test('flagsHtml: a lumber line the plan cannot place says so, with the reason, escaped (#99, J58)', () => {
+  const html = flagsHtml({ notPlanned: 'Exceeds longest <16′>' }, 'k', 'lumber');
+  assert.ok(html.includes('>Cannot be planned<'), 'the chip shows');
+  assert.ok(html.includes('Exceeds longest &lt;16′&gt;'), 'the reason shows, escaped');
+  assert.ok(!html.includes('<button'), 'no fix in one click: the lengths we buy are changed in the Planner');
+});
+
+test('cutInstruction: says each kind of cut as the Planner and the pull list print it (#99)', () => {
+  assert.equal(cutInstruction({ stockLengthFt: 16, requiredLengthFt: 16 }), 'full length');
+  assert.equal(cutInstruction({ stockLengthFt: 10, requiredLengthFt: 5 }), '2 × 5′ per board');
+  assert.equal(cutInstruction({ stockLengthFt: 8, requiredLengthFt: 5.5 }), 'cut to 5′ 6″');
+  assert.equal(cutInstruction({ stockLengthFt: 12, requiredLengthFt: 7, contents: [7, 4.5] }), 'cut 7′ + 4′ 6″ from one board');
 });

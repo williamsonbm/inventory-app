@@ -20,12 +20,14 @@
   .drop { border: 2px dashed var(--line, #999); border-radius: 8px; padding: 1.25rem; text-align: center; margin-bottom: 1rem; }
   .drop.over { background: var(--hover, rgba(0, 0, 0, .05)); }
   .not-tracked { font-style: italic; }
+  details.print { position: relative; }
+  details.print > div { position: absolute; right: 0; z-index: 1; background: var(--bg, #fff); border: 1px solid var(--line, #999); border-radius: 6px; padding: .4rem .6rem; white-space: nowrap; }
 </style>
 </head>
 <body>
 <!--
   board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it; and
-  the Job board, one row per job.
+  the Job board, one row per job, with a Print menu for a job with a lumber pull list (#99).
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
   repo has no DOM harness. Reading the sheet, matching its lines, the refusals
@@ -46,12 +48,12 @@
   <label class="drop" id="drop">
     Drop a job's material sheet here, or click to choose it.
     <input type="file" id="file" accept=".csv,text/csv" hidden>
-    <div class="sub">Plates and hangers are committed now; lumber and LVL lines come later. EWP: step 5.</div>
+    <div class="sub">Plates, hangers, lumber and LVL are committed now. EWP: step 5.</div>
   </label>
   <div id="message" role="status"></div>
   <div id="sheet-view"></div>
   <table class="log">
-    <thead><tr><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th></tr></thead>
+    <thead><tr><th>Job</th><th>Name</th><th>Families</th><th>Status</th><th>Delivery</th><th>Last changed (Eastern)</th><th></th></tr></thead>
     <tbody id="rows"></tbody>
   </table>
 </div>
@@ -74,8 +76,11 @@
     el('rows').innerHTML = body.jobs.map((j) => '<tr><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td>' +
       j.families.map(familyText).join(', ') + '</td><td>' + esc(j.status) + '</td><td>' +
       (j.delivery_date ? esc(showDate(j.delivery_date + 'T12:00:00Z')) : '—') + '</td><td>' +
-      esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td></tr>').join('')
-      || '<tr><td colspan="6" class="sub">No jobs yet.</td></tr>';
+      esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td><td>' + (j.pull_list
+        ? '<details class="print"><summary>Print</summary><div><a target="_blank" href="' +
+          esc('/api/jobs/pull-list?' + new URLSearchParams({ number: j.number })) + '">Lumber pull list</a></div></details>'
+        : '') + '</td></tr>').join('')
+      || '<tr><td colspan="7" class="sub">No jobs yet.</td></tr>';
   }
 
   // The sheet last dropped, checked before it is committed (J27).
@@ -86,7 +91,7 @@
   function showLines(lines, intro) {
     shownLines = lines;
     el('sheet-view').innerHTML = !lines.length ? '' : intro + '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
-      lines.map((l, i) => '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + '</td><td>' + esc(l.quantity) + '</td><td>' +
+      lines.map((l, i) => '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + (l.lf ? ' · ' + esc(l.lf) + ' LF' : '') + '</td><td>' + esc(l.quantity) + '</td><td>' +
         flagsHtml(l.flag, String(i), l.family) + '</td></tr>').join('') + '</tbody></table>';
   }
 
@@ -102,12 +107,13 @@
       say(err.unconfirmed ? 'The sheet could not be checked. Drop it again.' : err.message, 'bad');
       return;
     }
-    const { job, lines, warnings } = body;
+    const { job, lines, lvl_by_depth: depths, warnings } = body;
     const flagged = lines.filter((l) => l.flag).length;
     showLines(lines, '<h2>Job ' + esc(job.number) + (job.name ? ' · ' + esc(job.name) : '') + '</h2><p class="sub">Delivery ' +
       (job.delivery_date ? esc(showDate(job.delivery_date + 'T12:00:00Z')) : '—') + '. ' +
       (job.status ? 'This job is already in the app (' + esc(job.status) + '). ' : '') +
-      (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p><p>' +
+      (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p>' +
+      (depths.length ? '<p class="sub">LVL by depth: ' + depths.map((d) => esc(d.label) + ' ' + esc(d.lf) + ' LF').join(', ') + '</p>' : '') + '<p>' +
       '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>Commit job</button> ' +
       '<button type="button" class="ghost" id="clear-job">Clear</button>' +
       (flagged ? ' <span class="sub">Fix the flagged ' + (flagged === 1 ? 'line' : 'lines') + ' first.</span>' : '') + '</p>');

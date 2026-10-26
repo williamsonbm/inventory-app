@@ -19,10 +19,9 @@
    ============================================================= */
 (function () {
   'use strict';
-  const { esc, fmtNum: fmt, fmtInt, ftLabel, buyLf, renderStats, renderWarnings, renderRejected, flagsHtml } = PlannerUI;
+  const { esc, fmtNum: fmt, fmtInt, ftLabel, buyLf, cutInstruction, renderStats, renderWarnings, renderRejected, flagsHtml } = PlannerUI;
   const el = (id) => document.getElementById(id);
 
-  const TOL = 0.0052;
   // Candidate lengths the menu editor offers as chips for every group. A group's
   // own lengths render "on"; the rest render "off" and can be toggled in.
   const CANDIDATE_LENGTHS = [6, 7, 8, 10, 12, 14, 16, 18, 20, 22, 24];
@@ -226,17 +225,6 @@
     // database holds them now, so the old copies are removed.
     try { localStorage.removeItem('lumberMenu.v1'); localStorage.removeItem('lumberRedirects.v1'); } catch { /* storage blocked */ }
     loadOptions();
-  }
-
-  // Cut instruction for one purchase draw, derived from the draw record only.
-  function cutInstruction(d) {
-    if (d.rule === 'mixed' && Array.isArray(d.contents)) {
-      return `cut ${d.contents.map(ftLabel).join(' + ')} from one board`;
-    }
-    const req = d.requiredLengthFt;
-    if (req == null || Math.abs(req - d.stockLengthFt) <= TOL) return 'full length';
-    const n = Math.floor((d.stockLengthFt + TOL) / req);
-    return n >= 2 ? `${n} × ${ftLabel(req)} per board` : `cut to ${ftLabel(req)}`;
   }
 
   // Sort state, shared across in-place repaints.
