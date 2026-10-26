@@ -32,6 +32,8 @@ under `claude-pod` they are at `/workspace/`.
   - Each finding has a number, a concrete failure (inputs → wrong result) and the command
     that shows it.
   - A second review follows only when the fixes change a migration or a database rule.
+  - The reviewer runs outside the pod: a file it must read is named by its host path,
+    `~/Projects/claude-sandbox/...`, not `/workspace/...`.
 - **State test results plainly** — real counts, real pass/fail, never "should pass".
 - **Short replies to the owner.** Under 300 words, at most 3 questions per reply. Log every
   question, recommendation and answer in the open-questions memory, numbered continuously.
