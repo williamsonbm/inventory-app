@@ -22,7 +22,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { checkSheet, commitSheet, markJobs, toConsume, listJobs, pullList } = require('./jobs/jobs.js');
+const { checkSheet, commitSheet, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -225,6 +225,15 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
   }));
   app.get('/api/jobs/to-consume', catchAsync(async (req, res) => {
     const { status, body } = await toConsume(database, req.query.to, req.query.number);
+    res.status(status).json(body);
+  }));
+  // Cancel, Un-build and Un-ship (#101), and what each gives back.
+  app.post('/api/jobs/undo', catchAsync(async (req, res) => {
+    const { status, body } = await undoJob(database, req.user, req.body);
+    res.status(status).json(body);
+  }));
+  app.get('/api/jobs/to-give-back', catchAsync(async (req, res) => {
+    const { status, body } = await toGiveBack(database, req.query.action, req.query.number);
     res.status(status).json(body);
   }));
   // A job's lumber pull list, a page to print (#99).

@@ -355,9 +355,46 @@ async function toConsume(database, to, numbers) {
   return { status: 200, body: { ok: true, jobs } };
 }
 
+// Cancel, Un-build or Un-ship (stories 23–26) one job, `number`, as the
+// board showed it at `version` (J86). `action` names it as the screen does;
+// each has its database function and its activity-log action.
+const UNDO = {
+  cancel: { save: 'cancel_job', logged: 'cancel job' },
+  unbuild: { save: 'unbuild_job', logged: 'un-build' },
+  unship: { save: 'unship_job', logged: 'un-ship' },
+};
+const notUndo = { status: 400, body: { ok: false, error: 'Cancel, un-build or un-ship a job.' } };
+
+async function undoJob(database, person, { key, action, number, version } = {}) {
+  if (!Object.hasOwn(UNDO, action)) return notUndo;
+  const job = await database.save(UNDO[action].save, [person.id, key, number, version]);
+  return { status: 200, body: { ok: true, job } };
+}
+
+// What `action` on job `number` gives back, for its confirmation (J87):
+// the status it goes to, and per item the pieces that come back. Cancel
+// lists the unconsumed lines of live families, which return to available
+// (S25); Un-build and Un-ship the consumed pieces they return to on hand.
+async function toGiveBack(database, action, number) {
+  if (!Object.hasOwn(UNDO, action)) return notUndo;
+  const [job] = await database.read(`
+    SELECT j.number, j.name, inv.undo_to(j, $1) AS "to",
+           coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', c.quantity)
+                              ORDER BY pg_catalog.array_position($3::text[], f.code), inv.item_label(i))
+                       FROM (SELECT g.item_id, -pg_catalog.sum(g.quantity)::integer AS quantity
+                               FROM inv.job_to_give_back(j, $1) g GROUP BY g.item_id
+                             UNION ALL
+                             SELECT c.item_id, c.quantity FROM inv.job_to_consume(j, 'shipped') c WHERE $1 = 'cancel job' AND c.live) c
+                       JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family), '[]') AS lines
+      FROM inv.jobs j WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($2))`, [UNDO[action].logged, number ?? '', FAMILY_ORDER]);
+  if (!job) return { status: 404, body: { ok: false, error: `Job ${number} is not in the app.` } };
+  return { status: 200, body: { ok: true, ...job } };
+}
+
 // The Job board: one row per job, with the families on its current sheet
 // (in the Planner's order, live or not yet), whether it can be marked
-// built or shipped (as inv.mark_jobs allows) and its version for that,
+// built or shipped (as inv.mark_jobs allows) or cancelled, un-built or
+// un-shipped (as inv.undo_job allows), and its version for that,
 // whether it has a lumber pull
 // list, and who changed it last, when.
 function listJobs(database) {
@@ -365,6 +402,9 @@ function listJobs(database) {
     SELECT j.number, j.name, j.status, j.version, j.delivery_date::text AS delivery_date,
            j.status = 'committed' AND EXISTS (SELECT 1 FROM inv.job_to_consume(j, 'built')) AS can_build,
            j.status IN ('committed', 'built') AS can_ship,
+           j.status IN ('committed', 'built') AS can_cancel,
+           j.status = 'built' AS can_unbuild,
+           j.status = 'shipped' AS can_unship,
            (SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('name', f.name, 'live', f.live)
                      ORDER BY pg_catalog.array_position($1::text[], f.code))
               FROM inv.families f
@@ -380,4 +420,4 @@ function listJobs(database) {
      ORDER BY last.at DESC`, [FAMILY_ORDER]);
 }
 
-module.exports = { checkSheet, commitSheet, markJobs, toConsume, listJobs, pullList };
+module.exports = { checkSheet, commitSheet, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList };
