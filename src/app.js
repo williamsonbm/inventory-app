@@ -17,6 +17,7 @@ const { signIn, loadPerson, changePassword } = require('./auth/sign-in.js');
 const { listUsers, saveUserChange, USER_CHANGES } = require('./settings/users.js');
 const { readActivity } = require('./settings/activity.js');
 const { readHistory } = require('./inventory/history.js');
+const { readItemJobs } = require('./inventory/item-jobs.js');
 const { listMonthEnd, readMonthEnd, monthEndCsv } = require('./inventory/month-end.js');
 const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes, readFamilies,
@@ -190,6 +191,12 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
     const { error, entries } = await readHistory(database, req.query.id);
     if (error) return res.status(400).json({ ok: false, error });
     res.json({ ok: true, entries });
+  }));
+  // The committed jobs behind an item (#112).
+  app.get('/api/items/jobs', catchAsync(async (req, res) => {
+    const { error, jobs } = await readItemJobs(database, req.query.id);
+    if (error) return res.status(400).json({ ok: false, error });
+    res.json({ ok: true, jobs });
   }));
   for (const route of Object.keys(SETTINGS_LISTS)) {
     app.get(route, catchAsync(async (_req, res) => {

@@ -9,6 +9,7 @@
 // Glue, NOT UNIT-TESTED: it needs a browser, and this repo has no DOM harness.
 // The routes it calls are tested in test/sign-in.test.js and
 // test/users.test.js; the header is checked by hand (#77, Testing Decisions).
+// The one exception is `showDay`, which test/app-header.test.js loads in a vm.
 //
 // Expects #theme-btn, #user-name and #sign-out in the page, #message
 // where it calls `say`, and #family-filter where it calls `familyBar`. The theme itself
@@ -175,6 +176,10 @@ window.AppHeader = (() => {
   // The office date alone, for a column of dates: "Aug 1, 2026".
   const officeDate = new Intl.DateTimeFormat('en-US', { timeZone: OFFICE_ZONE, dateStyle: 'medium' });
   const showDate = (iso) => officeDate.format(new Date(iso));
+  // A date with no time, "2026-08-17", as the same day: read as midnight UTC it
+  // would show the day before in Eastern Time, so it is read at noon UTC. A
+  // missing date shows as —.
+  const showDay = (d) => (d ? showDate(d + 'T12:00:00Z') : '—');
   // The month a count closes, YYYY-MM, in words: "September 2026". The
   // Activity Log words it the same way on the server (src/settings/activity.js).
   const monthWords = new Intl.DateTimeFormat('en-US', { month: 'long', year: 'numeric', timeZone: 'UTC' });
@@ -244,5 +249,5 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, monthName, countKind, today, familyBar, typingIn };
+  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, showDay, monthName, countKind, today, familyBar, typingIn };
 })();
