@@ -368,7 +368,7 @@ test('a job sheet commits its plate and hanger lines and shows on the Job board 
     number: '33864R', name: 'Smith Residence', status: 'committed', delivery_date: '2026-11-02',
     // Neither family is live in a fresh database, so both are kept but not tracked yet (J4).
     families: [{ name: 'Plates', live: false }, { name: 'Hangers', live: false }],
-    version: 1, can_build: true, can_ship: true, pull_list: false, changed_by: 'Ann Lee', changed_at: 'string',
+    version: 1, can_build: true, can_ship: true, can_cancel: true, can_unbuild: false, can_unship: false, pull_list: false, changed_by: 'Ann Lee', changed_at: 'string',
   });
 
   // The Activity Log names the job, and its family filter finds it by its lines.
@@ -926,4 +926,188 @@ test('History names the job behind a build or ship row and offers no Reverse on 
   assert.match(describeChange('mark built', 'jobs', was,
     { ...was, status: 'built', version: 2, timed: { before: true, counted_at: '2026-10-26T12:00:00Z' } }),
   /^status: committed → built; timed before the count of Oct 26, 2026, 8:00\sAM$/);
+});
+
+// ── Seam 1: Cancel, Un-build and Un-ship (#101) ─────────────────────────────
+
+// Cancels, un-builds or un-ships (`action`: 'cancel_job', 'unbuild_job',
+// 'unship_job') job `number` as Ann, at the version the board shows now.
+async function undo(ctx, action, number, { key = crypto.randomUUID() } = {}) {
+  const { version } = await onBoard(ctx.db, number);
+  return call(ctx.db, action, ctx.ann.id, key, number, version);
+}
+
+test('Un-build gives back the plates the job consumed and puts it back to committed (#101, story 24)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28 } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await ctx.receive(plate, 1000);
+  await ctx.receive(lus28, 20);
+  await commit(ctx, [[plate, 930], [lus28, 12]]);
+  await mark(ctx, 'built', ['33864R']);
+
+  const job = await undo(ctx, 'unbuild_job', '33864R');
+  assert.deepEqual([job.number, job.status, job.version], ['33864R', 'committed', 3]);
+  assert.deepEqual(await figure(db, 'on_hand'), { [plate.id]: 1000, [lus28.id]: 20, [ctx.hus.id]: 0 });
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 930, [lus28.id]: 12, [ctx.hus.id]: 0 });
+  assert.equal((await logRows(db)).at(-1).action, 'un-build');
+});
+
+test('Un-ship gives back what Shipped consumed: a job shipped from committed goes back to built with its plates still consumed, a hangers-only job to committed (#101, J85)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28, hus } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await ctx.receive(plate, 1000);
+  await ctx.receive(lus28, 20);
+  await ctx.receive(hus, 10);
+  await commit(ctx, [[plate, 100], [lus28, 12]], { number: '1B' });
+  await commit(ctx, [[plate, 200], [lus28, 3]], { number: '2D' });
+  await commit(ctx, [[hus, 4]], { number: '3H' });
+  await mark(ctx, 'built', ['1B']);
+  await mark(ctx, 'shipped', ['1B', '2D', '3H']);
+
+  const back = [];
+  for (const n of ['1B', '2D', '3H']) back.push(await undo(ctx, 'unship_job', n));
+  assert.deepEqual(back.map((j) => [j.number, j.status]), [['1B', 'built'], ['2D', 'built'], ['3H', 'committed']]);
+  assert.deepEqual(await figure(db, 'on_hand'), { [plate.id]: 700, [lus28.id]: 20, [hus.id]: 10 },
+    'the plates stay consumed; every hanger is back');
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 15, [hus.id]: 4 });
+  assert.equal((await logRows(db)).at(-1).action, 'un-ship');
+
+  await undo(ctx, 'unbuild_job', '2D');
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 900, "Un-build then gives back 2D's plates, which Shipped consumed");
+});
+
+test('Cancel returns only unconsumed material: a built job keeps its plates consumed; no Un-cancel (#101, S25, story 23)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28, hus } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await ctx.receive(plate, 1000);
+  await ctx.receive(lus28, 20);
+  await commit(ctx, [[plate, 100], [lus28, 12]], { number: '1B' });
+  await commit(ctx, [[plate, 200], [hus, 3]], { number: '2C' });
+  await mark(ctx, 'built', ['1B']);
+
+  const cancelled = [await undo(ctx, 'cancel_job', '1B'), await undo(ctx, 'cancel_job', '2C')];
+  assert.deepEqual(cancelled.map((j) => [j.number, j.status]), [['1B', 'cancelled'], ['2C', 'cancelled']]);
+  assert.deepEqual(await figure(db, 'on_hand'), { [plate.id]: 900, [lus28.id]: 20, [hus.id]: 0 }, "1B's plates stay consumed");
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 0, [hus.id]: 0 });
+  assert.equal((await logRows(db)).at(-1).action, 'cancel job');
+
+  for (const action of ['cancel_job', 'unbuild_job', 'unship_job']) {
+    const err = await refused(undo(ctx, action, '1B'), 'IV422', `${action} on a cancelled job`);
+    assert.match(err.message, /^Job 1B is cancelled, so it cannot be /);
+  }
+  await commit(ctx, [[lus28, 1]], { number: '3S' });
+  const unbuilt = await refused(undo(ctx, 'unbuild_job', '3S'), 'IV422', 'Un-build on a committed job');
+  assert.equal(unbuilt.message, 'Job 3S is committed, so it cannot be un-built.');
+  await mark(ctx, 'shipped', ['3S']);
+  const shipped = await refused(undo(ctx, 'cancel_job', '3S'), 'IV422', 'Cancel on a shipped job');
+  assert.equal(shipped.message, 'Job 3S is shipped, so it cannot be cancelled.');
+});
+
+test('Un-ship after a later approved count leaves on hand unchanged and corrects only the job (#101, S27, Q40, story 25)', async () => {
+  const ctx = await withCatalog();
+  const { db, ann, hus } = ctx;
+  await goLive(db, 'hangers');
+  await ctx.receive(hus, 10);
+  await commit(ctx, [[hus, 4]]);
+  await mark(ctx, 'shipped', ['33864R']);
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
+  const started = await call(db, 'start_count', ann.id, crypto.randomUUID(), 'hangers', 'spot check', null);
+  const count = await call(db, 'submit_count', ann.id, crypto.randomUUID(), started.id, started.version, started.closes,
+    JSON.stringify([{ item_id: hus.id, loose: 6 }]));
+  await call(db, 'approve_count', bob.id, crypto.randomUUID(), count.id, count.version, '{}');
+
+  await undo(ctx, 'unship_job', '33864R');
+  assert.equal((await figure(db, 'on_hand'))[hus.id], 6, "the count's 6, not 6 + 4");
+  assert.equal((await figure(db, 'committed'))[hus.id], 4, 'the job commits its hangers again');
+});
+
+test('Cancel, Un-build and Un-ship refuse a stale save; a retry acts once (#101, Q48, S22)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate } = ctx;
+  await goLive(db, 'plates');
+  await ctx.receive(plate, 100);
+  await commit(ctx, [[plate, 30]]);
+  const stale = await onBoard(db, '33864R');
+  await mark(ctx, 'built', ['33864R']);
+
+  const before = await contents(db);
+  for (const action of ['cancel_job', 'unbuild_job']) {
+    const err = await refused(call(db, action, ctx.ann.id, crypto.randomUUID(), '33864R', stale.version),
+      'IV409', `${action} from the board as it was before Built`);
+    assert.equal(err.message, 'Someone else changed job 33864R since you opened this screen.');
+  }
+  assert.deepEqual(await contents(db), before, 'nothing saved');
+
+  const key = crypto.randomUUID();
+  const first = await undo(ctx, 'unbuild_job', '33864R', { key });
+  const again = await call(db, 'unbuild_job', ctx.ann.id, key, '33864R', 2);
+  assert.deepEqual(again, first, 'the retry answers as the first save did');
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 100, 'given back once');
+});
+
+test('the board says what each job can undo; the confirmation lists what comes back; Un-ship shows in History and the Activity Log (#101, stories 23, 24, 43; J85–J87)', async () => {
+  const ctx = await appWithCatalog();
+  await goLive(ctx.db, 'plates');
+  await goLive(ctx.db, 'hangers');
+  assert.equal((await commitFile(ctx)).status, 200);
+  for (const to of ['built', 'shipped']) {
+    const [job] = await board(ctx);
+    const marked = await post(ctx.base, '/api/jobs/mark',
+      { key: crypto.randomUUID(), to, jobs: [{ number: job.number, version: job.version }] }, ctx.cookie);
+    assert.equal(marked.status, 200, await marked.clone().text());
+  }
+  const can = (j) => [j.status, j.can_cancel, j.can_unbuild, j.can_unship];
+  const [shipped] = await board(ctx);
+  assert.deepEqual(can(shipped), ['shipped', false, false, true]);
+
+  const hangers = [
+    { item: 'HUS26', quantity: 8 },
+    { item: 'LUS28', quantity: 12 },
+    { item: 'TC26', quantity: 6 },
+  ];
+  const preview = await get(ctx.base, '/api/jobs/to-give-back?action=unship&number=33864R', ctx.cookie);
+  assert.equal(preview.status, 200, await preview.clone().text());
+  assert.deepEqual(await preview.json(), { ok: true, number: '33864R', name: 'Smith Residence', to: 'built', lines: hangers });
+
+  const res = await post(ctx.base, '/api/jobs/undo',
+    { key: crypto.randomUUID(), action: 'unship', number: '33864R', version: shipped.version }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal((await res.json()).job.status, 'built');
+  assert.deepEqual(can((await board(ctx))[0]), ['built', true, true, false]);
+
+  const cancel = await (await get(ctx.base, '/api/jobs/to-give-back?action=cancel&number=33864R', ctx.cookie)).json();
+  assert.deepEqual([cancel.to, cancel.lines], ['cancelled', hangers], 'the plates stay consumed; the hangers return to available');
+
+  const history = await (await get(ctx.base, `/api/items/history?id=${ctx.items.LUS28.id}`, ctx.cookie)).json();
+  const [back, out] = history.entries;
+  assert.deepEqual([back.action, back.change, back.detail, back.from_job], ['un-ship', 12, 'Job 33864R, Smith Residence', true]);
+  assert.equal(out.reversed, true, 'the ship row shows as reversed');
+  const log = await (await get(ctx.base, '/api/activity?family=hangers', ctx.cookie)).json();
+  assert.deepEqual([log.entries[0].action, log.entries[0].change], ['un-ship', 'status: shipped → built']);
+
+  const bad = await post(ctx.base, '/api/jobs/undo', { key: crypto.randomUUID(), action: 'delete', number: '33864R', version: 1 }, ctx.cookie);
+  assert.equal(bad.status, 400);
+  assert.equal((await bad.json()).error, 'Cancel, un-build or un-ship a job.');
+});
+
+test('a sheet for a job cancelled or un-shipped is refused with who did that, not who committed it (#101, S28)', async () => {
+  const ctx = await withCatalog();
+  const { db, ann, plate, lus28 } = ctx;
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
+  await commit(ctx, [[plate, 5], [lus28, 2]], { number: '1S' });
+  await commit(ctx, [[plate, 5]], { number: '2C' });
+  await mark(ctx, 'shipped', ['1S']);
+  for (const [action, number] of [['unship_job', '1S'], ['cancel_job', '2C']]) {
+    await call(db, action, bob.id, crypto.randomUUID(), number, (await onBoard(db, number)).version);
+  }
+  const unshipped = await refused(commit(ctx, [[plate, 6], [lus28, 2]], { number: '1S' }), 'IV422', 'a sheet for an un-shipped job');
+  assert.equal(unshipped.message, `Job 1S was already built by Bob Ray on ${today()}.`);
+  const cancelled = await refused(commit(ctx, [[plate, 6]], { number: '2C' }), 'IV422', 'a sheet for a cancelled job');
+  assert.equal(cancelled.message, `Job 2C was already cancelled by Bob Ray on ${today()}.`);
 });

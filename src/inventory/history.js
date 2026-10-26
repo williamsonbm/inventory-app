@@ -101,11 +101,10 @@ const DETAIL = {
   trim: (g) => `trimmed ${g.quantity < 0 ? 'to' : 'from'} ${g.other_length}′${
     g.quantity < 0 ? '' : g.added ? ' and added as Non-Stock' : g.unretired ? ' and put back in use' : ''}${noted(g)}`,
   reverse: (g) => `reverses ${ENTRY_NAMES[g.reverses]}${noted(g)}`,
-  'mark built': (g) => jobWords(g),
-  'mark shipped': (g) => jobWords(g),
+  // A job's row, whatever wrote it (Built, Shipped, Un-build or Un-ship,
+  // #101): the action says what happened, this names the job.
+  job: (g) => `Job ${g.job_number}${g.job_name ? `, ${g.job_name}` : ''}`,
 };
-
-const jobWords = (g) => `Job ${g.job_number}${g.job_name ? `, ${g.job_name}` : ''}`;
 
 // Answers { error } for an item not in the catalog, else { entries }.
 async function readHistory(database, id) {
@@ -115,7 +114,7 @@ async function readHistory(database, id) {
     [LEDGER_ROWS, SETTINGS_ROWS, COUNT_ROWS, CORRECTION_ROWS].map((sql) => database.read(sql, [id])));
   const entries = [
     ...ledger.map((g) => ({ at: g.at, log_id: g.log_id, id: Number(g.id), who: g.who, action: g.action, change: g.quantity,
-      detail: DETAIL[g.reverses ? 'reverse' : g.action](g) + timed(g), reversed: g.reversed,
+      detail: DETAIL[g.job_number !== null ? 'job' : g.reverses ? 'reverse' : g.action](g) + timed(g), reversed: g.reversed,
       // A reversal row, whether Reverse or a replacing entry wrote it: never
       // reversed again (Q44), so the page offers no Reverse on it.
       reversal: g.reverses !== null,

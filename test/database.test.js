@@ -253,11 +253,11 @@ test('no login can insert, update, delete or empty any table (S62)', async () =>
 
 test('the app runs only its granted functions; the Planner runs only the calculation\'s; the backup login none', async () => {
   const db = await freshDatabase();
-  const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'approve_count', 'base_count', 'change_pack_size', 'change_password', 'close_po_line', 'commit_job', 'correct', 'correct_month_end', 'count_entries', 'count_found', 'count_json', 'count_review', 'deduct_directly', 'discard_count',
-    'edit_item', 'edit_po', 'enter_po', 'grant_admin', 'item_label', 'job_committed', 'job_to_consume', 'lumber_sizes', 'mark_built', 'mark_shipped', 'month_end_json', 'nothing_before', 'on_hand_at', 'po_json', 'po_line_number', 'reactivate_user', 'receive', 'received',
+  const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'approve_count', 'base_count', 'cancel_job', 'change_pack_size', 'change_password', 'close_po_line', 'commit_job', 'correct', 'correct_month_end', 'count_entries', 'count_found', 'count_json', 'count_review', 'deduct_directly', 'discard_count',
+    'edit_item', 'edit_po', 'enter_po', 'grant_admin', 'item_label', 'job_committed', 'job_to_consume', 'job_to_give_back', 'lumber_sizes', 'mark_built', 'mark_shipped', 'month_end_json', 'nothing_before', 'on_hand_at', 'po_json', 'po_line_number', 'reactivate_user', 'receive', 'received',
     'record_password_check', 'reject_count', 'remove_lumber_group', 'remove_user', 'rename_item', 'rename_supplier', 'rename_user', 'reopen_po_line', 'retire_item', 'retire_reason', 'reverse', 'revoke_admin',
     'save_count', 'set_count_approval_by_another', 'set_grade_redirect', 'set_lumber_lengths', 'set_lvl_depth_threshold', 'set_password', 'set_working_day_window',
-    'sign_out', 'start_count', 'submit_count', 'tidy', 'trim', 'unretire_item', 'unretire_reason'];
+    'sign_out', 'start_count', 'submit_count', 'tidy', 'trim', 'unbuild_job', 'undo_to', 'unretire_item', 'unretire_reason', 'unship_job'];
   const rows = await as(db, null, async (owner) => (await owner.query(`
     SELECT p.proname AS name,
            pg_catalog.has_function_privilege('inv_app', p.oid, 'EXECUTE') AS app,

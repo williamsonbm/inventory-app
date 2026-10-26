@@ -29,13 +29,15 @@
 <!--
   board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it, or
   Deduct directly (#100); and the Job board, one row per job, with a Print menu for a job with a lumber
-  pull list (#99), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68).
+  pull list (#99), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68);
+  Cancel job, Un-build and Un-ship on each row, one job at a time, after a confirmation (#101, J86, J87).
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
   repo has no DOM harness. Reading the sheet, matching its lines, the refusals
   and the board's rows are tested over HTTP in test/jobs.test.js; the page is
   checked by hand on Preview (#96, Testing Decisions). What marking consumes,
-  and marking itself, are tested over HTTP and in the database.
+  and marking itself, are tested over HTTP and in the database; so are what
+  an undo gives back and the undo itself.
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -85,6 +87,17 @@
     ? '<button type="button" class="ghost" data-mark="' + to + '" data-number="' + esc(j.number) + '">' + (to === 'built' ? 'Built' : 'Shipped') + '</button> '
     : '');
 
+  // What each job can undo, as the server says (#101): the row's button,
+  // the confirmation's words, and its buttons: the row's label and `no` (J87).
+  const UNDO = {
+    cancel: { can: (j) => j.can_cancel, label: 'Cancel job', title: 'Cancel', back: 'Returns to available', no: 'Keep job',
+      note: 'This is final. To put the job back, commit its sheet again.' },
+    unbuild: { can: (j) => j.can_unbuild, label: 'Un-build', title: 'Un-build', back: 'Back to on hand', no: 'Close' },
+    unship: { can: (j) => j.can_unship, label: 'Un-ship', title: 'Un-ship', back: 'Back to on hand', no: 'Close' },
+  };
+  const undoButtons = (j) => Object.entries(UNDO).filter(([, u]) => u.can(j)).map(([action, u]) =>
+    '<button type="button" class="ghost" data-undo="' + action + '" data-number="' + esc(j.number) + '">' + u.label + '</button> ').join('');
+
   // The board as last loaded, by job number, for its versions.
   let jobs = new Map();
 
@@ -98,7 +111,7 @@
       '</td><td>' + esc(j.number) + '</td><td>' + esc(j.name || '') + '</td><td>' +
       j.families.map(familyText).join(', ') + '</td><td>' + esc(j.status) + '</td><td>' +
       (j.delivery_date ? esc(showDate(j.delivery_date + 'T12:00:00Z')) : '—') + '</td><td>' +
-      esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td><td>' + markButton('built', j) + markButton('shipped', j) + (j.pull_list
+      esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td><td>' + markButton('built', j) + markButton('shipped', j) + undoButtons(j) + (j.pull_list
         ? '<details class="print"><summary>Print</summary><div><a target="_blank" href="' +
           esc('/api/jobs/pull-list?' + new URLSearchParams({ number: j.number })) + '">Lumber pull list</a></div></details>'
         : '') + '</td></tr>').join('')
@@ -158,9 +171,41 @@
     }
   }
 
+  // Cancel, Un-build or Un-ship one job (J86) after a confirmation that
+  // lists what comes back and where the job goes (J87). Nothing is saved
+  // until the person confirms.
+  async function confirmUndo(action, number) {
+    say('');
+    const u = UNDO[action];
+    const query = new URLSearchParams({ action, number });
+    const [body] = (await getAll(['/api/jobs/to-give-back?' + query])) ?? [];
+    if (!body) return;
+    el('confirm').innerHTML = '<h2>' + u.title + ' job ' + esc(body.number) + (body.name ? ' · ' + esc(body.name) : '') + '?</h2><p>' +
+      u.back + ': ' + (body.lines.length ? body.lines.map((l) => esc(l.quantity) + ' × ' + esc(l.item)).join(', ') : 'nothing') + '.</p><p>' +
+      (u.note ? '<b>' + u.note + '</b>' : 'The job goes back to ' + esc(body.to) + '.') + '</p><p>' +
+      '<button type="button" id="confirm-undo">' + u.label + '</button> <button type="button" class="ghost" id="keep-job">' + u.no + '</button></p>';
+    el('confirm-undo').addEventListener('click', () => undo({ key: crypto.randomUUID(), action, number, version: jobs.get(number).version }));
+    el('keep-job').addEventListener('click', () => { el('confirm').innerHTML = ''; });
+  }
+
+  // One request, built once with its retry key, as for marking.
+  async function undo(request) {
+    say('');
+    try {
+      const { job } = await send('/api/jobs/undo', request);
+      el('confirm').innerHTML = '';
+      say('Job ' + job.number + (job.status === 'cancelled' ? ' cancelled.' : ' is ' + job.status + ' again.'), 'ok');
+      loadBoard();
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => undo(request) : null);
+    }
+  }
+
   document.addEventListener('click', (e) => {
     const button = e.target.closest('[data-mark]');
     if (button) confirmMark(button.dataset.mark, button.dataset.number ? [button.dataset.number] : selected());
+    const undoing = e.target.closest('[data-undo]');
+    if (undoing) confirmUndo(undoing.dataset.undo, undoing.dataset.number);
   });
 
   // The sheet last dropped, checked before it is committed (J27).
