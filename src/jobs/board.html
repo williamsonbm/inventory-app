@@ -106,7 +106,7 @@
   // the confirmation's words, and its buttons: the row's label and `no` (J87).
   const UNDO = {
     cancel: { can: (j) => j.can_cancel, label: 'Cancel job', title: 'Cancel', back: 'Returns to available', no: 'Keep job',
-      note: 'This is final.' },
+      note: 'This is final. To put the job back, commit its sheet again.' },
     unbuild: { can: (j) => j.can_unbuild, label: 'Un-build', title: 'Un-build', back: 'Back to on hand', no: 'Close' },
     unship: { can: (j) => j.can_unship, label: 'Un-ship', title: 'Un-ship', back: 'Back to on hand', no: 'Close' },
   };
@@ -359,13 +359,16 @@
 
   // A revised sheet's change screen (#120, story 28): each line added,
   // removed or changed against the job's current revision, after the job's
-  // name when the sheet replaces it (Q142).
+  // name when the sheet replaces it (Q142); for a built job, a plate,
+  // lumber or LVL line says what the job consumed and what saving consumes
+  // more (Q27).
   function changesHtml(changes, nameWas, name) {
     const amount = (n) => (n === null ? '—' : esc(n));
     return '<h3>What changed</h3>' + (nameWas === null ? '' : '<p>Job name: ' + esc(nameWas) + ' → ' + esc(name) + '</p>') + (!changes.length ? '<p class="sub">No line changed.</p>'
       : '<table class="log"><thead><tr><th>Family</th><th>Line</th><th>Was</th><th>Now</th><th></th></tr></thead><tbody>' +
         changes.map((c) => '<tr><td>' + esc(c.family) + '</td><td>' + esc(c.sku) + '</td><td>' + amount(c.was) + '</td><td>' + amount(c.now) +
-          '</td><td>' + (c.was === null ? 'added' : c.now === null ? 'removed' : 'changed') + '</td></tr>').join('') + '</tbody></table>') +
+          '</td><td>' + (c.was === null ? 'added' : c.now === null ? 'removed' : 'changed') +
+          (c.consumed === undefined ? '' : '; consumed ' + esc(c.consumed) + ', saving consumes ' + esc(c.more) + ' more') + '</td></tr>').join('') + '</tbody></table>') +
       '<h3>The revised sheet</h3>';
   }
 
@@ -381,7 +384,8 @@
   }
 
   // Shows what committing the sheet would save, with a Commit job button.
-  // Nothing is saved until the person clicks it.
+  // Nothing is saved until the person clicks it. A sheet the commit would
+  // refuse, for a shipped job, shows the refusal and no button (J155).
   async function check() {
     say('');
     showLines([], '');
@@ -396,15 +400,21 @@
     version = job.version;
     const flagged = lines.filter((l) => l.flag).length;
     const revising = job.unchanged === false;
+    const refusal = body.refusal ?? null;
     showLines(lines, '<h2>Job ' + esc(job.number) + (job.name ? ' · ' + esc(job.name) : '') + '</h2><p class="sub">Delivery ' +
       dayText(job.delivery_date) + '. ' +
-      (revising ? 'This is a revised sheet for a job already in the app. Saving it replaces the job\'s lines. '
+      (body.cancelled ? 'Job ' + esc(job.number) + ' was ' + esc(body.cancelled.handled) + '. Saving puts it back as revision ' +
+          esc(body.cancelled.revision) + ', committed. '
+        : revising ? 'This is a revised sheet for a job already in the app. Saving it replaces the job\'s lines' +
+          (job.status === 'built' ? ' and consumes only what the new sheet needs beyond what the job already consumed. ' : '. ')
         : job.status ? 'This job is already in the app (' + esc(job.status) + '). ' : '') +
       (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p>' +
       (depths.length ? '<p class="sub">LVL by depth: ' + depths.map((d) => esc(d.label) + ' ' + esc(d.lf) + ' LF').join(', ') + '</p>' : '') +
-      (revising ? changesHtml(body.changes, body.name_was, job.name) + dateChoiceHtml(body.date_choice, job.delivery_date) : '') + '<p>' +
-      '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>' + (revising ? 'Save revision' : 'Commit job') + '</button> ' +
-      (revising ? '' : '<button type="button" class="ghost" id="deduct-job"' + (flagged ? ' disabled' : '') + '>Deduct directly (already shipped)</button> ') +
+      (refusal ? '<p class="note bad">' + esc(refusal) + '</p>' : '') +
+      (revising || body.changes?.length ? changesHtml(body.changes, body.name_was ?? null, job.name) : '') +
+      (revising ? dateChoiceHtml(body.date_choice, job.delivery_date) : '') + '<p>' +
+      (refusal ? '' : '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>' + (revising ? 'Save revision' : 'Commit job') + '</button> ') +
+      (job.status ? '' : '<button type="button" class="ghost" id="deduct-job"' + (flagged ? ' disabled' : '') + '>Deduct directly (already shipped)</button> ') +
       '<button type="button" class="ghost" id="clear-job">Clear</button>' +
       (flagged ? ' <span class="sub">Fix the flagged ' + (flagged === 1 ? 'line' : 'lines') + ' first.</span>' : '') + '</p>');
   }
@@ -418,7 +428,7 @@
     try {
       const { job } = await send(route, request);
       showLines([], '');
-      say(job.unchanged ? 'Job ' + job.number + ' is already committed from this sheet; nothing changed.'
+      say(job.unchanged ? 'Job ' + job.number + ' already has this sheet; nothing changed.'
         : job.revision > 1 ? 'Job ' + job.number + ' revised: revision ' + job.revision + ' saved.'
         : 'Job ' + job.number + (job.status === 'shipped' ? ' committed and marked shipped.' : ' committed.'), 'ok');
       loadBoard();
