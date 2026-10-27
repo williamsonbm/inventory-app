@@ -32,12 +32,12 @@ async function withCatalog() {
 // A revised sheet carries the version its change screen saw and, when its
 // date differs from the job's, keepDate: whether the job keeps its own.
 function commit(ctx, lines, { number = '33864R', name = 'Smith Residence', deliveryDate = '2026-11-02', key = crypto.randomUUID(),
-  version, keepDate } = {}) {
+  version, keepDate, timing } = {}) {
   return call(ctx.db, 'commit_job', ctx.ann.id, key, {
     number, name, delivery_date: deliveryDate,
     lines: lines.map(([item, quantity]) => ({ item_id: item.id, quantity })),
     version, keep_date: keepDate,
-  });
+  }, ...(timing ? [JSON.stringify(timing)] : []));
 }
 
 // The current lines of job `number` as item id → quantity.
@@ -493,6 +493,35 @@ test('a second file with the same job number shows what changed and asks which d
   assert.equal(stale.status, 409, 'a change screen opened before the revision');
 });
 
+test('the check of a built, shipped or cancelled job says what saving does: what a built job consumes more, the refusal for a shipped one, the cancel it undoes (#121, J154–J156)', async () => {
+  const ctx = await appWithCatalog();
+  await goLive(ctx.db, 'plates');
+  assert.equal((await commitFile(ctx)).status, 200);
+  await mark(ctx, 'built', ['33864R']);
+
+  const revised = SHEET.replace(',930,MT20  3x4', ',950,MT20  3x4').replace('12,Hanger,LUS28,,,,$1.00,$12.00', '14,Hanger,LUS28,,,,$1.00,$14.00');
+  const built = await (await checkFile(ctx, revised)).json();
+  assert.deepEqual([built.job.status, built.job.version, built.job.unchanged, built.refusal, built.cancelled], ['built', 2, false, undefined, undefined]);
+  assert.deepEqual(built.changes, [
+    { family: 'plates', sku: 'MT20 3x4', was: 930, now: 950, used: 930, more: 20 },
+    { family: 'hangers', sku: 'LUS28', was: 12, now: 14 },
+  ], 'a plate line says what the job used and what saving consumes more; a hanger line waits for Shipped');
+  assert.equal((await commitFile(ctx, revised, crypto.randomUUID(), { version: 2 })).status, 200);
+
+  await mark(ctx, 'shipped', ['33864R']);
+  const shipped = await (await checkFile(ctx)).json();
+  assert.deepEqual([shipped.job.status, shipped.refusal], ['shipped', `Job 33864R was already shipped by Ann Lee on ${today()}; un-ship it first.`]);
+  assert.deepEqual(shipped.changes.map((c) => [c.sku, c.was, c.now]), [['MT20 3x4', 950, 930], ['LUS28', 14, 12]], 'the refusal shows the difference');
+  const sameShipped = await (await checkFile(ctx, revised)).json();
+  assert.deepEqual([sameShipped.refusal, sameShipped.changes], [`Job 33864R was already shipped by Ann Lee on ${today()}.`, []]);
+
+  await undo(ctx, 'unship_job', '33864R');
+  await undo(ctx, 'cancel_job', '33864R');
+  const cancelled = await (await checkFile(ctx, revised)).json();
+  assert.deepEqual([cancelled.job.status, cancelled.job.unchanged, cancelled.changes, cancelled.refusal, cancelled.cancelled],
+    ['cancelled', false, [], undefined, { handled: `cancelled by Ann Lee on ${today()}`, revision: 3 }], 'the same sheet commits a cancelled job again, as revision 3');
+});
+
 test('a revised sheet that changes only the job name shows the name it replaces (#120, Q142)', async () => {
   const ctx = await appWithCatalog();
   assert.equal((await commitFile(ctx)).status, 200);
@@ -804,6 +833,11 @@ async function onBoard(db, number) {
     (await app.query('SELECT number, version FROM inv.jobs WHERE number = $1', [number])).rows[0]);
 }
 
+// The status of job `number`.
+async function jobStatus(db, number) {
+  return as(db, APP, async (app) => (await app.query('SELECT status FROM inv.jobs WHERE number = $1', [number])).rows[0].status);
+}
+
 // Marks jobs `numbers` built or shipped (`status`) as Ann, at the versions
 // the board shows now.
 async function mark(ctx, status, numbers, { timing = null, key = crypto.randomUUID() } = {}) {
@@ -914,20 +948,61 @@ test('count 8:00, Built 11:00, approval 14:00: on hand includes the build (ADR 0
   assert.equal((await figure(db, 'on_hand'))[plate.id], 70, "the count's 100 less the build's 30");
 });
 
+test('a revised sheet that consumes more of a built job asks "before or after the count?" as Built does; one that consumes nothing does not ask (#121, J154)', async () => {
+  const ctx = await withCatalog();
+  const { db, ann, plate } = ctx;
+  await goLive(db, 'plates');
+  await ctx.receive(plate, 100);
+  await commit(ctx, [[plate, 30]]);
+  await mark(ctx, 'built', ['33864R']);
+  const started = await call(db, 'start_count', ann.id, crypto.randomUUID(), 'plates', 'spot check', null);
+  const lines = JSON.stringify([{ item_id: plate.id, loose: 70 }]);
+  const count = await call(db, 'submit_count', ann.id, crypto.randomUUID(), started.id, started.version, started.closes, lines);
+
+  const version = (await onBoard(db, '33864R')).version;
+  const asked = await refused(commit(ctx, [[plate, 40]], { version }), 'IV409', 'a revision that consumes more, after a count, with no answer');
+  assert.equal(asked.message, 'Was this before or after the count? Pick one, then save again.');
+  const revised = await commit(ctx, [[plate, 40]], { version, timing: { after: count.id } });
+  assert.deepEqual([revised.revision, revised.timed], [2, { before: false, counted_at: count.counted_at }]);
+  const less = await commit(ctx, [[plate, 35]], { version: (await onBoard(db, '33864R')).version });
+  assert.equal(less.revision, 3, 'a revision that consumes nothing more saves without asking');
+});
+
 // Today as a refusal says it: October 26, 2026.
 const today = () => new Date().toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric' });
 
-test('a sheet for a job already built or shipped is refused with who handled it and when, the same sheet too (S28, J75)', async () => {
+test('a revised sheet for a built job consumes only what it needs beyond what the job consumed; the same sheet is unchanged (Q27, S66, J154, J157)', async () => {
   const ctx = await withCatalog();
-  const { plate, lus28 } = ctx;
-  await commit(ctx, [[plate, 5], [lus28, 2]]);
+  const { db, plate, lus28, hus } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await ctx.receive(plate, 100);
+  await ctx.receive(hus, 10);
+  await commit(ctx, [[plate, 30], [lus28, 2]]);
   await mark(ctx, 'built', ['33864R']);
-  const sameBuilt = await refused(commit(ctx, [[plate, 5], [lus28, 2]]), 'IV422', 'the same sheet, built');
-  assert.equal(sameBuilt.message, `Job 33864R was already built by Ann Lee on ${today()}.`);
-  const changed = await refused(commit(ctx, [[plate, 6], [lus28, 2]]), 'IV422', 'a different sheet, built');
-  assert.equal(changed.message, `Job 33864R was already built by Ann Lee on ${today()}.`);
+  const same = await commit(ctx, [[plate, 30], [lus28, 2]]);
+  assert.equal(same.unchanged, true, 'the same sheet for a built job changes nothing');
 
+  const more = await commit(ctx, [[plate, 40], [lus28, 2], [hus, 3]], { version: (await onBoard(db, '33864R')).version });
+  assert.equal(more.revision, 2);
+  assert.deepEqual(await figure(db, 'on_hand'), { [plate.id]: 60, [lus28.id]: 0, [hus.id]: 10 }, 'the revision takes the 10 plates beyond the 30 built');
+  assert.deepEqual(await figure(db, 'committed'), { [plate.id]: 0, [lus28.id]: 2, [hus.id]: 3 }, 'hangers stay committed until Shipped');
+  assert.equal(await jobStatus(db, '33864R'), 'built', 'the job stays built');
+
+  await commit(ctx, [[plate, 25], [lus28, 2], [hus, 3]], { version: (await onBoard(db, '33864R')).version });
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 60, 'what was consumed stays consumed when the sheet needs less');
+  await call(db, 'unbuild_job', ctx.ann.id, crypto.randomUUID(), '33864R', (await onBoard(db, '33864R')).version);
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 100, 'Un-build gives back the 40 the job consumed');
+});
+
+test('a sheet for a shipped job is refused with who shipped it and when; a changed one says to un-ship it first (S28, S30, Q61, J155)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28 } = ctx;
+  await commit(ctx, [[plate, 5], [lus28, 2]]);
   await mark(ctx, 'shipped', ['33864R']);
+  const changed = await refused(commit(ctx, [[plate, 6], [lus28, 2]], { version: (await onBoard(db, '33864R')).version }),
+    'IV422', 'a changed sheet, shipped');
+  assert.equal(changed.message, `Job 33864R was already shipped by Ann Lee on ${today()}; un-ship it first.`);
   const same = await refused(commit(ctx, [[plate, 5], [lus28, 2]]), 'IV422', 'the same sheet, shipped');
   assert.equal(same.message, `Job 33864R was already shipped by Ann Lee on ${today()}.`);
 });
@@ -1297,23 +1372,32 @@ test('the board says what each job can undo; the confirmation lists what comes b
   assert.equal((await bad.json()).error, 'Cancel, un-build or un-ship a job.');
 });
 
-test('a sheet for a job cancelled or un-shipped is refused with who did that and what they did; an un-built job takes a revision (#101, #120, S28, J92)', async () => {
+test('a cancelled job\'s sheet, the same one too, commits it again as its next revision, keeping what it consumed; un-shipped and un-built jobs take a revision (#121, S64, story 14, J156)', async () => {
   const ctx = await withCatalog();
   const { db, ann, plate, lus28 } = ctx;
   const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
+  await goLive(db, 'plates');
+  await ctx.receive(plate, 20);
   await commit(ctx, [[plate, 5], [lus28, 2]], { number: '1S' });
   await commit(ctx, [[plate, 5]], { number: '2C' });
   await mark(ctx, 'shipped', ['1S']);
+  await mark(ctx, 'built', ['2C']);
   for (const [action, number] of [['unship_job', '1S'], ['cancel_job', '2C']]) {
     await call(db, action, bob.id, crypto.randomUUID(), number, (await onBoard(db, number)).version);
   }
-  const unshipped = await refused(commit(ctx, [[plate, 6], [lus28, 2]], { number: '1S' }), 'IV422', 'a sheet for an un-shipped job');
-  assert.equal(unshipped.message, `Job 1S was already built (un-shipped by Bob Ray on ${today()}).`);
-  const cancelled = await refused(commit(ctx, [[plate, 6]], { number: '2C' }), 'IV422', 'a sheet for a cancelled job');
-  assert.equal(cancelled.message, `Job 2C was already cancelled by Bob Ray on ${today()}.`);
+  const unshipped = await commit(ctx, [[plate, 6], [lus28, 2]], { number: '1S', version: (await onBoard(db, '1S')).version });
+  assert.equal(unshipped.revision, 2, 'an un-shipped job is built again, so a different sheet is its next revision');
+
+  const again = await commit(ctx, [[plate, 7]], { number: '2C', version: (await onBoard(db, '2C')).version });
+  assert.equal(again.revision, 2, 'a cancelled job\'s sheet is its next revision');
+  assert.equal(await jobStatus(db, '2C'), 'committed', 'and puts it back to committed');
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 20 - 6 - 5, 'the 5 built before the cancel stay consumed');
+  assert.equal((await figure(db, 'committed'))[plate.id], 2, 'it commits only the 2 beyond the 5 it consumed');
+  await call(db, 'cancel_job', bob.id, crypto.randomUUID(), '2C', (await onBoard(db, '2C')).version);
+  const same = await commit(ctx, [[plate, 7]], { number: '2C', version: (await onBoard(db, '2C')).version });
+  assert.equal(same.revision, 3, 'the same content after a cancel is a new revision (S64)');
 
   await commit(ctx, [[plate, 5]], { number: '3U' });
-  await goLive(db, 'plates');
   await mark(ctx, 'built', ['3U']);
   await call(db, 'unbuild_job', bob.id, crypto.randomUUID(), '3U', (await onBoard(db, '3U')).version);
   // Un-built, the job is committed again and has consumed nothing, so a different sheet is its next revision (#120).
