@@ -495,10 +495,10 @@ test('a second file with the same job number shows what changed and asks which d
 
 test('the check of a built, shipped or cancelled job says what saving does: what a built job consumes more, the refusal for a shipped one, the cancel it undoes (#121, J154–J156)', async () => {
   const ctx = await appWithCatalog({ plates: ['MT20 3x4', 'MT20 2x4'], hangers: ['LUS28', 'HUS26', 'TC26'] });
-  await goLive(ctx.db, 'plates');
   await goLive(ctx.db, 'hangers');
   assert.equal((await commitFile(ctx)).status, 200);
   await mark(ctx, 'built', ['33864R']);
+  await goLive(ctx.db, 'plates');
 
   const revised = SHEET.replace(',930,MT20  3x4,64.18,5580', ',950,MT20  3x4,64.18,5580\n,8,MT20  2x4,1.00,48')
     .replace('12,Hanger,LUS28,,,,$1.00,$12.00', '14,Hanger,LUS28,,,,$1.00,$14.00');
@@ -508,7 +508,7 @@ test('the check of a built, shipped or cancelled job says what saving does: what
     { family: 'plates', sku: 'MT20 2x4', was: null, now: 8, consumed: 0, more: 8 },
     { family: 'plates', sku: 'MT20 3x4', was: 930, now: 950, consumed: 930, more: 20 },
     { family: 'hangers', sku: 'LUS28', was: 12, now: 14 },
-  ], 'a plate line says what the job consumed and what saving consumes more; a live hanger line waits for Shipped');
+  ], 'a plate line says what Built settled, though plates went live after it, and what saving consumes more; a live hanger line waits for Shipped');
   assert.equal((await commitFile(ctx, revised, crypto.randomUUID(), { version: 2 })).status, 200);
 
   await mark(ctx, 'shipped', ['33864R']);
@@ -999,18 +999,24 @@ test('a revised sheet for a built job consumes only what it needs beyond what th
   assert.equal((await figure(db, 'on_hand'))[plate.id], 100, 'Un-build gives back the 40 the job consumed');
 });
 
-test('a revision of a built job consumes a line of a family that went live after Built only beyond what any sheet since Built asked; who built the job stays its builder (J4, PR #126 findings 1 and 2)', async () => {
+test('a revision of a built job consumes a line of a family that went live after Built or Shipped only beyond what any sheet since then asked; who built the job stays its builder (J4, PR #126 findings 1 and 2)', async () => {
   const ctx = await withCatalog();
   const { db, ann, plate, lus28 } = ctx;
   const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
   await goLive(db, 'hangers');
   await commit(ctx, [[plate, 930], [lus28, 12]]);
   await mark(ctx, 'built', ['33864R']);
+  await commit(ctx, [[plate, 930], [lus28, 12]], { number: '2P' });
+  await mark(ctx, 'shipped', ['2P']);
+  await undo(ctx, 'unship_job', '2P');
+  assert.equal(await jobStatus(db, '2P'), 'built', 'Un-ship of a job with plates makes it built, with no Built of its own');
   await goLive(db, 'plates');
   await ctx.receive(plate, 70);
-  const version = async () => (await onBoard(db, '33864R')).version;
+  const version = async (number = '33864R') => (await onBoard(db, number)).version;
   await commit({ ...ctx, ann: bob }, [[plate, 930], [lus28, 14]], { version: await version() });
   assert.equal((await figure(db, 'on_hand'))[plate.id], 70, 'Built settled the 930 plates, though plates were not live then');
+  await commit(ctx, [[plate, 930], [lus28, 14]], { number: '2P', version: await version('2P') });
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 70, 'Shipped settled the 930 plates of job 2P too');
   await commit(ctx, [[plate, 1000], [lus28, 14]], { version: await version() });
   assert.equal((await figure(db, 'on_hand'))[plate.id], 0, 'the revision consumes the 70 beyond the 930');
   await commit(ctx, [[plate, 930], [lus28, 14]], { version: await version() });

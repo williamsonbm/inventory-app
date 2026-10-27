@@ -10,8 +10,8 @@
 -- so both are dropped and created again; the app as deployed before 015
 -- calls inv.commit_job with three arguments, which p_timing's default still
 -- takes. A different sheet for a built job, refused until now, is its next
--- revision and consumes the plates, lumber and LVL it needs beyond what
--- Built and the revisions since settled (inv.job_settled); the same sheet
+-- revision and consumes the plates, lumber and LVL it needs beyond what is
+-- settled (inv.job_settled, which refines Q27's rule); the same sheet
 -- for one is unchanged; a cancelled job's sheet
 -- commits it again. No existing row changes meaning.
 -- Recovery: before any built or cancelled job is revised, drop these two
@@ -24,22 +24,29 @@
 DROP FUNCTION inv.commit_job(bigint, uuid, jsonb);
 DROP FUNCTION inv.commit_sheet(bigint, uuid, jsonb, boolean);
 
--- What Built and the revisions since settled of each line of built job
--- p_job: the most any of its sheets since Built asked, or what the job
--- consumed when that is more. A line of a family not live at Built is
--- settled though not consumed (J4, 011), so a revision consumes only beyond
--- it; and a line lowered, then raised again, is not consumed twice. The
--- sheets since Built are the one current at the job's last 'mark built'
--- and every later one. The check before a commit shows the same figures
--- (src/jobs/jobs.js, checkSheet).
+-- What is settled of each line of built job p_job: the most any of its
+-- sheets since it was built or shipped asked, or what the job consumed
+-- when that is more. This refines Q27's "new quantity − consumed" (owner,
+-- J168): a line of a family not live at Built or Shipped is settled though
+-- not consumed (J4, 011), so a revision consumes only beyond it. Those
+-- sheets are the one current at the job's first 'mark built' or 'mark
+-- shipped' since its last 'un-build', and every later one: a job shipped
+-- from committed and then un-shipped is built with no 'mark built' (012,
+-- inv.undo_to). Deliberately the most of those sheets, not the last
+-- revision only: with the last only, a line of a family that went live
+-- after Built, lowered and then raised again, is consumed a second time.
+-- The check before a commit shows the same figures (src/jobs/jobs.js,
+-- checkSheet). A swap (Q36, not built yet) must change this.
 CREATE FUNCTION inv.job_settled(p_job inv.jobs)
 RETURNS TABLE (item_id bigint, quantity integer)
 LANGUAGE sql STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
   WITH built AS (
-    SELECT pg_catalog.max(l.id) AS id FROM inv.activity_log l
-     WHERE l.target_table = 'jobs' AND l.target_id = p_job.id AND l.action = 'mark built')
+    SELECT pg_catalog.min(l.id) AS id FROM inv.activity_log l
+     WHERE l.target_table = 'jobs' AND l.target_id = p_job.id AND l.action IN ('mark built', 'mark shipped')
+       AND l.id > coalesce((SELECT pg_catalog.max(u.id) FROM inv.activity_log u
+                             WHERE u.target_table = 'jobs' AND u.target_id = p_job.id AND u.action = 'un-build'), 0))
   SELECT x.item_id, pg_catalog.max(x.quantity)::integer
     FROM (SELECT l.item_id, l.quantity
             FROM inv.job_lines l JOIN inv.job_sheets s ON s.id = l.sheet_id
