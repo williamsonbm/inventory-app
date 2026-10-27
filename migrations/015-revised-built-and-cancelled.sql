@@ -25,15 +25,17 @@ DROP FUNCTION inv.commit_job(bigint, uuid, jsonb);
 DROP FUNCTION inv.commit_sheet(bigint, uuid, jsonb, boolean);
 
 -- What is settled of each line of built job p_job: the most any of its
--- sheets since it was built or shipped asked, or what the job consumed
+-- sheets since Built or Shipped (as below) asked, or what the job consumed
 -- when that is more. This refines Q27's "new quantity − consumed" (owner,
 -- J168): a line of a family not live at Built or Shipped is settled though
 -- not consumed (J4, 011), so a revision consumes only beyond it. Those
 -- sheets are the one current at the job's first 'mark built' or 'mark
--- shipped' since its last 'un-build', and every later one: a job shipped
--- from committed and then un-shipped is built with no 'mark built' (012,
--- inv.undo_to). Deliberately the most of those sheets, not the last
--- revision only: with the last only, a line of a family that went live
+-- shipped' since it was last put back to committed or cancelled (an
+-- 'un-build', a 'cancel job' or an 'un-ship' whose new status is one of
+-- those, J171), and every later one: a job shipped from committed and then
+-- un-shipped is built with no 'mark built' (012, inv.undo_to).
+-- Deliberately the most of those sheets, not the last revision only: with
+-- the last only, a line of a family that went live
 -- after Built, lowered and then raised again, is consumed a second time.
 -- The check before a commit shows the same figures (src/jobs/jobs.js,
 -- checkSheet). A swap (Q36, not built yet) must change this.
@@ -46,7 +48,9 @@ AS $$
     SELECT pg_catalog.min(l.id) AS id FROM inv.activity_log l
      WHERE l.target_table = 'jobs' AND l.target_id = p_job.id AND l.action IN ('mark built', 'mark shipped')
        AND l.id > coalesce((SELECT pg_catalog.max(u.id) FROM inv.activity_log u
-                             WHERE u.target_table = 'jobs' AND u.target_id = p_job.id AND u.action = 'un-build'), 0))
+                             WHERE u.target_table = 'jobs' AND u.target_id = p_job.id
+                               AND u.action IN ('un-build', 'cancel job', 'un-ship')
+                               AND u.new_value ->> 'status' IN ('committed', 'cancelled')), 0))
   SELECT x.item_id, pg_catalog.max(x.quantity)::integer
     FROM (SELECT l.item_id, l.quantity
             FROM inv.job_lines l JOIN inv.job_sheets s ON s.id = l.sheet_id
@@ -62,8 +66,8 @@ GRANT EXECUTE ON FUNCTION inv.job_settled(inv.jobs) TO inv_app;
 
 -- 014's inv.commit_sheet, now taking a revised sheet for a built or a
 -- cancelled job too. For a built job the revision then consumes, for each
--- live plate, lumber and LVL line, what it needs beyond what Built and the
--- revisions since settled (inv.job_settled, Q27, S66), timed by p_timing as
+-- live plate, lumber and LVL line, what it needs beyond what is settled
+-- (inv.job_settled, Q27, S66), timed by p_timing as
 -- Built is; what was consumed stays consumed. A cancelled job's sheet, the same one too (S64),
 -- is its next revision and puts it back to committed (story 14), keeping
 -- what it consumed before the cancel. A sheet for a shipped job is refused,

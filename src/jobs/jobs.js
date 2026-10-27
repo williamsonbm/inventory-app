@@ -262,8 +262,7 @@ function jobPayload(sheet, rows, plan, { version, keep_date } = {}) {
 // changed against `current`, the job's current revision's lines, was → now,
 // in the families' order, then by SKU. A removed line is named as the
 // catalog names it. `consumed(family, item_id)`, for a built job, is what
-// Built and the revisions since settled of an item of a family consumed at
-// Built (inv.job_settled): its line adds `consumed` and the `more` saving
+// is settled of an item of a family consumed at Built (inv.job_settled): its line adds `consumed` and the `more` saving
 // consumes (Q27).
 function sheetChanges(current, rows, consumed = () => undefined) {
   const was = new Map(current.map((l) => [String(l.item_id), l]));
