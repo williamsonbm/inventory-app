@@ -261,15 +261,16 @@ function jobPayload(sheet, rows, plan, { version, keep_date } = {}) {
 // A revised sheet's change screen (story 28): each line added, removed or
 // changed against `current`, the job's current revision's lines, was → now,
 // in the families' order, then by SKU. A removed line is named as the
-// catalog names it. `used(family, item_id)`, for a built job, is what the
-// job consumed of an item of a family consumed at Built: its line adds
-// `used` and the `more` saving consumes (Q27).
-function sheetChanges(current, rows, used = () => undefined) {
+// catalog names it. `consumed(family, item_id)`, for a built job, is what
+// Built and the revisions since settled of an item of a family consumed at
+// Built (inv.job_settled): its line adds `consumed` and the `more` saving
+// consumes (Q27).
+function sheetChanges(current, rows, consumed = () => undefined) {
   const was = new Map(current.map((l) => [String(l.item_id), l]));
   const changes = [];
   const change = ({ family, sku, item_id }, before, now) => {
-    const u = used(family, item_id);
-    changes.push({ family, sku, was: before, now, ...(u !== undefined && { used: u, more: Math.max((now ?? 0) - u, 0) }) });
+    const c = consumed(family, item_id);
+    changes.push({ family, sku, was: before, now, ...(c !== undefined && { consumed: c, more: Math.max((now ?? 0) - c, 0) }) });
   };
   for (const row of rows) {
     const before = was.get(String(row.item_id));
@@ -286,8 +287,8 @@ function sheetChanges(current, rows, used = () => undefined) {
 // built or cancelled job (#120, #121) the job adds its version and whether
 // the sheet is `unchanged` (its current revision: never for a cancelled
 // job, whose sheet commits it again, S64); a revised sheet lists its
-// `changes`, for a built job with what each plate, lumber and LVL line used
-// and consumes more (Q27), and, when its date is not the job's,
+// `changes`, for a built job with what each plate, lumber and LVL line
+// consumed and consumes more (Q27), and, when its date is not the job's,
 // `date_choice`: the job's date and who set it by hand, and when (story
 // 34); when its name is not the job's, `name_was`: the job's name, which
 // the revision replaces (Q142). A cancelled job adds `cancelled`: who
@@ -300,12 +301,11 @@ async function checkSheet(database, { file } = {}) {
   if (refusal) return refusal;
   const { job_number: number, job_name: name, delivery_date } = sheet.meta;
   const [found] = await database.read(`
-    SELECT j.status, j.version, j.delivery_date::text AS delivery_date, u.name AS set_by, l.at AS set_at,
+    SELECT j.number, j.status, j.version, j.delivery_date::text AS delivery_date, u.name AS set_by, l.at AS set_at,
            CASE WHEN j.name IS DISTINCT FROM inv.tidy($3) THEN j.name END AS name_was,
            inv.is_current_sheet($2) AS unchanged, inv.job_handled(j) AS handled,
            (SELECT max(s.revision) FROM inv.job_sheets s WHERE s.job_id = j.id) AS revision,
-           (SELECT coalesce(pg_catalog.jsonb_object_agg(c.item_id, c.used), '{}')
-              FROM (SELECT g.item_id, -pg_catalog.sum(g.quantity) AS used FROM inv.ledger g WHERE g.job_id = j.id GROUP BY g.item_id) c) AS consumed,
+           (SELECT coalesce(pg_catalog.jsonb_object_agg(t.item_id, t.quantity), '{}') FROM inv.job_settled(j) t) AS settled,
            ARRAY(SELECT f.code FROM inv.families f WHERE f.consumed_when = 'built' AND f.live) AS built_families,
            (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
                      'item_id', jl.item_id, 'family', i.family, 'sku', inv.item_label(i), 'quantity', jl.quantity)), '[]')
@@ -321,11 +321,11 @@ async function checkSheet(database, { file } = {}) {
   const open = ['committed', 'built', 'cancelled'].includes(status);
   const unchanged = status !== 'cancelled' && same;
   const revising = open && !unchanged;
-  const used = (family, id) => (status === 'built' && found.built_families.includes(family) ? found.consumed[id] ?? 0 : undefined);
-  const changes = (status === 'shipped' || revising) && !same ? sheetChanges(found.current, rows, used) : [];
+  const consumed = (family, id) => (status === 'built' && found.built_families.includes(family) ? found.settled[id] ?? 0 : undefined);
+  const changes = (status === 'shipped' || revising) && !same ? sheetChanges(found.current, rows, consumed) : [];
   const revision = status === 'shipped' ? {
     changes,
-    refusal: `Job ${number} was already ${found.handled}${same ? '' : '; un-ship it first'}.`,
+    refusal: `Job ${found.number} was already ${found.handled}${same ? '' : '; un-ship it first'}.`,
   } : !open ? {} : {
     changes,
     date_choice: revising && found.delivery_date !== (delivery_date ?? null)

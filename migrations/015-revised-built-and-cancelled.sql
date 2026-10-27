@@ -3,27 +3,61 @@
 -- ("Revisions"); design Q27, S30, S64, S66; owner J154–J157. Every name is
 -- fully qualified (#28).
 --
--- Reach: inv_app may run inv.job_handled. inv.commit_sheet and
+-- Reach: inv_app may run inv.job_handled and the new inv.job_settled;
+-- inv.job_handled no longer names who saved a revision as who built,
+-- shipped or cancelled the job. inv.commit_sheet and
 -- inv.commit_job take p_timing, the answer to "before or after the count?",
 -- so both are dropped and created again; the app as deployed before 015
 -- calls inv.commit_job with three arguments, which p_timing's default still
 -- takes. A different sheet for a built job, refused until now, is its next
--- revision and consumes the plates, lumber and LVL it needs beyond what the
--- job consumed; the same sheet for one is unchanged; a cancelled job's sheet
+-- revision and consumes the plates, lumber and LVL it needs beyond what
+-- Built and the revisions since settled (inv.job_settled); the same sheet
+-- for one is unchanged; a cancelled job's sheet
 -- commits it again. No existing row changes meaning.
 -- Recovery: before any built or cancelled job is revised, drop these two
--- functions, rerun 014's inv.commit_sheet and 011's inv.commit_job, and
--- revoke inv_app's EXECUTE on inv.job_handled. After one is, its revision
--- and its build rows are the job's; keep them.
+-- functions and inv.job_settled, rerun 014's inv.commit_sheet, 011's
+-- inv.commit_job and 012's inv.job_handled, grant inv_app EXECUTE on
+-- inv.commit_job(bigint, uuid, jsonb) again (008 granted it; 011 does not),
+-- and revoke inv_app's EXECUTE on inv.job_handled. After one is, its
+-- revision and its build rows are the job's; keep them.
 
 DROP FUNCTION inv.commit_job(bigint, uuid, jsonb);
 DROP FUNCTION inv.commit_sheet(bigint, uuid, jsonb, boolean);
 
+-- What Built and the revisions since settled of each line of built job
+-- p_job: the most any of its sheets since Built asked, or what the job
+-- consumed when that is more. A line of a family not live at Built is
+-- settled though not consumed (J4, 011), so a revision consumes only beyond
+-- it; and a line lowered, then raised again, is not consumed twice. The
+-- sheets since Built are the one current at the job's last 'mark built'
+-- and every later one. The check before a commit shows the same figures
+-- (src/jobs/jobs.js, checkSheet).
+CREATE FUNCTION inv.job_settled(p_job inv.jobs)
+RETURNS TABLE (item_id bigint, quantity integer)
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  WITH built AS (
+    SELECT pg_catalog.max(l.id) AS id FROM inv.activity_log l
+     WHERE l.target_table = 'jobs' AND l.target_id = p_job.id AND l.action = 'mark built')
+  SELECT x.item_id, pg_catalog.max(x.quantity)::integer
+    FROM (SELECT l.item_id, l.quantity
+            FROM inv.job_lines l JOIN inv.job_sheets s ON s.id = l.sheet_id
+           WHERE s.job_id = p_job.id
+             AND s.revision >= (SELECT pg_catalog.max(s2.revision) FROM inv.job_sheets s2, built b
+                                 WHERE s2.job_id = p_job.id AND s2.action_id < b.id)
+          UNION ALL
+          SELECT g.item_id, -pg_catalog.sum(g.quantity) FROM inv.ledger g WHERE g.job_id = p_job.id GROUP BY g.item_id) x
+   GROUP BY x.item_id
+$$;
+
+GRANT EXECUTE ON FUNCTION inv.job_settled(inv.jobs) TO inv_app;
+
 -- 014's inv.commit_sheet, now taking a revised sheet for a built or a
 -- cancelled job too. For a built job the revision then consumes, for each
--- plate, lumber and LVL line, what it needs beyond what the job consumed
--- (inv.job_to_consume, Q27, S66), timed by p_timing as Built is; what was
--- consumed stays consumed. A cancelled job's sheet, the same one too (S64),
+-- live plate, lumber and LVL line, what it needs beyond what Built and the
+-- revisions since settled (inv.job_settled, Q27, S66), timed by p_timing as
+-- Built is; what was consumed stays consumed. A cancelled job's sheet, the same one too (S64),
 -- is its next revision and puts it back to committed (story 14), keeping
 -- what it consumed before the cancel. A sheet for a shipped job is refused,
 -- a changed one with "un-ship it first" (S30). 014's comment stands for the
@@ -49,6 +83,7 @@ DECLARE
   a record;
   v_sheet bigint;
   v_timed jsonb := '{}';
+  v_settled jsonb;
 BEGIN
   IF coalesce(v_number, '') = '' THEN
     RAISE EXCEPTION 'The sheet has no job number.' USING ERRCODE = 'IV400';
@@ -134,6 +169,8 @@ BEGIN
     RETURNING * INTO v_job;
   ELSE
     v_was := inv.job_json(v_job, v_current.revision) || pg_catalog.jsonb_build_object('delivery_date', v_job.delivery_date);
+    -- Read before the new sheet is saved, as it would count itself.
+    v_settled := (SELECT pg_catalog.jsonb_object_agg(t.item_id, t.quantity) FROM inv.job_settled(v_job) t);
     v_revision := v_current.revision + 1;
     -- delivery_date is set even when unchanged: being in the SET list fires
     -- 013's bump_version trigger, so a screen opened before the revision is
@@ -153,8 +190,10 @@ BEGIN
   END IF;
   IF v_job.status = 'built' THEN
     INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, job_id)
-    SELECT c.item_id, -c.quantity, 'build', pg_catalog.now(), a.log_id, v_job.id
-      FROM inv.job_to_consume(v_job, 'built') c WHERE c.live;
+    SELECT l.item_id, coalesce((v_settled ->> l.item_id::text)::integer, 0) - l.quantity, 'build', pg_catalog.now(), a.log_id, v_job.id
+      FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id
+      JOIN inv.families f ON f.code = i.family AND f.consumed_when = 'built' AND f.live
+     WHERE l.sheet_id = v_sheet AND l.quantity > coalesce((v_settled ->> l.item_id::text)::integer, 0);
     IF FOUND THEN
       v_timed := inv.time_entries(ARRAY[a.log_id], NULL, p_timing);
     END IF;
@@ -174,6 +213,23 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION inv.commit_job(bigint, uuid, jsonb, jsonb) TO inv_app;
+
+-- 012's inv.job_handled, now skipping a revision ('commit job') unless the
+-- job is committed: a revision of a built job does not make the person who
+-- saved it its builder. 012's comment stands.
+CREATE OR REPLACE FUNCTION inv.job_handled(p_job inv.jobs) RETURNS text
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  SELECT p_job.status || CASE l.action WHEN 'un-build' THEN ' (un-built' WHEN 'un-ship' THEN ' (un-shipped' ELSE '' END
+         || ' by ' || u.name || ' on ' || pg_catalog.to_char(l.at AT TIME ZONE 'America/New_York', 'FMMonth FMDD, YYYY')
+         || CASE WHEN l.action IN ('un-build', 'un-ship') THEN ')' ELSE '' END
+    FROM inv.activity_log l JOIN inv.users u ON u.id = l.actor_id
+   WHERE l.target_table = 'jobs' AND l.target_id = p_job.id
+     AND l.action IN ('commit job', 'mark built', 'mark shipped', 'cancel job', 'un-build', 'un-ship')
+     AND (l.action <> 'commit job' OR p_job.status = 'committed')
+   ORDER BY l.id DESC LIMIT 1
+$$;
 
 -- The check before a commit names who handled a shipped or cancelled job,
 -- as the commit's refusal does (src/jobs/jobs.js, checkSheet).

@@ -494,24 +494,28 @@ test('a second file with the same job number shows what changed and asks which d
 });
 
 test('the check of a built, shipped or cancelled job says what saving does: what a built job consumes more, the refusal for a shipped one, the cancel it undoes (#121, J154–J156)', async () => {
-  const ctx = await appWithCatalog();
+  const ctx = await appWithCatalog({ plates: ['MT20 3x4', 'MT20 2x4'], hangers: ['LUS28', 'HUS26', 'TC26'] });
   await goLive(ctx.db, 'plates');
+  await goLive(ctx.db, 'hangers');
   assert.equal((await commitFile(ctx)).status, 200);
   await mark(ctx, 'built', ['33864R']);
 
-  const revised = SHEET.replace(',930,MT20  3x4', ',950,MT20  3x4').replace('12,Hanger,LUS28,,,,$1.00,$12.00', '14,Hanger,LUS28,,,,$1.00,$14.00');
+  const revised = SHEET.replace(',930,MT20  3x4,64.18,5580', ',950,MT20  3x4,64.18,5580\n,8,MT20  2x4,1.00,48')
+    .replace('12,Hanger,LUS28,,,,$1.00,$12.00', '14,Hanger,LUS28,,,,$1.00,$14.00');
   const built = await (await checkFile(ctx, revised)).json();
   assert.deepEqual([built.job.status, built.job.version, built.job.unchanged, built.refusal, built.cancelled], ['built', 2, false, undefined, undefined]);
   assert.deepEqual(built.changes, [
-    { family: 'plates', sku: 'MT20 3x4', was: 930, now: 950, used: 930, more: 20 },
+    { family: 'plates', sku: 'MT20 2x4', was: null, now: 8, consumed: 0, more: 8 },
+    { family: 'plates', sku: 'MT20 3x4', was: 930, now: 950, consumed: 930, more: 20 },
     { family: 'hangers', sku: 'LUS28', was: 12, now: 14 },
-  ], 'a plate line says what the job used and what saving consumes more; a hanger line waits for Shipped');
+  ], 'a plate line says what the job consumed and what saving consumes more; a live hanger line waits for Shipped');
   assert.equal((await commitFile(ctx, revised, crypto.randomUUID(), { version: 2 })).status, 200);
 
   await mark(ctx, 'shipped', ['33864R']);
-  const shipped = await (await checkFile(ctx)).json();
+  const shipped = await (await checkFile(ctx, SHEET.replace('Job Number:,33864R', 'Job Number:,33864r'))).json();
   assert.deepEqual([shipped.job.status, shipped.refusal], ['shipped', `Job 33864R was already shipped by Ann Lee on ${today()}; un-ship it first.`]);
-  assert.deepEqual(shipped.changes.map((c) => [c.sku, c.was, c.now]), [['MT20 3x4', 950, 930], ['LUS28', 14, 12]], 'the refusal shows the difference');
+  assert.deepEqual(shipped.changes.map((c) => [c.sku, c.was, c.now]), [['MT20 2x4', 8, null], ['MT20 3x4', 950, 930], ['LUS28', 14, 12]],
+    'the refusal names the job as the app does, and shows the difference');
   const sameShipped = await (await checkFile(ctx, revised)).json();
   assert.deepEqual([sameShipped.refusal, sameShipped.changes], [`Job 33864R was already shipped by Ann Lee on ${today()}.`, []]);
 
@@ -993,6 +997,29 @@ test('a revised sheet for a built job consumes only what it needs beyond what th
   assert.equal((await figure(db, 'on_hand'))[plate.id], 60, 'what was consumed stays consumed when the sheet needs less');
   await call(db, 'unbuild_job', ctx.ann.id, crypto.randomUUID(), '33864R', (await onBoard(db, '33864R')).version);
   assert.equal((await figure(db, 'on_hand'))[plate.id], 100, 'Un-build gives back the 40 the job consumed');
+});
+
+test('a revision of a built job consumes a line of a family that went live after Built only beyond what any sheet since Built asked; who built the job stays its builder (J4, PR #126 findings 1 and 2)', async () => {
+  const ctx = await withCatalog();
+  const { db, ann, plate, lus28 } = ctx;
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
+  await goLive(db, 'hangers');
+  await commit(ctx, [[plate, 930], [lus28, 12]]);
+  await mark(ctx, 'built', ['33864R']);
+  await goLive(db, 'plates');
+  await ctx.receive(plate, 70);
+  const version = async () => (await onBoard(db, '33864R')).version;
+  await commit({ ...ctx, ann: bob }, [[plate, 930], [lus28, 14]], { version: await version() });
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 70, 'Built settled the 930 plates, though plates were not live then');
+  await commit(ctx, [[plate, 1000], [lus28, 14]], { version: await version() });
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 0, 'the revision consumes the 70 beyond the 930');
+  await commit(ctx, [[plate, 930], [lus28, 14]], { version: await version() });
+  await commit(ctx, [[plate, 1000], [lus28, 14]], { version: await version() });
+  assert.equal((await figure(db, 'on_hand'))[plate.id], 0, 'a sheet since Built already asked for 1,000, so nothing is consumed again');
+
+  await commit({ ...ctx, ann: bob }, [[plate, 1000], [lus28, 15]], { version: await version() });
+  const refusal = await refused(deduct(ctx, [[plate, 1000], [lus28, 15]]), 'IV422', 'a built job');
+  assert.equal(refusal.message, `Job 33864R was already built by Ann Lee on ${today()}.`, 'Bob saved a revision; Ann built the job');
 });
 
 test('a sheet for a shipped job is refused with who shipped it and when; a changed one says to un-ship it first (S28, S30, Q61, J155)', async () => {
