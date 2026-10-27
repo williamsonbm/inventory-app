@@ -1,4 +1,9 @@
 <!doctype html>
+<!-- Inventory → Receive. Its page code has no test in the repo: it runs only
+     in a browser, and a test of it needs jsdom, a new dependency. A jsdom
+     check outside the repo verifies each change instead (#128: no Receive on
+     a Finished PO, Close only while a line waits, "(on file)"); the database
+     and HTTP tests cover the rules the page shows. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -175,7 +180,7 @@
       '. Click Receive on the right PO, or Receive without a PO. Saving reverses the old line and times this receipt as it.' : '';
     if (!replacing) history.replaceState(null, '', location.pathname);
   }
-  el('replacing-stop').addEventListener('click', () => { replacing = null; paintReplacing(); });
+  el('replacing-stop').addEventListener('click', () => { replacing = null; paintReplacing(); paintPos(); });
 
   async function load() {
     paintReplacing();
@@ -331,7 +336,8 @@
   // the PO, closed lines counted, as refusals and the receive form number
   // them. The family bar shows only that family's lines, under their PO's
   // header. A finished PO shows only with "Show finished" ticked, and offers
-  // no Receive (#128); the database refuses one too.
+  // no Receive (#128; the database refuses one too) unless a Reverse and enter
+  // again is in progress (owner, J208).
   const STATUS = { ordered: 'Ordered', partial: 'Partial', finished: 'Finished' };
   function paintPos() {
     let shown = 0;
@@ -340,7 +346,7 @@
       const lines = po.lines.filter((l) => current === 'all' || itemById(l.item_id).family === current);
       if (!lines.length) return '';
       shown++;
-      const canReceive = po.status !== 'finished' && !busy(po);
+      const canReceive = (po.status !== 'finished' || replacing) && !busy(po);
       return '<tr class="po-head" data-po="' + po.id + '"><td colspan="5">PO ' + esc(po.number) + ' · ' +
           esc(po.supplier) + ' · ' + esc(po.po_date) + ' · ' + STATUS[po.status] + '</td>' +
           '<td><button type="button" class="ghost" data-do="edit">Edit</button>' +

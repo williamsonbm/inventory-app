@@ -3,8 +3,9 @@
 --
 -- Reach: inv.receive refuses a receipt against a PO that inv.po_json calls
 -- finished when the receipt is saved (IV422), even from a screen opened
--- before it finished; a receipt without a PO, and one that brings more than
--- ordered on a line still waiting (S58), are unchanged. Same signature, so
+-- before it finished; a receipt without a PO, one that brings more than
+-- ordered on a line still waiting (S58), and a Reverse and enter again of a
+-- receipt line on the same PO (owner, J208) are unchanged. Same signature, so
 -- inv_app keeps its grant. No row changes.
 -- Recovery: rerun 006's CREATE FUNCTION inv.receive as CREATE OR REPLACE.
 
@@ -37,9 +38,15 @@ BEGIN
     RAISE EXCEPTION 'A receipt against a PO takes its PO''s supplier.' USING ERRCODE = 'IV400';
   ELSIF p_po_id IS NOT NULL THEN
     -- Before the version check, so a screen opened before the PO finished
-    -- gets this message, not "Someone else changed this PO".
+    -- gets this message, not "Someone else changed this PO". Deliberately
+    -- its own lock before the status is read, not only inv.po_at_version's:
+    -- without it, of two receipts saved at once, the second reads the status
+    -- before the first commits and gets "Someone else changed this PO".
+    -- A Reverse and enter again of a line on this PO is let in (owner, J208).
     PERFORM FROM inv.purchase_orders WHERE id = p_po_id FOR UPDATE;
-    IF inv.po_json(p_po_id) ->> 'status' = 'finished' THEN
+    IF inv.po_json(p_po_id) ->> 'status' = 'finished'
+       AND NOT EXISTS (SELECT FROM inv.ledger replaced JOIN inv.po_lines l ON l.id = replaced.po_line_id
+                        WHERE replaced.id = p_replaces AND l.po_id = p_po_id) THEN
       RAISE EXCEPTION 'This PO is finished. Nothing more is expected on it. For a late extra delivery, Edit the PO to a larger amount, Re-open a line, or Receive without a PO.'
         USING ERRCODE = 'IV422';
     END IF;
