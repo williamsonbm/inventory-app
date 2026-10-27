@@ -358,10 +358,11 @@
   }
 
   // A revised sheet's change screen (#120, story 28): each line added,
-  // removed or changed against the job's current revision.
-  function changesHtml(changes) {
+  // removed or changed against the job's current revision, after the job's
+  // name when the sheet replaces it (Q142).
+  function changesHtml(changes, nameWas, name) {
     const amount = (n) => (n === null ? '—' : esc(n));
-    return '<h3>What changed</h3>' + (!changes.length ? '<p class="sub">No line changed.</p>'
+    return '<h3>What changed</h3>' + (nameWas === null ? '' : '<p>Job name: ' + esc(nameWas) + ' → ' + esc(name) + '</p>') + (!changes.length ? '<p class="sub">No line changed.</p>'
       : '<table class="log"><thead><tr><th>Family</th><th>Line</th><th>Was</th><th>Now</th><th></th></tr></thead><tbody>' +
         changes.map((c) => '<tr><td>' + esc(c.family) + '</td><td>' + esc(c.sku) + '</td><td>' + amount(c.was) + '</td><td>' + amount(c.now) +
           '</td><td>' + (c.was === null ? 'added' : c.now === null ? 'removed' : 'changed') + '</td></tr>').join('') + '</tbody></table>') +
@@ -401,7 +402,7 @@
         : job.status ? 'This job is already in the app (' + esc(job.status) + '). ' : '') +
       (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p>' +
       (depths.length ? '<p class="sub">LVL by depth: ' + depths.map((d) => esc(d.label) + ' ' + esc(d.lf) + ' LF').join(', ') + '</p>' : '') +
-      (revising ? changesHtml(body.changes) + dateChoiceHtml(body.date_choice, job.delivery_date) : '') + '<p>' +
+      (revising ? changesHtml(body.changes, body.name_was, job.name) + dateChoiceHtml(body.date_choice, job.delivery_date) : '') + '<p>' +
       '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>' + (revising ? 'Save revision' : 'Commit job') + '</button> ' +
       (revising ? '' : '<button type="button" class="ghost" id="deduct-job"' + (flagged ? ' disabled' : '') + '>Deduct directly (already shipped)</button> ') +
       '<button type="button" class="ghost" id="clear-job">Clear</button>' +

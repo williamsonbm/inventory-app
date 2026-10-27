@@ -131,6 +131,12 @@ async function readSheet(text, database) {
       lines.set(`${family} ${key}`, seen);
     }
   }
+  // The readers take any m/d/yyyy; a day that does not exist (2/30) would
+  // fail later as a refused request.
+  const [y, m, d] = meta.delivery_date?.split('-') ?? [];
+  if (y && new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10) !== meta.delivery_date) {
+    return { error: `The sheet's delivery date, ${+m}/${+d}/${y}, is not a date.` };
+  }
   return { meta, lines: [...lines.values()], unplaced, lumber, warnings };
 }
 
@@ -274,7 +280,8 @@ function sheetChanges(current, rows) {
 // job (#120) the job adds its version and whether the sheet is `unchanged`
 // (its current revision); a revised sheet lists its `changes` and, when
 // its date is not the job's, `date_choice`: the job's date and who set it
-// by hand, and when (story 34). No other job's line asks for a fix: the
+// by hand, and when (story 34); when its name is not the job's,
+// `name_was`: the job's name, which the revision replaces (Q142). No other job's line asks for a fix: the
 // commit then answers "unchanged" or "already built", "shipped" ….
 async function checkSheet(database, { file } = {}) {
   const { refusal, sheet, rows, plan } = await matchSheet(database, file);
@@ -282,6 +289,7 @@ async function checkSheet(database, { file } = {}) {
   const { job_number: number, job_name: name, delivery_date } = sheet.meta;
   const [found] = await database.read(`
     SELECT j.status, j.version, j.delivery_date::text AS delivery_date, u.name AS set_by, l.at AS set_at,
+           CASE WHEN j.name IS DISTINCT FROM inv.tidy($3) THEN j.name END AS name_was,
            inv.is_current_sheet($2) AS unchanged,
            (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
                      'item_id', jl.item_id, 'family', i.family, 'sku', inv.item_label(i), 'quantity', jl.quantity)), '[]')
@@ -291,13 +299,14 @@ async function checkSheet(database, { file } = {}) {
       LEFT JOIN LATERAL (SELECT * FROM inv.activity_log WHERE target_table = 'jobs' AND target_id = j.id
                             AND action = 'set delivery date' ORDER BY id DESC LIMIT 1) l ON j.delivery_date_edited
       LEFT JOIN inv.users u ON u.id = l.actor_id
-     WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($1))`, [number, jobPayload(sheet, rows, plan)]);
+     WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($1))`, [number, jobPayload(sheet, rows, plan), name]);
   const status = found?.status ?? null;
   const revising = status === 'committed' && !found.unchanged;
   const revision = status !== 'committed' ? {} : {
     changes: revising ? sheetChanges(found.current, rows) : [],
     date_choice: revising && found.delivery_date !== (delivery_date ?? null)
       ? { current: found.delivery_date, set_by: found.set_by, set_at: found.set_at } : null,
+    name_was: revising ? found.name_was : null,
   };
   return { status: 200, body: { ok: true,
     job: { number, name, delivery_date, status, ...(status === 'committed' && { version: found.version, unchanged: found.unchanged }) },

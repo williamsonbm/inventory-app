@@ -340,6 +340,19 @@ const SHEET = [
   'Total Hangers:,,$22.00',
 ].join('\n');
 
+test('a sheet with a delivery date that does not exist is refused in plain words, before and after its job is in the app (#120)', async () => {
+  const ctx = await appWithCatalog();
+  const text = SHEET.replace('Delivery Date:,11/2/2026', 'Delivery Date:,2/30/2026');
+  const check = () => post(ctx.base, '/api/jobs/check', { file: { name: '33864R-materials.csv', text } }, ctx.cookie);
+  const refusal = { ok: false, error: 'The sheet\'s delivery date, 2/30/2026, is not a date.' };
+  for (const res of [await check(), await commitFile(ctx, text)]) {
+    assert.deepEqual([res.status, await res.json()], [400, refusal], 'a new job');
+  }
+  assert.equal((await commitFile(ctx)).status, 200);
+  const res = await check();
+  assert.deepEqual([res.status, await res.json()], [400, refusal], 'a job in the app');
+});
+
 // The app with Ann signed in and the sheet's items in the catalog.
 async function appWithCatalog(skus = { plates: ['MT20 3x4'], hangers: ['LUS28', 'HUS26', 'TC26'] }) {
   const ctx = await withAdmin();
@@ -466,6 +479,7 @@ test('a second file with the same job number shows what changed and asks which d
       { family: 'hangers', sku: 'HGUS26', was: null, now: 2 },
       { family: 'hangers', sku: 'LUS28', was: 12, now: null },
     ],
+    name_was: null,
   });
   assert.deepEqual(choice, { current: '2026-11-05', set_by: 'Ann Lee' }, 'the current date was set by hand, by Ann');
   assert.ok(!Number.isNaN(Date.parse(set_at)), 'and when');
@@ -477,6 +491,16 @@ test('a second file with the same job number shows what changed and asks which d
   assert.deepEqual([job.delivery_date, job.version, (await (await checkFile(ctx, revised)).json()).job.unchanged], ['2026-11-09', 3, true]);
   const stale = await commitFile(ctx, SHEET, crypto.randomUUID(), { version: 2, keep_date: true });
   assert.equal(stale.status, 409, 'a change screen opened before the revision');
+});
+
+test('a revised sheet that changes only the job name shows the name it replaces (#120, Q142)', async () => {
+  const ctx = await appWithCatalog();
+  assert.equal((await commitFile(ctx)).status, 200);
+  const renamed = SHEET.replace('Job Name:,Smith Residence', 'Job Name:,Jones Residence');
+  const { job, changes, date_choice, name_was } = await (await checkFile(ctx, renamed)).json();
+  assert.deepEqual({ name: job.name, unchanged: job.unchanged, changes, date_choice, name_was },
+    { name: 'Jones Residence', unchanged: false, changes: [], date_choice: null, name_was: 'Smith Residence' });
+  assert.equal((await (await checkFile(ctx)).json()).name_was, null, 'the same sheet again');
 });
 
 test('a retry after a line is retired answers as the first commit did; the same file again is unchanged (S20, S22)', async () => {
@@ -722,6 +746,20 @@ test('a revised sheet saves its own cut plan when its lumber lines changed, and 
     'the lumber lines did not change, so neither did the plan');
   assert.equal((await commitLumber(moreLvl, 2)).status, 200);
   assert.match(await pullList(), /×2 10′ 2 × 5′ per board 20 ×7 8′ full length 56 /, 'the saved plan, from before the buying options changed');
+});
+
+test('a cut plan saved before 014 has no lumber lines, so a sheet for its job is planned again; the same sheet stays unchanged (#120, 014)', async () => {
+  const ctx = await appWithLumber();
+  const check = async (text) => (await post(ctx.base, '/api/jobs/check', { file: lumberFile(text) }, ctx.cookie)).json();
+  assert.equal((await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile() }, ctx.cookie)).status, 200);
+  // As 014 left every plan saved before it.
+  await as(ctx.db, null, (owner) => owner.query(`ALTER TABLE inv.lumber_cut_plans DISABLE TRIGGER refuse_edit;
+    UPDATE inv.lumber_cut_plans SET demand = NULL;
+    ALTER TABLE inv.lumber_cut_plans ENABLE TRIGGER refuse_edit;`));
+
+  assert.equal((await check(LUMBER_SHEET)).job.unchanged, true, 'the same sheet, planned again, is the current revision');
+  const moreLumber = await check(LUMBER_SHEET.replace('2x4sp2,6,8-00-00', '2x4sp2,7,8-00-00'));
+  assert.deepEqual(moreLumber.changes, [{ family: 'lumber', sku: '2x4 #2 8′', was: 6, now: 7 }], 'the new plan, not the saved one');
 });
 
 test('an LVL line shows its linear feet to two decimals (#99, Q59)', async () => {
