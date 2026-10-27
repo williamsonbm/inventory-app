@@ -85,10 +85,10 @@ _Avoid_: completed, delivered, done
 
 **Settled**:
 What a built job has already had of a plate, lumber or LVL line, so a revised sheet consumes only
-beyond it: the most any of its sheets asked since its first Built or Shipped after it was last
-committed or cancelled, or what it consumed when that is more. An Un-build, a Cancel or an Un-ship
-back to committed starts this again at the next Built or Shipped. A line whose family was not live in Inventory then is settled but not consumed. The
-change screen shows it as "consumed".
+beyond it: the most any of its sheets asked since its first Built or Shipped after it was last put
+back to committed or cancelled, or what it consumed when that is more. An Un-build, a Cancel or an
+Un-ship back to committed starts this again at the next Built or Shipped. A line whose family was
+not live in Inventory then is settled but not consumed. The change screen shows it as "consumed".
 
 **Deduct directly**:
 Committing a job and marking it shipped in one step, so all of its material is consumed at once.

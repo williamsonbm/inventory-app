@@ -1035,32 +1035,36 @@ async function platesConsumedBy(ctx, step) {
   return before - ((await figure(ctx.db, 'on_hand'))[ctx.plate.id] ?? 0);
 }
 
+// Saves sheet `lines` for job `number` as a revision, with the version the
+// board shows; a step for platesConsumedBy.
+function revise(ctx, number, lines) {
+  return async () => commit(ctx, lines, { number, version: (await onBoard(ctx.db, number)).version });
+}
+
 test('a Cancel or an Un-ship to committed ends what a Built settled, so a revision after the next Built consumes beyond it (PR #126 third review, finding 1)', async () => {
   const ctx = await withCatalog();
   const { db, plate, lus28 } = ctx;
   await goLive(db, 'hangers');
   await goLive(db, 'plates');
   await ctx.receive(plate, 2000);
-  const version = async (number) => (await onBoard(db, number)).version;
-  const revise = (number, lines) => async () => commit(ctx, lines, { number, version: await version(number) });
 
   await commit(ctx, [[plate, 500]], { number: '1C' });
   await mark(ctx, 'built', ['1C']);
   await undo(ctx, 'cancel_job', '1C');
-  await revise('1C', [[plate, 1000]])();
-  await revise('1C', [[plate, 600]])();
+  await revise(ctx, '1C', [[plate, 1000]])();
+  await revise(ctx, '1C', [[plate, 600]])();
   assert.equal(await platesConsumedBy(ctx, () => mark(ctx, 'built', ['1C'])), 100, 'Built takes the 100 beyond the 500 kept at Cancel');
-  assert.equal(await platesConsumedBy(ctx, revise('1C', [[plate, 1000]])), 400,
+  assert.equal(await platesConsumedBy(ctx, revise(ctx, '1C', [[plate, 1000]])), 400,
     'the sheets saved while the job was committed again settle nothing');
 
   await commit(ctx, [[lus28, 12]], { number: '2U' });
   await mark(ctx, 'shipped', ['2U']);
   await undo(ctx, 'unship_job', '2U');
   assert.equal(await jobStatus(db, '2U'), 'committed', 'Un-ship of a hangers-only job makes it committed');
-  await revise('2U', [[plate, 900], [lus28, 12]])();
-  await revise('2U', [[plate, 500], [lus28, 12]])();
+  await revise(ctx, '2U', [[plate, 900], [lus28, 12]])();
+  await revise(ctx, '2U', [[plate, 500], [lus28, 12]])();
   assert.equal(await platesConsumedBy(ctx, () => mark(ctx, 'built', ['2U'])), 500);
-  assert.equal(await platesConsumedBy(ctx, revise('2U', [[plate, 900], [lus28, 12]])), 400,
+  assert.equal(await platesConsumedBy(ctx, revise(ctx, '2U', [[plate, 900], [lus28, 12]])), 400,
     'the Shipped before the Un-ship settles nothing');
 });
 
@@ -1068,32 +1072,31 @@ test('what is settled starts at the first Built or Shipped since the job was las
   const ctx = await withCatalog();
   const { db, plate, lus28 } = ctx;
   await goLive(db, 'hangers');
-  const version = async (number) => (await onBoard(db, number)).version;
-  const revise = (number, lines) => async () => commit(ctx, lines, { number, version: await version(number) });
 
   await commit(ctx, [[plate, 930], [lus28, 2]], { number: '1F' });
   await mark(ctx, 'built', ['1F']);
-  await revise('1F', [[plate, 500], [lus28, 2]])();
+  await revise(ctx, '1F', [[plate, 500], [lus28, 2]])();
   await mark(ctx, 'shipped', ['1F']);
   await undo(ctx, 'unship_job', '1F');
   await commit(ctx, [[plate, 930]], { number: '2B' });
   await mark(ctx, 'built', ['2B']);
   await undo(ctx, 'unbuild_job', '2B');
-  await revise('2B', [[plate, 500]])();
+  await revise(ctx, '2B', [[plate, 500]])();
   await commit(ctx, [[plate, 930]], { number: '3C' });
   await mark(ctx, 'built', ['3C']);
   await undo(ctx, 'cancel_job', '3C');
 
   await goLive(db, 'plates');
   await ctx.receive(plate, 3000);
-  assert.equal(await platesConsumedBy(ctx, revise('1F', [[plate, 930], [lus28, 2]])), 0,
+  assert.equal(await platesConsumedBy(ctx, revise(ctx, '1F', [[plate, 930], [lus28, 2]])), 0,
     'the first Built, not the later Shipped, settled the 930');
   assert.equal(await platesConsumedBy(ctx, () => mark(ctx, 'built', ['2B'])), 500);
-  assert.equal(await platesConsumedBy(ctx, revise('2B', [[plate, 930]])), 430, 'the Built before the Un-build settles nothing');
-  await revise('3C', [[plate, 100]])();
+  assert.equal(await platesConsumedBy(ctx, revise(ctx, '2B', [[plate, 930]])), 430, 'the Built before the Un-build settles nothing');
+  await revise(ctx, '3C', [[plate, 100]])();
   assert.equal(await platesConsumedBy(ctx, () => mark(ctx, 'built', ['3C'])), 100);
-  assert.equal(await platesConsumedBy(ctx, revise('3C', [[plate, 930]])), 830, 'the Built before the Cancel settles nothing');
+  assert.equal(await platesConsumedBy(ctx, revise(ctx, '3C', [[plate, 930]])), 830, 'the Built before the Cancel settles nothing');
 });
+
 test('a sheet for a shipped job is refused with who shipped it and when; a changed one says to un-ship it first (S28, S30, Q61, J155)', async () => {
   const ctx = await withCatalog();
   const { db, plate, lus28 } = ctx;
