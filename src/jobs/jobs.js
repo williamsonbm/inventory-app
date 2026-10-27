@@ -131,6 +131,12 @@ async function readSheet(text, database) {
       lines.set(`${family} ${key}`, seen);
     }
   }
+  // The readers take any m/d/yyyy; a day that does not exist (2/30) would
+  // fail later as a refused request.
+  const [y, m, d] = meta.delivery_date?.split('-') ?? [];
+  if (y && new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10) !== meta.delivery_date) {
+    return { error: `The sheet's delivery date, ${+m}/${+d}/${y}, is not a date.` };
+  }
   return { meta, lines: [...lines.values()], unplaced, lumber, warnings };
 }
 
@@ -169,15 +175,16 @@ function matchLines(lines, behindByFamily) {
   return { rows, several };
 }
 
-// Job `number` with the lumber cut plan saved with its current sheet, or
-// nothing for a job not in the app or with no plan.
-async function currentPlan(database, number) {
+// Job `number` with the lumber cut plan saved with its current sheet, and
+// `same_lines`: whether that plan was worked out from lumber lines `demand`
+// (#120, J138). Nothing for a job not in the app or with no plan.
+async function currentPlan(database, number, demand = null) {
   const [job] = await database.read(`
-    SELECT j.number, j.name, j.delivery_date::text AS delivery_date, p.plan
+    SELECT j.number, j.name, j.delivery_date::text AS delivery_date, p.plan, coalesce(p.demand = $2::jsonb, false) AS same_lines
       FROM inv.jobs j
       JOIN LATERAL (SELECT * FROM inv.job_sheets WHERE job_id = j.id ORDER BY revision DESC LIMIT 1) s ON true
       JOIN inv.lumber_cut_plans p ON p.sheet_id = s.id
-     WHERE pg_catalog.upper(j.number) = pg_catalog.upper($1)`, [String(number)]);
+     WHERE pg_catalog.upper(j.number) = pg_catalog.upper($1)`, [String(number), JSON.stringify(demand)]);
   return job;
 }
 
@@ -197,9 +204,10 @@ function planRows(plan) {
 // The dropped file read and matched to the catalog: { refusal } for a file
 // that cannot be committed whatever is fixed, else { sheet, rows, plan }.
 // rows end with the lumber lines the plan cannot place, flagged and with no
-// item. A job already in the app keeps the cut plan saved with it, never
-// planned again (S32): its lumber lines are that plan's boards, so the same
-// sheet is found unchanged after the buying options change (S20, S22).
+// item. A job already in the app keeps the cut plan saved with it while
+// the sheet's lumber lines are the same, never planned again (S32, J138):
+// its lumber lines are that plan's boards, so the same sheet is found
+// unchanged after the buying options change (S20, S22).
 async function matchSheet(database, file) {
   if (!isCsvFile(file)) return { refusal: { status: 400, body: { ok: false, error: 'The sheet must carry a name and its text.' } } };
   const sheet = await readSheet(file.text, database);
@@ -213,7 +221,8 @@ async function matchSheet(database, file) {
   for (const family of Object.keys(FAMILIES)) {
     behindByFamily[family] = catalogKeys(family, (await readInventory(database, family)).items);
   }
-  const saved = sheet.lumber && await currentPlan(database, number);
+  const found = sheet.lumber && await currentPlan(database, number, sheet.lumber.demand);
+  const saved = found?.same_lines ? found : null;
   const { rows, several } = matchLines(saved ? sheet.lines.filter((l) => l.family !== 'lumber') : sheet.lines, behindByFamily);
   if (several.length) {
     return { refusal: { status: 422, body: { ok: false,
@@ -237,22 +246,74 @@ function cutPlan({ groups }, rows) {
   })) }));
 }
 
+// The sheet as inv.commit_job takes it, with what a revised sheet's change
+// screen sends: the version it saw and the date choice (undefined, and so
+// left out, for any other sheet).
+function jobPayload(sheet, rows, plan, { version, keep_date } = {}) {
+  return {
+    number: sheet.meta.job_number, name: sheet.meta.job_name, delivery_date: sheet.meta.delivery_date,
+    lines: rows.filter((r) => r.family !== 'lumber').map(({ item_id, quantity }) => ({ item_id, quantity })),
+    ...(plan && { lumber: { demand: sheet.lumber.demand, plan } }),
+    version, keep_date,
+  };
+}
+
+// A revised sheet's change screen (story 28): each line added, removed or
+// changed against `current`, the job's current revision's lines, was → now,
+// in the families' order, then by SKU. A removed line is named as the
+// catalog names it.
+function sheetChanges(current, rows) {
+  const was = new Map(current.map((l) => [String(l.item_id), l]));
+  const changes = [];
+  for (const { family, sku, quantity, item_id } of rows) {
+    const before = was.get(String(item_id));
+    was.delete(String(item_id));
+    if (before?.quantity !== quantity) changes.push({ family, sku, was: before?.quantity ?? null, now: quantity });
+  }
+  for (const { family, sku, quantity } of was.values()) changes.push({ family, sku, was: quantity, now: null });
+  return changes.sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family) || a.sku.localeCompare(b.sku));
+}
+
 // What committing the dropped sheet would save, shown before the person
 // commits it (J27): the job and every line, each with what fixes it. Saves
-// nothing. For a job already in the app, `status` says so and no line asks
-// for a fix: the commit then answers "unchanged" or "already committed".
+// nothing. For a job already in the app, `status` says so. For a committed
+// job (#120) the job adds its version and whether the sheet is `unchanged`
+// (its current revision); a revised sheet lists its `changes` and, when
+// its date is not the job's, `date_choice`: the job's date and who set it
+// by hand, and when (story 34); when its name is not the job's,
+// `name_was`: the job's name, which the revision replaces (Q142). No other job's line asks for a fix: the
+// commit then answers "unchanged" or "already built", "shipped" ….
 async function checkSheet(database, { file } = {}) {
-  const { refusal, sheet, rows } = await matchSheet(database, file);
+  const { refusal, sheet, rows, plan } = await matchSheet(database, file);
   if (refusal) return refusal;
   const { job_number: number, job_name: name, delivery_date } = sheet.meta;
-  const [found] = await database.read('SELECT status FROM inv.jobs WHERE pg_catalog.upper(number) = pg_catalog.upper($1)', [number]);
+  const [found] = await database.read(`
+    SELECT j.status, j.version, j.delivery_date::text AS delivery_date, u.name AS set_by, l.at AS set_at,
+           CASE WHEN j.name IS DISTINCT FROM inv.tidy($3) THEN j.name END AS name_was,
+           inv.is_current_sheet($2) AS unchanged,
+           (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+                     'item_id', jl.item_id, 'family', i.family, 'sku', inv.item_label(i), 'quantity', jl.quantity)), '[]')
+              FROM inv.job_lines jl JOIN inv.items i ON i.id = jl.item_id
+             WHERE jl.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1)) AS current
+      FROM inv.jobs j
+      LEFT JOIN LATERAL (SELECT * FROM inv.activity_log WHERE target_table = 'jobs' AND target_id = j.id
+                            AND action = 'set delivery date' ORDER BY id DESC LIMIT 1) l ON j.delivery_date_edited
+      LEFT JOIN inv.users u ON u.id = l.actor_id
+     WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($1))`, [number, jobPayload(sheet, rows, plan), name]);
   const status = found?.status ?? null;
+  const revising = status === 'committed' && !found.unchanged;
+  const revision = status !== 'committed' ? {} : {
+    changes: revising ? sheetChanges(found.current, rows) : [],
+    date_choice: revising && found.delivery_date !== (delivery_date ?? null)
+      ? { current: found.delivery_date, set_by: found.set_by, set_at: found.set_at } : null,
+    name_was: revising ? found.name_was : null,
+  };
   return { status: 200, body: { ok: true,
-    job: { number, name, delivery_date, status },
-    lines: rows.map(({ item_id, key, flag, ...line }) => ({ ...line, flag: status ? null : flag })),
+    job: { number, name, delivery_date, status, ...(status === 'committed' && { version: found.version, unchanged: found.unchanged }) },
+    lines: rows.map(({ item_id, key, flag, ...line }) => ({ ...line, flag: !status || revising ? flag : null })),
     // LVL's linear feet per depth, as the Planner shows them (Q59).
     lvl_by_depth: planLvl([{ name: 'sheet', text: file.text }]).jobs[0].byDepth.map(({ label, lf }) => ({ label, lf })),
-    warnings: sheet.warnings } };
+    warnings: sheet.warnings, ...revision } };
 }
 
 // What a refused commit's flagged lines need, as one sentence.
@@ -269,9 +330,10 @@ function refusalText(number, flagged) {
 
 // Commits the job on the dropped sheet as `person`, or, with `deduct`,
 // commits it and marks it shipped in one save (Deduct directly, story 19);
-// `timing` answers "before or after the count?". Returns { status, body };
+// `timing` answers "before or after the count?"; `version` and `keep_date`
+// come from a revised sheet's change screen (#120). Returns { status, body };
 // the database's own refusals are thrown, for the app's error shaping.
-async function commitSheet(database, person, { key, file, timing = null } = {}, { deduct = false } = {}) {
+async function commitSheet(database, person, { key, file, timing = null, version, keep_date } = {}, { deduct = false } = {}) {
   const { refusal, sheet, rows, plan } = await matchSheet(database, file);
   if (refusal) return refusal;
   const number = sheet.meta.job_number;
@@ -284,11 +346,8 @@ async function commitSheet(database, person, { key, file, timing = null } = {}, 
   // sheet is refused as one. Otherwise it refuses the retired lines.
   if (rows.some((r) => !r.item_id)) return refused;
   try {
-    const job = await database.save(deduct ? 'deduct_directly' : 'commit_job', [person.id, key, {
-      number, name: sheet.meta.job_name, delivery_date: sheet.meta.delivery_date,
-      lines: rows.filter((r) => r.family !== 'lumber').map(({ item_id, quantity }) => ({ item_id, quantity })),
-      ...(plan && { lumber: { demand: sheet.lumber.demand, plan } }),
-    }, ...(deduct ? [timing] : [])]);
+    const job = await database.save(deduct ? 'deduct_directly' : 'commit_job',
+      [person.id, key, jobPayload(sheet, rows, plan, { version, keep_date }), ...(deduct ? [timing] : [])]);
     return { status: 200, body: { ok: true, job, warnings: sheet.warnings } };
   } catch (err) {
     if (n && err.code === 'IV422' && err.detail === 'inactive items') return refused;

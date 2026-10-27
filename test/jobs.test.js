@@ -29,10 +29,14 @@ async function withCatalog() {
 }
 
 // Commits a job as Ann. `lines` are [item, quantity] pairs.
-function commit(ctx, lines, { number = '33864R', name = 'Smith Residence', deliveryDate = '2026-11-02', key = crypto.randomUUID() } = {}) {
+// A revised sheet carries the version its change screen saw and, when its
+// date differs from the job's, keepDate: whether the job keeps its own.
+function commit(ctx, lines, { number = '33864R', name = 'Smith Residence', deliveryDate = '2026-11-02', key = crypto.randomUUID(),
+  version, keepDate } = {}) {
   return call(ctx.db, 'commit_job', ctx.ann.id, key, {
     number, name, delivery_date: deliveryDate,
     lines: lines.map(([item, quantity]) => ({ item_id: item.id, quantity })),
+    version, keep_date: keepDate,
   });
 }
 
@@ -77,18 +81,71 @@ test('committing the same sheet twice changes nothing; a retry answers as the fi
   await refused(commit(ctx, [[plate, 931], [lus28, 12]], { key }), 'IV410', 'a used key for another sheet');
 });
 
-test('a different sheet for a job already in the app is refused with who committed it (story 8)', async () => {
+test('a different sheet for a committed job is its next revision: it replaces the lines, moves the version and shows in History (J7, S29, story 28)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate, lus28, hus } = ctx;
+  await goLive(db, 'plates');
+  await goLive(db, 'hangers');
+  await commit(ctx, [[plate, 930], [lus28, 12]]);
+  const { version } = await onBoard(db, '33864R');
+
+  const job = await commit(ctx, [[plate, 900], [hus, 4]], { name: 'Smith Residence West', version });
+  assert.deepEqual(job, { number: '33864R', name: 'Smith Residence West', revision: 2, delivery_date: '2026-11-02' });
+  assert.deepEqual(await currentLines(db, '33864R'), { [plate.id]: 900, [hus.id]: 4 }, 'the revision\'s lines replace the first sheet\'s');
+  const committed = await figure(db, 'committed');
+  assert.deepEqual([committed[plate.id], committed[lus28.id], committed[hus.id]], [900, 0, 4], 'Committed reads the revision');
+  assert.equal((await onBoard(db, '33864R')).version, version + 1, 'a screen opened before the revision is stale');
+
+  const log = (await logRows(db)).at(-1);
+  assert.deepEqual([log.action, log.old_value, log.new_value],
+    ['commit job', { number: '33864R', name: 'Smith Residence', revision: 1, delivery_date: '2026-11-02' }, job]);
+  const { describeChange } = require('../src/settings/activity.js');
+  assert.equal(describeChange(log.action, 'jobs', log.old_value, log.new_value), 'revision 1 → 2; name: Smith Residence → Smith Residence West');
+});
+
+test('a return to an earlier revision\'s content is a new revision; a stale screen is refused; a retry acts once (S65, Q48, S22)', async () => {
   const ctx = await withCatalog();
   const { db, plate, lus28 } = ctx;
-  await commit(ctx, [[plate, 930]]);
+  const first = [[plate, 930], [lus28, 12]];
+  await commit(ctx, first);
+  const stale = (await onBoard(db, '33864R')).version;
+  const key = crypto.randomUUID();
+  const second = await commit(ctx, [[plate, 900]], { version: stale, key });
+  assert.equal(second.revision, 2);
+
   const before = await contents(db);
-  const err = await refused(commit(ctx, [[plate, 930], [lus28, 1]]), 'IV422', 'a different sheet');
-  assert.match(err.message, /^Job 33864R was already committed by Ann Lee on \w+ \d+, \d{4}, from a different sheet\.$/);
-  // The same lines with another delivery date or job name are a different sheet too (J19).
-  await refused(commit(ctx, [[plate, 930]], { deliveryDate: '2026-11-09' }), 'IV422', 'another delivery date');
-  await refused(commit(ctx, [[plate, 930]], { deliveryDate: null }), 'IV422', 'no delivery date');
-  await refused(commit(ctx, [[plate, 930]], { name: 'Jones Residence' }), 'IV422', 'another job name');
-  assert.deepEqual(await contents(db), before);
+  const err = await refused(commit(ctx, first, { version: stale }), 'IV409', 'a change screen opened before revision 2');
+  assert.equal(err.message, 'Someone else changed job 33864R since you opened this screen.');
+  await refused(commit(ctx, first), 'IV409', 'no version');
+  assert.deepEqual(await commit(ctx, [[plate, 900]], { version: stale, key }), second, 'the retry answers as the revision did');
+  assert.deepEqual(await contents(db), before, 'neither the refusals nor the retry write a row');
+
+  const back = await commit(ctx, first, { version: stale + 1 });
+  assert.equal(back.revision, 3, 'the first sheet again is a new revision');
+  assert.deepEqual(await currentLines(db, '33864R'), { [plate.id]: 930, [lus28.id]: 12 });
+  assert.equal((await commit(ctx, first)).unchanged, true, 'only the current revision is unchanged');
+});
+
+test('a revised sheet with another delivery date needs a choice: keep the job\'s, or take the sheet\'s (story 34, J137)', async () => {
+  const ctx = await withCatalog();
+  const { db, plate } = ctx;
+  await commit(ctx, [[plate, 30]]);
+  await setDate(ctx, '33864R', '2026-11-09');
+  const version = () => onBoard(db, '33864R').then((j) => j.version);
+
+  const err = await refused(commit(ctx, [[plate, 31]], { deliveryDate: '2026-11-16', version: await version() }), 'IV400', 'no choice');
+  assert.equal(err.message, 'Job 33864R has another delivery date; choose which date to keep.');
+  await commit(ctx, [[plate, 31]], { deliveryDate: '2026-11-16', version: await version(), keepDate: true });
+  assert.deepEqual(await dated(db, '33864R'), { delivery_date: '2026-11-09', delivery_date_edited: true }, 'the hand-set date stays hand-set');
+
+  // The sheet's own date again is no change of date, so no choice.
+  await commit(ctx, [[plate, 32]], { deliveryDate: '2026-11-16', version: await version(), keepDate: false });
+  assert.deepEqual(await dated(db, '33864R'), { delivery_date: '2026-11-16', delivery_date_edited: false }, 'the sheet\'s date is not an edit');
+  await commit(ctx, [[plate, 33]], { deliveryDate: '2026-11-16', version: await version() });
+  const [third, fourth] = (await logRows(db)).slice(-2);
+  assert.equal(fourth.new_value.revision, 4);
+  const { describeChange } = require('../src/settings/activity.js');
+  assert.equal(describeChange(third.action, 'jobs', third.old_value, third.new_value), 'revision 2 → 3; delivery date: 2026-11-09 → 2026-11-16');
 });
 
 test('two first commits of one job at once save it once; the second finds the first (S20)', async () => {
@@ -199,7 +256,7 @@ test('the same sheet after the buying options change is unchanged, and keeps its
   assert.deepEqual(await savedPlan(db, '33864R'), first.plan);
 
   const otherSheet = { ...first, demand: [{ material: '2x4 SP No.2', qty: 7, length: '8-00-00' }] };
-  await refused(job(otherSheet), 'IV422', 'a different sheet is not the same sheet');
+  await refused(job(otherSheet), 'IV409', 'a different sheet is a revision, which carries the version its change screen saw');
 });
 
 test('lumber comes only from the cut plan, which holds only lumber; a retired board refuses the sheet (#99, J8)', async () => {
@@ -283,6 +340,19 @@ const SHEET = [
   'Total Hangers:,,$22.00',
 ].join('\n');
 
+test('a sheet with a delivery date that does not exist is refused in plain words, before and after its job is in the app (#120)', async () => {
+  const ctx = await appWithCatalog();
+  const text = SHEET.replace('Delivery Date:,11/2/2026', 'Delivery Date:,2/30/2026');
+  const check = () => post(ctx.base, '/api/jobs/check', { file: { name: '33864R-materials.csv', text } }, ctx.cookie);
+  const refusal = { ok: false, error: 'The sheet\'s delivery date, 2/30/2026, is not a date.' };
+  for (const res of [await check(), await commitFile(ctx, text)]) {
+    assert.deepEqual([res.status, await res.json()], [400, refusal], 'a new job');
+  }
+  assert.equal((await commitFile(ctx)).status, 200);
+  const res = await check();
+  assert.deepEqual([res.status, await res.json()], [400, refusal], 'a job in the app');
+});
+
 // The app with Ann signed in and the sheet's items in the catalog.
 async function appWithCatalog(skus = { plates: ['MT20 3x4'], hangers: ['LUS28', 'HUS26', 'TC26'] }) {
   const ctx = await withAdmin();
@@ -297,8 +367,9 @@ async function appWithCatalog(skus = { plates: ['MT20 3x4'], hangers: ['LUS28', 
   return { ...ctx, items };
 }
 
-function commitFile(ctx, text = SHEET, key = crypto.randomUUID()) {
-  return post(ctx.base, '/api/jobs/commit', { key, file: { name: '33864R-materials.csv', text } }, ctx.cookie);
+// `revision`: a revised sheet's version and date choice, as the change screen sends them.
+function commitFile(ctx, text = SHEET, key = crypto.randomUUID(), revision = {}) {
+  return post(ctx.base, '/api/jobs/commit', { key, file: { name: '33864R-materials.csv', text }, ...revision }, ctx.cookie);
 }
 
 async function board(ctx) {
@@ -381,21 +452,55 @@ test('a job sheet commits its plate and hanger lines and shows on the Job board 
   }
 });
 
-test('the same file twice commits once; a different sheet for the job is refused (S20, story 8)', async () => {
+test('a second file with the same job number shows what changed and asks which date to keep; the commit saves it as the next revision (J7, stories 28, 34)', async () => {
+  const ctx = await appWithCatalog({ plates: ['MT20 3x4'], hangers: ['LUS28', 'HUS26', 'TC26', 'HGUS26'] });
+  assert.equal((await commitFile(ctx)).status, 200);
+  const same = await (await checkFile(ctx)).json();
+  assert.deepEqual([same.job.unchanged, same.changes, same.date_choice], [true, [], null], 'the same file again changes nothing');
+  const dated = await post(ctx.base, '/api/jobs/delivery-date', { key: crypto.randomUUID(), number: '33864R', version: 1, delivery_date: '2026-11-05' }, ctx.cookie);
+  assert.equal(dated.status, 200, await dated.clone().text());
+
+  const revised = SHEET.replace(',930,MT20  3x4', ',900,MT20  3x4').replace('12,Hanger,LUS28,,,,$1.00,$12.00', '2,Hanger,HGUS26,,,,$1.00,$2.00')
+    .replace('Delivery Date:,11/2/2026', 'Delivery Date:,11/9/2026');
+  const res = await checkFile(ctx, revised);
+  assert.equal(res.status, 200, await res.clone().text());
+  const { warnings, lvl_by_depth, date_choice: { set_at, ...choice }, ...check } = await res.json();
+  assert.deepEqual(check, {
+    ok: true,
+    job: { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-09', status: 'committed', version: 2, unchanged: false },
+    lines: [
+      { family: 'plates', sku: 'MT20 3x4', quantity: 900, flag: null },
+      { family: 'hangers', sku: 'HGUS26', quantity: 2, flag: null },
+      { family: 'hangers', sku: 'HUS26', quantity: 8, flag: null },
+      { family: 'hangers', sku: 'TC26', quantity: 6, flag: null },
+    ],
+    changes: [
+      { family: 'plates', sku: 'MT20 3x4', was: 930, now: 900 },
+      { family: 'hangers', sku: 'HGUS26', was: null, now: 2 },
+      { family: 'hangers', sku: 'LUS28', was: 12, now: null },
+    ],
+    name_was: null,
+  });
+  assert.deepEqual(choice, { current: '2026-11-05', set_by: 'Ann Lee' }, 'the current date was set by hand, by Ann');
+  assert.ok(!Number.isNaN(Date.parse(set_at)), 'and when');
+
+  const committed = await commitFile(ctx, revised, crypto.randomUUID(), { version: 2, keep_date: false });
+  assert.equal(committed.status, 200, await committed.clone().text());
+  assert.equal((await committed.json()).job.revision, 2);
+  const [job] = await board(ctx);
+  assert.deepEqual([job.delivery_date, job.version, (await (await checkFile(ctx, revised)).json()).job.unchanged], ['2026-11-09', 3, true]);
+  const stale = await commitFile(ctx, SHEET, crypto.randomUUID(), { version: 2, keep_date: true });
+  assert.equal(stale.status, 409, 'a change screen opened before the revision');
+});
+
+test('a revised sheet that changes only the job name shows the name it replaces (#120, Q142)', async () => {
   const ctx = await appWithCatalog();
   assert.equal((await commitFile(ctx)).status, 200);
-  const again = await commitFile(ctx);
-  assert.equal(again.status, 200);
-  assert.equal((await again.json()).job.unchanged, true);
-
-  for (const [from, to] of [['12,Hanger,LUS28', '13,Hanger,LUS28'], ['Delivery Date:,11/2/2026', 'Delivery Date:,11/9/2026']]) {
-    assert.ok(SHEET.includes(from), from);
-    const changed = await commitFile(ctx, SHEET.replace(from, to));
-    assert.equal(changed.status, 422, to);
-    assert.match((await changed.json()).error, /^Job 33864R was already committed by Ann Lee on /);
-  }
-  assert.equal((await board(ctx))[0].delivery_date, '2026-11-02');
-  assert.equal((await board(ctx)).length, 1);
+  const renamed = SHEET.replace('Job Name:,Smith Residence', 'Job Name:,Jones Residence');
+  const { job, changes, date_choice, name_was } = await (await checkFile(ctx, renamed)).json();
+  assert.deepEqual({ name: job.name, unchanged: job.unchanged, changes, date_choice, name_was },
+    { name: 'Jones Residence', unchanged: false, changes: [], date_choice: null, name_was: 'Smith Residence' });
+  assert.equal((await (await checkFile(ctx)).json()).name_was, null, 'the same sheet again');
 });
 
 test('a retry after a line is retired answers as the first commit did; the same file again is unchanged (S20, S22)', async () => {
@@ -415,11 +520,12 @@ test('a retry after a line is retired answers as the first commit did; the same 
   assert.equal(again.status, 200, await again.clone().text());
   assert.equal((await again.json()).job.unchanged, true);
 
-  // A different sheet is refused as one, not for its retired line: un-retiring would not commit it.
-  const changed = await commitFile(ctx, SHEET.replace('12,Hanger,LUS28', '13,Hanger,LUS28'));
+  // A revised sheet with the retired line is refused for it, with what fixes it (J8, #120).
+  const changed = await commitFile(ctx, SHEET.replace('12,Hanger,LUS28', '13,Hanger,LUS28'), crypto.randomUUID(), { version: 1 });
   assert.equal(changed.status, 422);
-  assert.deepEqual(Object.keys(await changed.clone().json()), ['ok', 'error']);
-  assert.match((await changed.json()).error, /^Job 33864R was already committed by Ann Lee on /);
+  const { error, lines } = await changed.json();
+  assert.equal(error, 'Job 33864R was not committed: 1 line is not in the catalog or is retired.');
+  assert.deepEqual(lines.map((l) => [l.sku, Object.keys(l.flag)]), [['LUS28', ['retired']]]);
 });
 
 test('a sheet with an unknown or a retired line is refused whole, each line with what fixes it (J8)', async () => {
@@ -614,6 +720,46 @@ test('a committed job keeps its saved cut plan after the buying options change: 
   const retry = await post(ctx.base, '/api/jobs/commit', { key, file: lumberFile() }, ctx.cookie);
   assert.equal(retry.status, 200, await retry.clone().text());
   assert.deepEqual(await retry.json(), committed);
+});
+
+test('a revised sheet saves its own cut plan when its lumber lines changed, and keeps the saved one when they did not; the pull list prints the current one (#120, J138, story 48)', async () => {
+  const ctx = await appWithLumber();
+  const { db, ann } = ctx;
+  const commitLumber = (text, version) => post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile(text), version }, ctx.cookie);
+  const check = async (text) => (await post(ctx.base, '/api/jobs/check', { file: lumberFile(text) }, ctx.cookie)).json();
+  const pullList = async () => (await (await get(ctx.base, '/api/jobs/pull-list?number=33865R', ctx.cookie)).text())
+    .replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
+  assert.equal((await commitLumber(LUMBER_SHEET)).status, 200);
+
+  const moreLumber = LUMBER_SHEET.replace('2x4sp2,6,8-00-00', '2x4sp2,7,8-00-00');
+  assert.deepEqual((await check(moreLumber)).changes, [{ family: 'lumber', sku: '2x4 #2 8′', was: 6, now: 7 }]);
+  const res = await commitLumber(moreLumber, 1);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.match(await pullList(), /×7 8′ full length 56 /, 'the pull list prints the revision\'s plan');
+
+  // 10′ 2x4 #2 no longer bought: a new plan would cut the 5′ pieces otherwise.
+  const [{ version }] = await as(db, APP, async (app) => (await app.query(
+    "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '#2'")).rows);
+  await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '#2', version, [6, 7, 8, 12, 14, 16, 20]);
+  const moreLvl = moreLumber.replace('1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 14,2,', '1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 14,3,');
+  assert.deepEqual((await check(moreLvl)).changes, [{ family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 14 · 14′', was: 2, now: 3 }],
+    'the lumber lines did not change, so neither did the plan');
+  assert.equal((await commitLumber(moreLvl, 2)).status, 200);
+  assert.match(await pullList(), /×2 10′ 2 × 5′ per board 20 ×7 8′ full length 56 /, 'the saved plan, from before the buying options changed');
+});
+
+test('a cut plan saved before 014 has no lumber lines, so a sheet for its job is planned again; the same sheet stays unchanged (#120, 014)', async () => {
+  const ctx = await appWithLumber();
+  const check = async (text) => (await post(ctx.base, '/api/jobs/check', { file: lumberFile(text) }, ctx.cookie)).json();
+  assert.equal((await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile() }, ctx.cookie)).status, 200);
+  // As 014 left every plan saved before it.
+  await as(ctx.db, null, (owner) => owner.query(`ALTER TABLE inv.lumber_cut_plans DISABLE TRIGGER refuse_edit;
+    UPDATE inv.lumber_cut_plans SET demand = NULL;
+    ALTER TABLE inv.lumber_cut_plans ENABLE TRIGGER refuse_edit;`));
+
+  assert.equal((await check(LUMBER_SHEET)).job.unchanged, true, 'the same sheet, planned again, is the current revision');
+  const moreLumber = await check(LUMBER_SHEET.replace('2x4sp2,6,8-00-00', '2x4sp2,7,8-00-00'));
+  assert.deepEqual(moreLumber.changes, [{ family: 'lumber', sku: '2x4 #2 8′', was: 6, now: 7 }], 'the new plan, not the saved one');
 });
 
 test('an LVL line shows its linear feet to two decimals (#99, Q59)', async () => {
@@ -1151,7 +1297,7 @@ test('the board says what each job can undo; the confirmation lists what comes b
   assert.equal((await bad.json()).error, 'Cancel, un-build or un-ship a job.');
 });
 
-test('a sheet for a job cancelled, un-built or un-shipped is refused with who did that and what they did (#101, S28, J92)', async () => {
+test('a sheet for a job cancelled or un-shipped is refused with who did that and what they did; an un-built job takes a revision (#101, #120, S28, J92)', async () => {
   const ctx = await withCatalog();
   const { db, ann, plate, lus28 } = ctx;
   const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
@@ -1170,8 +1316,9 @@ test('a sheet for a job cancelled, un-built or un-shipped is refused with who di
   await goLive(db, 'plates');
   await mark(ctx, 'built', ['3U']);
   await call(db, 'unbuild_job', bob.id, crypto.randomUUID(), '3U', (await onBoard(db, '3U')).version);
-  const unbuilt = await refused(commit(ctx, [[plate, 6]], { number: '3U' }), 'IV422', 'a sheet for an un-built job');
-  assert.equal(unbuilt.message, `Job 3U was already committed (un-built by Bob Ray on ${today()}), from a different sheet.`);
+  // Un-built, the job is committed again and has consumed nothing, so a different sheet is its next revision (#120).
+  const unbuilt = await commit(ctx, [[plate, 6]], { number: '3U', version: (await onBoard(db, '3U')).version });
+  assert.equal(unbuilt.revision, 2, 'a sheet for an un-built job');
 });
 
 // Sets job `number`'s delivery date as Ann, at the version the board shows now.
