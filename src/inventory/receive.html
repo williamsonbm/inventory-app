@@ -330,7 +330,8 @@
   // status, Edit and Receive), then its lines, each numbered by its place on
   // the PO, closed lines counted, as refusals and the receive form number
   // them. The family bar shows only that family's lines, under their PO's
-  // header. A finished PO shows only with "Show finished" ticked.
+  // header. A finished PO shows only with "Show finished" ticked, and offers
+  // no Receive (#128); the database refuses one too.
   const STATUS = { ordered: 'Ordered', partial: 'Partial', finished: 'Finished' };
   function paintPos() {
     let shown = 0;
@@ -339,7 +340,7 @@
       const lines = po.lines.filter((l) => current === 'all' || itemById(l.item_id).family === current);
       if (!lines.length) return '';
       shown++;
-      const canReceive = po.lines.some((l) => !l.closed_reason) && !busy(po);
+      const canReceive = po.status !== 'finished' && !busy(po);
       return '<tr class="po-head" data-po="' + po.id + '"><td colspan="5">PO ' + esc(po.number) + ' · ' +
           esc(po.supplier) + ' · ' + esc(po.po_date) + ' · ' + STATUS[po.status] + '</td>' +
           '<td><button type="button" class="ghost" data-do="edit">Edit</button>' +
@@ -350,7 +351,7 @@
             '<td>' + (po.lines.indexOf(l) + 1) + '</td><td class="name">' + esc(choiceLabel(item)) + '</td>' +
             '<td>' + amount(l.ordered, item) + '</td>' +
             '<td>' + amount(l.received, item) + '</td>' +
-            '<td>' + (l.pack_size ?? '—') + '</td><td>' + lineAction(po, l) + '</td></tr>';
+            '<td>' + packSizeLabel(l, item) + '</td><td>' + lineAction(po, l) + '</td></tr>';
         }).join('');
     }).join('');
     el('count').textContent = shown + ' PO' + (shown === 1 ? '' : 's') + ' shown.';
@@ -362,11 +363,13 @@
   // Why a line is closed, as the list and the edit form both say it; nothing
   // for an open line.
   const closedLabel = (l) => (l.closed_reason ? 'Closed: ' + esc(l.closed_reason) : '');
-  // An open line offers Close, which first asks for a reason; a closed line
-  // says why and offers Re-open. Neither while its PO is open in a form.
+  // An open line still waiting for part of its amount offers Close, which
+  // first asks for a reason; a closed line says why and offers Re-open.
+  // Neither while its PO is open in a form.
   function lineAction(po, l) {
     if (busy(po)) return closedLabel(l) + ' <span class="sub">Save or cancel the form first.</span>';
     if (l.closed_reason) return closedLabel(l) + ' <button type="button" class="ghost" data-do="reopen">Re-open</button>';
+    if (l.received >= l.ordered) return '';
     if (l.id !== closing) return '<button type="button" class="ghost" data-do="close">Close…</button>';
     return '<select data-f="reason"><option value="">Reason…</option>' +
       reasons.map((r) => '<option value="' + r.id + '">' + esc(r.text) + '</option>').join('') + '</select> ' +
@@ -406,12 +409,21 @@
   // ── Receiving (stories 33–41) ──────────────────────────────────────────────
   const cell = (tr, f) => tr.querySelector('[data-f="' + f + '"]');
   const sizeOnFile = (itemId, kind) => packSizes.find((p) => p.item_id === itemId && p.kind === kind)?.pieces;
+  // The first kind the item has a size on file for, or undefined.
+  const kindOnFile = (item) => family(item.family).pack_kinds.find((k) => sizeOnFile(item.id, k));
+  // The PO list's Pack size: the PO line's own, else the item's size on file
+  // marked "(on file)", else a dash.
+  function packSizeLabel(l, item) {
+    if (l.pack_size != null) return l.pack_size;
+    const kind = kindOnFile(item);
+    return kind ? sizeOnFile(item.id, kind) + ' (on file)' : '—';
+  }
 
   // Fills a receive row's kinds for its item: the first kind the item has a
   // size on file for, with that size, unless the PO line names its own.
   function fillPacking(tr, item, poPackSize) {
     const kinds = item ? family(item.family).pack_kinds : [];
-    const kind = kinds.find((k) => sizeOnFile(item.id, k)) || kinds[0];
+    const kind = (item && kindOnFile(item)) || kinds[0];
     cell(tr, 'kind').hidden = !kinds.length;  // no item picked yet
     cell(tr, 'kind').innerHTML = kinds.map((k) =>
       '<option' + (k === kind ? ' selected' : '') + '>' + esc(k) + '</option>').join('');
