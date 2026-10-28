@@ -129,6 +129,11 @@ on a PO as 3,200 pieces with a pack size of 32.
 _Not_: purchase unit — in the web app that is the box, pack or pallet a supplier sells, which this
 app records as the line's pack size.
 
+A lumber line's amount is typed as LF, board feet or pieces, and the other two fill in. It is
+always a whole number of pieces: 100 LF of 2x4 8′ becomes 12 pieces, 96 LF, 64 board feet. It is
+saved in LF. Board feet = LF × thickness × width ÷ 12, from the nominal size, so a 2x4 is 0.667
+board feet per foot. The web app takes pieces only.
+
 **Not known**:
 A lumber PO line's amount when the supplier has not said how much will come; the amount is left
 blank. The line closes itself at its delivery with the reason "Arrived, amount not known", and a

@@ -192,6 +192,57 @@ test('a lumber line may leave its amount blank and waits; plates, hangers and LV
   });
 });
 
+test('a new or changed lumber amount is whole pieces, whatever writes it; a line saved before keeps its amount (#131)', async () => {
+  const { db, ann, supplier } = await withHanger();
+  for (const family of ['lumber', 'lvl']) await goLive(db, family);
+  const board = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 8 });
+  const long = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 12 });
+  const lvl = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl',
+    { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 });
+
+  const before = (await logRows(db)).length;
+  const err = await refused(call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4520', '2026-10-28',
+    JSON.stringify([{ item_id: board.id, ordered: 96 }, { item_id: board.id, ordered: 100 }])), 'IV422', '100 LF of 8′');
+  assert.equal(err.message, 'Line 2: 100 LF of 2x4 #2 8′ is not a whole number of pieces. 96 LF is 12 pieces.');
+  assert.equal((await logRows(db)).length, before, 'the refusal leaves no log row');
+
+  // LVL is ordered in pieces, so its amount is not tied to its length.
+  await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4521', '2026-10-28',
+    JSON.stringify([{ item_id: lvl.id, ordered: 5 }]));
+  let po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4520', '2026-10-28',
+    JSON.stringify([{ item_id: board.id, ordered: 96 }, { item_id: board.id, ordered: 96 }, { item_id: long.id, ordered: 24 }]));
+
+  // A trial line saved before #131 with an amount that is not whole pieces.
+  await as(db, null, async (owner) => {
+    await owner.query('ALTER TABLE inv.po_lines DISABLE TRIGGER check_amount');
+    await owner.query('UPDATE inv.po_lines SET ordered = 100 WHERE id = $1', [po.lines[1].id]);
+    await owner.query('ALTER TABLE inv.po_lines ENABLE TRIGGER check_amount');
+  });
+  po = (await pos(db)).find((p) => p.number === '4520');
+  const edit = (lines) => call(db, 'edit_po', ann.id, crypto.randomUUID(), po.id, po.version, supplier.id, po.number,
+    po.po_date, JSON.stringify(lines.map((l, i) => ({ id: po.lines[i]?.id ?? null, ...l }))));
+  const line = (i, more) => ({ item_id: po.lines[i].item_id, ordered: po.lines[i].ordered, ...more });
+
+  po = await edit([line(0, { ordered: 160 }), line(1, { pack_size: 50 }), line(2), { item_id: board.id, ordered: 8 }]);
+  assert.deepEqual(po.lines.map((l) => l.ordered), [160, 100, 24, 8], 'the saved 100 LF stays while other things change');
+  const changed = await refused(edit([line(0), line(1, { ordered: 101 }), line(2), line(3)]), 'IV422', 'a changed amount');
+  assert.equal(changed.message, 'Line 2: 101 LF of 2x4 #2 8′ is not a whole number of pieces. 96 LF is 12 pieces.');
+  const moved = await refused(edit([line(0, { item_id: long.id }), line(1), line(2), line(3)]), 'IV422', 'another length');
+  assert.equal(moved.message, 'Line 1: 160 LF of 2x4 #2 12′ is not a whole number of pieces. 156 LF is 13 pieces.');
+  po = await edit([line(0), line(1, { ordered: 104 }), line(2), line(3)]);
+  assert.equal(po.lines[1].ordered, 104);
+
+  // The guarantee: even the owner's own insert is refused.
+  await as(db, null, async (owner) => {
+    const insert = await refused(owner.query('INSERT INTO inv.po_lines (po_id, item_id, ordered) VALUES ($1, $2, 4)',
+      [po.id, board.id]), 'IV422', 'a direct insert of 4 LF of 8′');
+    assert.equal(insert.message, 'Line 5: 4 LF of 2x4 #2 8′ is not a whole number of pieces. One piece is 8 LF.');
+    const one = await refused(owner.query('INSERT INTO inv.po_lines (po_id, item_id, ordered) VALUES ($1, $2, 12)',
+      [po.id, board.id]), 'IV422', 'a direct insert of 12 LF of 8′');
+    assert.equal(one.message, 'Line 5: 12 LF of 2x4 #2 8′ is not a whole number of pieces. 8 LF is 1 piece.');
+  });
+});
+
 test('the owner switches a family live, logged with the admin they name; never twice, never EWP (story 99)', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
@@ -628,7 +679,7 @@ test('Edit clears an amount, and an amount added to a line that closed itself re
 
   await receive(ctx, po, [got(po.lines[0], { quantity: 50 })]);  // 400 LF; closes itself
   [po] = await pos(db);
-  const err = await refused(edit(po, [{ ordered: 399 }, { ordered: 400 }]), 'IV422', 'below what arrived (rule 4)');
+  const err = await refused(edit(po, [{ ordered: 392 }, { ordered: 400 }]), 'IV422', 'below what arrived (rule 4)');
   assert.match(err.message, /^Line 1: 400 linear feet have arrived on this line, so it orders at least 400\.$/);
   await refused(edit(po, [{ ordered: 800, pack_size: 10 }, { ordered: 400 }]), 'IV422', 'a pack size on a line that closed itself');
 
