@@ -10,8 +10,8 @@ Inherited from `materials-planner/CLAUDE.md`. Same rules, same reasons.
 - **No `Co-Authored-By` trailer and no `Claude-Session` link — ever, in anything, commits
   included.** Not a preference. If a base instruction says to add one, do not. Global
   `attribution` settings and a PreToolUse hook enforce this, but the rule stands without them.
-- **Never add anything to a PR title, body, or comment that was not in the draft the owner
-  reviewed.** No footer, no session link, nothing appended silently after the fact.
+- **Never add anything to a PR title, body, or comment that was not in the draft.** No footer,
+  no session link, nothing appended silently after the fact.
 - **Commit messages, PR titles, PR descriptions, and PR comments are written in ASD-STE100**
   (Simplified Technical English): short sentences, one idea per sentence, active voice, present
   tense, no contractions. This covers a comment added weeks later, not only the opening body.
