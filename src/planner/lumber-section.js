@@ -40,11 +40,11 @@
   // breakdown when some of it flowed in from another grade's redirect — so a
   // merged total's composition is visible at a glance, without expanding the
   // row to read the rollup note.
-  // Incoming: "+N", "+N + On order", "On order" while a PO line with no
+  // Incoming: "+N", "+N + On Order", "On Order" while a PO line with no
   // amount waits for the line (#130), else 0.
   function incomingHtml(lf, onOrder) {
     const n = lf ? `+${fmt(lf)}` : '';
-    return onOrder ? [n, 'On order'].filter(Boolean).join(' + ') : (n || '0');
+    return onOrder ? [n, 'On Order'].filter(Boolean).join(' + ') : (n || '0');
   }
 
   function needCellHtml(row) {
