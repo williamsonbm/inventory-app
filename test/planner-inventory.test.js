@@ -170,6 +170,22 @@ test('a lumber line gives last counted per length and shows the oldest; a family
     'not live: no last counted');
 });
 
+test('a lumber line is on order while a PO line with no amount waits for one of its items (#130)', async () => {
+  const ctx = await setUp();
+  const add = (grade, length_ft) => ctx.add('lumber', { size: '2x4', grade, length_ft });
+  // 2x4 #2 16' has nothing waiting; the line is on order by its 8'.
+  const [no2at8, , no1at10] = [await add('#2', 8), await add('#2', 16), await add('#1', 10)];
+  await goLive(ctx.db, 'lumber');
+  const supplier = await call(ctx.db, 'add_supplier', ctx.ann.id, crypto.randomUUID(), 'Boise');
+  await call(ctx.db, 'enter_po', ctx.ann.id, crypto.randomUUID(), supplier.id, '4521', '2026-10-28',
+    JSON.stringify([{ item_id: no2at8.id }, { item_id: no1at10.id, ordered: 200 }]));
+
+  const lumber = await ctx.plan('/api/lumber/plan', { files: [LUMBER_LVL_SHEET] });
+  assert.deepEqual(lumber.flags['2x4|#2'], { lastCounted: 'never', lastCountedByLength: { 8: 'never', 16: 'never' }, onOrder: true });
+  assert.deepEqual(lumber.flags['2x4|#1'], { lastCounted: 'never', lastCountedByLength: { 10: 'never' } },
+    'a line whose amount is known is in Incoming, not on order');
+});
+
 test('a lumber line redirected whole buys nothing, so it is not flagged as not in the catalog (Q206)', async () => {
   const ctx = await setUp();
   await call(ctx.db, 'set_grade_redirect', ctx.ann.id, crypto.randomUUID(), '2x4', 'DSS', null, 'MSR2400');

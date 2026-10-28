@@ -134,6 +134,12 @@ A lumber PO line's amount when the supplier has not said how much will come; the
 blank. The line closes itself at its delivery with the reason "Arrived, amount not known", and a
 reversal of that delivery opens it again. Other families always need an amount.
 
+**On order**:
+What Incoming shows on the Overview and Planner while a lumber PO line whose amount is Not known
+still waits: "On order" alone, or after the number ("800 LF + On order") when the item also has a
+waiting line with an amount. It goes away when the line closes itself.
+_Not_: the web app's "on order", which means every delivery still on its way — here that is Incoming.
+
 **Waiting** (a PO line):
 Open, and either more is to arrive than has, or its amount is not known. A PO is Finished when no
 line waits.

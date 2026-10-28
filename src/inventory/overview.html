@@ -82,7 +82,7 @@
     <tbody id="rows"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
-  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Committed is what open jobs still need, and Available is On Hand minus Committed. Incoming is what open POs still bring. Threshold and the figures are in linear feet (LF) for lumber, pieces for the rest. Reorder judges Available: Short below zero, Low at or below the threshold, otherwise OK; LVL is Low by its depth's linear feet, shown above its lengths. Counted is the date of the item's last approved count, monthly or spot check; amber when more than 65 days ago.</p>
+  <p class="sub">Click a row to change its stocking status, threshold or note. A blank threshold is "not set"; 0 means "reorder when none are left". LVL thresholds are set per depth, in linear feet, in Settings → LVL thresholds. Only an admin can rename an item. On Hand is what is here; below zero shows red. Committed is what open jobs still need, and Available is On Hand minus Committed. Incoming is what open POs still bring; On order means a lumber PO line with no amount still waits. Threshold and the figures are in linear feet (LF) for lumber, pieces for the rest. Reorder judges Available: Short below zero, Low at or below the threshold, otherwise OK; LVL is Low by its depth's linear feet, shown above its lengths. Counted is the date of the item's last approved count, monthly or spot check; amber when more than 65 days ago.</p>
 </div>
 
 <script src="/app-header.js"></script>
@@ -193,8 +193,10 @@
     // On hand − committed: what Reorder judges.
     available: { head: 'Available', width: 14, sort: available, cell: (i) => signedCell(i, available(i)) },
     // What open POs still bring, in the family's order unit: "1,280 LF" for
-    // lumber (Q14). None shows blank, not 0.
-    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming, cell: (i) => (i.incoming ? inUnit(i, i.incoming) : '') },
+    // lumber (Q14). None shows blank, not 0. "On order" while a line with no
+    // amount waits, alone or after the number (#130).
+    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming,
+      cell: (i) => [i.incoming ? inUnit(i, i.incoming) : '', i.on_order ? 'On order' : ''].filter(Boolean).join(' + ') },
     // An LVL length that is short names how many pieces (Q58: "Short (−6)").
     reorder: { head: 'Reorder', width: 14, sort: (i) => REORDER_RANK[i.reorder], cell: (i) => {
       if (i.reorder === 'Short') return reorderChip('Short', (VIEWS[i.family] || {}).perDepth ? ' (' + signed(i.available) + ')' : '');
