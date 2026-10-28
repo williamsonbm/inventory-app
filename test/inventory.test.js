@@ -406,8 +406,8 @@ test('Receive takes a delivery against a PO and one without; Incoming and the Ac
   assert.equal(received.body.receipt.po_number, '4501');
   const stale = await change(ctx, '/api/receipts/receive', { po_id: po.id, po_version: po.version, supplier_id: null,
     lines: [{ po_line_id: po.lines[0].id, item_id: hanger.id, quantity: 1 }] });
-  assert.equal(stale.status, 409, 'the same delivery from a second screen is refused');
-  assert.equal(stale.body.current.status, 'finished', 'and the screen gets the PO as it is now');
+  assert.equal(stale.status, 422, 'the same delivery from a second screen is refused: the PO is now Finished (#128)');
+  assert.match(stale.body.error, /^This PO is finished\..*Edit.*Re-open.*Receive without a PO/);
   const walkIn = await change(ctx, '/api/receipts/receive', { po_id: null, po_version: null, supplier_id: supplier.id,
     lines: [{ item_id: other.id, quantity: 4 }] });
   assert.equal(walkIn.status, 200, walkIn.body.error);

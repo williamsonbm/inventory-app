@@ -446,6 +446,45 @@ test('a delivery may bring more than ordered and items not on the PO, and a rece
   assert.deepEqual([walkIn.po_id, walkIn.po_number, walkIn.supplier, walkIn.lines[0].po_line], [null, null, 'Simpson', null]);
 });
 
+test('a Finished PO takes no receipt, even from a screen opened before it finished; Re-open lets one in (#128)', async () => {
+  const ctx = await withPo();
+  const { db, ann, hanger, po, reason } = ctx;
+  const opened = await receive(ctx, po, [got(po.lines[0], { quantity: 100 })]).then(() => pos(db)).then(([p]) => p);
+  const closed = await call(db, 'close_po_line', ann.id, crypto.randomUUID(), po.lines[1].id, opened.version, reason.id);
+  assert.equal(closed.status, 'finished');
+
+  const before = (await logRows(db)).length;
+  for (const [label, version] of [['a current screen', closed.version], ['a screen opened before it finished', opened.version]]) {
+    const err = await refused(receive(ctx, closed, [got(closed.lines[0], { quantity: 5 })], { version }), 'IV422', label);
+    assert.match(err.message, /^This PO is finished\..*Edit.*Re-open.*Receive without a PO/, label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  assert.deepEqual((await pos(db))[0].lines.map((l) => l.received), [100, 0], 'nothing is received');
+
+  const reopened = await call(db, 'reopen_po_line', ann.id, crypto.randomUUID(), po.lines[1].id, closed.version);
+  await receive(ctx, reopened, [got(reopened.lines[1], { quantity: 30 })]);
+  assert.equal((await incoming(db))[hanger.id], 0);
+});
+
+test('Reverse and enter again may receive on a Finished PO when the line it replaces is on that PO, and only then (owner, J208)', async () => {
+  const ctx = await withPo();
+  const { db, ann, supplier, hanger, po, reason } = ctx;
+  const closed = await call(db, 'close_po_line', ann.id, crypto.randomUUID(), po.lines[1].id, po.version, reason.id);
+  const wrong = await receive(ctx, closed, [got(closed.lines[0], { quantity: 100 })]);
+  const other = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4502', '2026-10-03',
+    JSON.stringify([{ item_id: hanger.id, ordered: 5 }]));
+  const elsewhere = await receive(ctx, other, [got(other.lines[0], { quantity: 5 })]);
+  const [finished] = await pos(db);
+  assert.equal(finished.status, 'finished');
+
+  const again = (replaces, quantity) => call(db, 'receive', ann.id, crypto.randomUUID(), finished.id, finished.version, null, null,
+    JSON.stringify([got(finished.lines[0], { quantity })]), replaces);
+  await refused(again(elsewhere.lines[0].id, 5), 'IV422', 'a line replaced from another PO');
+  await again(wrong.lines[0].id, 90);
+  const [now] = await pos(db);
+  assert.deepEqual([now.status, now.lines.map((l) => l.received)], ['partial', [90, 0]]);
+});
+
 test('a pack size typed on a receipt line becomes the size on file only if the item has none of that kind (story 19 = B)', async () => {
   const ctx = await withPo();
   const { db, hanger, po } = ctx;
