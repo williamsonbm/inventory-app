@@ -136,7 +136,10 @@ const signed = (n) => `${n > 0 ? '+' : '−'}${Math.abs(n)}`;
 // The entry a receipt, correction or trim replaced, reversed in the same save.
 const replaced = (row) => (row.reversed ? `; reverses ${reversalLines(row.reversed)}${reopened(row)}` : '');
 // A line with no amount the reversal re-opened (#129); none before #129.
-const reopened = (row) => (row.reopened_lines ?? []).map((l) => `; PO ${l.po} line ${l.po_line} re-opened`).join('');
+// Left out when the receipt closed it again, so the words end as the line does.
+const reopened = (row) => (row.reopened_lines ?? [])
+  .filter((l) => !(l.po === row.po_number && (row.closed_lines ?? []).some((c) => c.po_line === l.po_line)))
+  .map((l) => `; PO ${l.po} line ${l.po_line} re-opened`).join('');
 
 const noted = (row) => (row.note ? `; note: ${row.note}` : '');
 

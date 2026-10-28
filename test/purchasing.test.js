@@ -12,6 +12,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { freshDatabase, as, APP, firstUser, call, goLive, logRows, figure, refused } = require('./support/database.js');
+const { describeChange } = require('../src/settings/activity.js');
 
 const incoming = (db) => figure(db, 'incoming');
 
@@ -691,6 +692,10 @@ test('reversing a delivery re-opens a line that closed itself; Reverse and enter
   assert.deepEqual(right.reopened_lines, [{ po: '4601', po_line: 1 }]);
   assert.deepEqual(right.closed_lines, [{ po_line: 1, reason: 'Arrived, amount not known' }]);
   assert.deepEqual(await line(), ['finished', 400, 'Arrived, amount not known', true, false], 'Reverse and enter again');
+  const logged = (await logRows(db)).at(-1);
+  assert.equal(describeChange(logged.action, logged.target_table, logged.old_value, logged.new_value),
+    'added: 50 2x4 #2 8′ on line 1; line 1 closed: Arrived, amount not known; reverses the receipt: 2x4 #2 8′ −60',
+    'a line re-opened and closed again in one save reads as closed');
 
   [po] = await pos(db);
   po = await call(db, 'reopen_po_line', ann.id, crypto.randomUUID(), po.lines[0].id, po.version);
