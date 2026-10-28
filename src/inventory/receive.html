@@ -252,10 +252,10 @@
 
   // A line's unit, and for a lumber item its board feet and pieces, filled
   // from the LF box. A saved line shows part of a piece as it is, so an
-  // amount saved before #131 is kept until a box is typed in (J246). An
-  // item picked while typing (`picked`) refills all three in its whole
+  // amount saved before #131 is kept until a box is typed in (J246). A
+  // new item picked while typing (`picked`) refills all three in its whole
   // pieces: 104 LF of 8′ becomes 96 LF of 12′, not 8.7 pieces (#138
-  // review, F1).
+  // review, F1). Re-picking the saved item does not (F7).
   function showUnit(tr, item, picked) {
     const lumber = !!item && inLf(item);
     tr.querySelector('[data-f="unit"]').textContent = item ? unitOf(item) : '';
@@ -314,7 +314,7 @@
     const tr = e.target.closest('tr');
     const item = lineItem(tr, e.target.value);
     tr.dataset.picked = item ? item.id : '';
-    showUnit(tr, item, true);
+    showUnit(tr, item, String(item?.id) !== tr.dataset.itemId);
   });
   el('lines').addEventListener('change', (e) => {
     if (e.target.dataset.f in LUMBER_BOXES) fillLumber(e, true);
