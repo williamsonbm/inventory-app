@@ -40,6 +40,13 @@
   // breakdown when some of it flowed in from another grade's redirect — so a
   // merged total's composition is visible at a glance, without expanding the
   // row to read the rollup note.
+  // Incoming: "+N", "+N + On Order", "On Order" while a PO line with no
+  // amount waits for the line (#130), else 0.
+  function incomingHtml(lf, onOrder) {
+    const n = lf ? `+${fmt(lf)}` : '';
+    return onOrder ? [n, 'On Order'].filter(Boolean).join(' + ') : (n || '0');
+  }
+
   function needCellHtml(row) {
     const need = needLf(row);
     if (!row.redirectedIn || !row.redirectedIn.length) return fmt(need);
@@ -364,6 +371,7 @@
         // swap), so it still has something worth expanding — its Raw lengths
         // and Driving usage, just no Order/Cut detail.
         const hasDrill = (row.jobs && row.jobs.length > 0) || (row.draws && row.draws.length > 0);
+        const onOrder = (p.flags[row.key] || {}).onOrder;
         // Not-carried is moot once the demand's been redirected elsewhere —
         // the redirect note explains the empty order, not a sourcing gap.
         const notInMenu = !row.inMenu && !row.redirect;
@@ -384,7 +392,7 @@
             ${hasStock ? `
               <td class="n ${row.stockLf === 0 ? 'zero-ink' : ''}">${fmt(row.stockLf)}</td>
               <td class="n"><strong style="color:${row.neededLf > 0 ? 'var(--warn)' : 'inherit'}">${fmt(row.neededLf)}</strong></td>
-              <td class="n ${row.incomingLf ? '' : 'zero-ink'}">${row.incomingLf ? `+${fmt(row.incomingLf)}` : '0'}</td>
+              <td class="n ${row.incomingLf || onOrder ? '' : 'zero-ink'}">${incomingHtml(row.incomingLf, onOrder)}</td>
               <td class="n ${row.piecesOnHand ? '' : 'zero-ink'}">${fmtInt(row.piecesOnHand)}</td>
             ` : ''}
             <td class="n"><strong style="color:${row.piecesToBuy > 0 ? 'var(--warn)' : 'inherit'}">${notInMenu ? '—' : fmtInt(row.piecesToBuy)}</strong></td>

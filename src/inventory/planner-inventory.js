@@ -56,7 +56,7 @@ async function readInventory(database, family) {
   const [[{ live }], items] = await Promise.all([
     database.read('SELECT live FROM inv.families WHERE code = $1', [family]),
     database.read(`
-    SELECT i.id::int, i.version, i.active, i.sku, i.product, i.size, i.grade, i.length_ft, i.threshold, f.on_hand, f.committed, f.available, f.incoming,
+    SELECT i.id::int, i.version, i.active, i.sku, i.product, i.size, i.grade, i.length_ft, i.threshold, f.on_hand, f.committed, f.available, f.incoming, f.on_order,
            pg_catalog.to_char(f.counted_at AT TIME ZONE $2, 'YYYY-MM-DD') AS last_counted
       FROM inv.items i JOIN inv.item_figures f ON f.item_id = i.id
      WHERE i.family = $1
@@ -113,8 +113,8 @@ const LINES = {
 const oldest = (dates) => (dates.includes(null) ? 'never' : dates.sort()[0]);
 
 // Flags for the answer's lines, by line key; a line with nothing to say has
-// none. Last counted only for a live family; retired when every item behind
-// the line is, with what Un-retire takes (Q183).
+// none. Last counted and on order only for a live family; retired when every
+// item behind the line is, with what Un-retire takes (Q183).
 function lineFlags(family, answer, items, live) {
   const { lines, key, sku, byLength } = LINES[family];
   const behindKey = itemsByKey(family, items);
@@ -135,6 +135,8 @@ function lineFlags(family, answer, items, live) {
         f.lastCountedByLength = Object.fromEntries(lengths.map((ft) =>
           [ft, oldest(behind.filter((i) => i.length_ft === ft).map((i) => i.last_counted))]));
       }
+      // A PO line with no amount waits for an item behind the line (#130).
+      if (behind.some((i) => i.on_order)) f.onOrder = true;
     }
     Object.assign(f, catalogFlag(family, behind));
     if (Object.keys(f).length) flags[key(line)] = f;

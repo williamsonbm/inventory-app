@@ -594,6 +594,24 @@ test('a line with no amount closes itself at its first delivery, and again after
   await refused(receive(ctx, now, [got(now.lines[0], { quantity: 1 })]), 'IV422', 'a Finished PO takes no receipt (#128)');
 });
 
+test('an item is on order while a line with no amount waits for it, beside its Incoming, until the line closes itself (#130)', async () => {
+  const ctx = await withHanger();
+  const { db, ann, supplier, hanger } = ctx;
+  await goLive(db, 'lumber');
+  const add = (length_ft) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft });
+  const [blank, both, numbered] = [await add(8), await add(10), await add(12)];
+  const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4520', '2026-10-28',
+    JSON.stringify([{ item_id: blank.id }, { item_id: both.id }, { item_id: both.id, ordered: 800 }, { item_id: numbered.id, ordered: 300 }]));
+
+  assert.deepEqual(await figure(db, 'on_order'), { [hanger.id]: false, [blank.id]: true, [both.id]: true, [numbered.id]: false });
+  assert.deepEqual(await incoming(db), { [hanger.id]: 0, [blank.id]: 0, [both.id]: 800, [numbered.id]: 300 },
+    'no amount is known to be on its way, so a blank line adds nothing to Incoming');
+
+  await receive(ctx, po, [got(po.lines[0], { quantity: 50 })]);
+  assert.deepEqual(await figure(db, 'on_order'), { [hanger.id]: false, [blank.id]: false, [both.id]: true, [numbered.id]: false },
+    'the line closed itself at its delivery, so its item is no longer on order');
+});
+
 test('Edit clears an amount, and an amount added to a line that closed itself re-opens it only when above what arrived (#129)', async () => {
   const ctx = await withHanger();
   const { db, ann, supplier } = ctx;
