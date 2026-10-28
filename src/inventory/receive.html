@@ -132,7 +132,6 @@
   let families = [];
   let items = [];
   let reasons = [];
-  let amountNotKnown = null; // the reason a line with no amount closes itself with
   let pos = [];
   let packSizes = [];
   let current = null;   // the family the family bar shows, or 'all'
@@ -192,7 +191,6 @@
     const [suppliers, reasonList] = got;
     // Reasons in use, less those kept for another entry (a trim, the import).
     reasons = reasonList.reasons.filter((r) => r.active && !r.entry);
-    amountNotKnown = reasonList.reasons.find((r) => r.entry === 'receive').text;
     const supplierChoices = '<option value="">Pick one…</option>' +
       suppliers.suppliers.map((s) => '<option value="' + s.id + '">' + esc(s.name) + '</option>').join('');
     el('supplier').innerHTML = supplierChoices;
@@ -226,7 +224,7 @@
     const fixed = saved?.closed_reason ? ' disabled' : '';
     // A line that closed itself at a delivery with no amount may still be
     // given one; Edit re-opens it when the amount is above what arrived.
-    const amountFixed = saved?.closed_reason && saved.closed_reason !== amountNotKnown ? ' disabled' : '';
+    const amountFixed = saved?.closed_reason && !saved.closed_itself ? ' disabled' : '';
     if (saved) Object.assign(tr.dataset, { id: saved.id, itemId: saved.item_id });
     if (fixed) tr.className = 'sub';
     tr.innerHTML = '<td><input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…" value="' +

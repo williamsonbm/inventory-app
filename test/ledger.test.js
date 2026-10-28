@@ -229,7 +229,7 @@ test('a reversed receipt line comes off on hand and its PO line\'s incoming come
 
   const key = crypto.randomUUID();
   const reversal = await reverse(ctx, receipt.lines[0].id, ' miscounted ', key);
-  assert.deepEqual(reversal, { reverses: 'receive', lines: [{ item: 'LUS28', quantity: -30 }], note: 'miscounted' });
+  assert.deepEqual(reversal, { reverses: 'receive', lines: [{ item: 'LUS28', quantity: -30 }], note: 'miscounted', reopened_lines: [] });
   assert.deepEqual([(await onHand(db))[hanger.id], (await incoming(db))[hanger.id]], [40, 100]);
 
   const log = (await logRows(db)).at(-1);

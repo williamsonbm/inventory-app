@@ -4,22 +4,29 @@
 --
 -- Reach: inv.po_lines.ordered may be blank, for a family whose amount is
 -- optional (lumber) only, whatever writes the row. inv.checked_po_line takes
--- a blank lumber amount. inv.po_json gives each line `waiting`, and the PO's
--- status treats a blank amount as waiting. inv.receive closes a line with no
--- amount at its delivery with a new built-in reason, "Arrived, amount not
--- known", which no one picks by hand (inv.checked_reason). inv.edit_po may
--- give such a line an amount. Adds one reasons row; existing lines keep their
--- amounts. Same signatures, so inv_app keeps its grants.
+-- a blank lumber amount. inv.po_json gives each line `waiting` and
+-- `closed_itself`, and the PO's status treats a blank amount as waiting.
+-- inv.receive closes a line with no amount at its delivery with a new
+-- built-in reason, "Arrived, amount not known", which no one picks by hand
+-- (inv.checked_reason); a reversal of
+-- that delivery re-opens the line (inv.reopen_self_closed). inv.edit_po may
+-- give such a line an amount; PO edit rule 4 keeps an amount on a line with
+-- deliveries. One reason per entry (reasons_entry_key). Adds one reasons
+-- row; existing lines keep their amounts. Same signatures, so inv_app keeps
+-- its grants.
 -- Recovery: give every blank amount one, put back NOT NULL, drop the trigger,
--- its function and families.amount_optional, re-open the lines the reason
--- closed, delete the reason and its entry value, and rerun 004's and 016's
--- versions of the functions replaced here as CREATE OR REPLACE.
+-- its function, inv.reopen_self_closed, reasons_entry_key and
+-- families.amount_optional, re-open the lines the reason closed, delete the
+-- reason and its entry value, and rerun 004's and 016's versions of the
+-- functions replaced here as CREATE OR REPLACE.
 
 -- Whether a family's PO line may leave its amount ordered blank because the
 -- supplier has not said how much will come (spec #127): lumber only.
 ALTER TABLE inv.families ADD COLUMN amount_optional boolean NOT NULL DEFAULT false;
 UPDATE inv.families SET amount_optional = true WHERE code = 'lumber';
 
+-- Incoming (009's GREATEST(ordered - received, 0)) counts a blank amount
+-- as 0: no amount is known to be on its way. #130 shows "On order".
 ALTER TABLE inv.po_lines ALTER COLUMN ordered DROP NOT NULL;
 
 -- A blank amount only for a family whose amount is optional, whatever
@@ -43,6 +50,38 @@ $$;
 
 CREATE TRIGGER check_amount BEFORE INSERT OR UPDATE OF item_id, ordered ON inv.po_lines
   FOR EACH ROW EXECUTE FUNCTION inv.check_po_line_amount();
+
+-- 004's inv.check_po_line_received (PO edit rule 4), with an amount kept on
+-- a line that has deliveries: cleared, the line would wait again, and a
+-- Finished PO would take a delivery (#128) closed as "amount not known"
+-- (owner, J221). A line with no amount keeps none. Otherwise as 004.
+CREATE OR REPLACE FUNCTION inv.check_po_line_received() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  v_received integer;
+  v_amount text;
+  n integer := inv.po_line_number(OLD.id);
+BEGIN
+  IF NOT EXISTS (SELECT FROM inv.ledger WHERE po_line_id = OLD.id) THEN RETURN NEW; END IF;
+  v_received := inv.received(OLD.id);
+  SELECT v_received || ' ' || f.order_unit INTO v_amount
+    FROM inv.items i JOIN inv.families f ON f.code = i.family WHERE i.id = OLD.item_id;
+  IF NEW.item_id <> OLD.item_id THEN
+    RAISE EXCEPTION 'Line %: % of % have arrived on this line, so its item stays.', n, v_amount,
+      (SELECT inv.item_label(i) FROM inv.items i WHERE i.id = OLD.item_id) USING ERRCODE = 'IV422';
+  END IF;
+  IF NEW.ordered < v_received THEN
+    RAISE EXCEPTION 'Line %: % have arrived on this line, so it orders at least %.', n, v_amount, v_received
+      USING ERRCODE = 'IV422';
+  END IF;
+  IF NEW.ordered IS NULL AND OLD.ordered IS NOT NULL AND v_received > 0 THEN
+    RAISE EXCEPTION 'Line %: % have arrived on this line, so its amount stays.', n, v_amount USING ERRCODE = 'IV422';
+  END IF;
+  RETURN NEW;
+END
+$$;
 
 -- 004's inv.checked_po_line, with a blank amount taken for a family whose
 -- amount is optional; otherwise as 004.
@@ -79,17 +118,20 @@ BEGIN
 END
 $$;
 
--- 004's inv.po_json, with `waiting` on each line and the status read from
--- it; otherwise as 004. A line waits for a delivery (spec #127) while it
--- is open and either more is to arrive than has, or its amount is not
--- known. The PO's status and the pages read this one rule.
+-- 004's inv.po_json, with `waiting` and `closed_itself` on each line and
+-- the status read from `waiting`; otherwise as 004. A line waits for a
+-- delivery (spec #127) while it is open and either more is to arrive than
+-- has, or its amount is not known. The PO's status and the pages read this
+-- one rule. closed_itself: closed with the reason a delivery sets, so Edit
+-- may give it an amount; the Receive page reads it, as inv.edit_po decides.
 CREATE OR REPLACE FUNCTION inv.po_json(p_id bigint) RETURNS jsonb
 LANGUAGE sql STABLE
 SET search_path = pg_catalog, pg_temp
 AS $$
   WITH lines AS (
     SELECT x.*, x.closed_reason IS NULL AND (x.ordered IS NULL OR x.received < x.ordered) AS waiting
-      FROM (SELECT l.*, inv.item_label(i) AS item, r.text AS closed_reason, inv.received(l.id) AS received
+      FROM (SELECT l.*, inv.item_label(i) AS item, r.text AS closed_reason, inv.received(l.id) AS received,
+                   coalesce(r.entry = 'receive', false) AS closed_itself
               FROM inv.po_lines l JOIN inv.items i ON i.id = l.item_id
               LEFT JOIN inv.reasons r ON r.id = l.closed_reason_id
              WHERE l.po_id = p_id) x)
@@ -101,7 +143,8 @@ AS $$
                    ELSE 'ordered' END,
     'lines', (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
                 'id', id, 'item_id', item_id, 'item', item, 'ordered', ordered, 'received', received,
-                'pack_size', pack_size, 'closed_reason', closed_reason, 'waiting', waiting) ORDER BY id), '[]')
+                'pack_size', pack_size, 'closed_reason', closed_reason, 'waiting', waiting,
+                'closed_itself', closed_itself) ORDER BY id), '[]')
                 FROM lines))
     FROM inv.purchase_orders po JOIN inv.suppliers s ON s.id = po.supplier_id
    WHERE po.id = p_id
@@ -112,6 +155,8 @@ $$;
 ALTER TABLE inv.reasons DROP CONSTRAINT reasons_entry_check;
 ALTER TABLE inv.reasons ADD CONSTRAINT reasons_entry_check CHECK (entry IN ('trim', 'import', 'receive'));
 INSERT INTO inv.reasons (text, built_in, entry) VALUES ('Arrived, amount not known', true, 'receive');
+-- One reason for each entry, since a function looks it up by entry.
+CREATE UNIQUE INDEX reasons_entry_key ON inv.reasons (entry) WHERE entry IS NOT NULL;
 
 -- 004's inv.checked_reason, refusing the reason a delivery sets; otherwise as 004.
 CREATE OR REPLACE FUNCTION inv.checked_reason(p_id bigint, what text) RETURNS inv.reasons
@@ -139,8 +184,50 @@ BEGIN
 END
 $$;
 
+-- Re-opens each line that closed itself at a delivery when action p_log_id
+-- reversed a delivery on it: the delivery that closed it is gone, so the
+-- line waits again; Close ends it. A line closed by hand keeps its close.
+-- Answers the lines it re-opened, with their PO, for the Activity Log.
+-- Every caller of inv.reverse_entry that can reverse a receipt line calls
+-- this after it (inv.reverse, and inv.receive after inv.replaced_at).
+CREATE FUNCTION inv.reopen_self_closed(p_log_id bigint) RETURNS jsonb
+LANGUAGE sql
+SET search_path = pg_catalog, pg_temp
+AS $$
+  WITH reopened AS (
+    UPDATE inv.po_lines l SET closed_reason_id = NULL
+      FROM inv.reasons r
+     WHERE r.id = l.closed_reason_id AND r.entry = 'receive'
+       AND EXISTS (SELECT FROM inv.ledger g WHERE g.action_id = p_log_id AND g.kind = 'reversal' AND g.po_line_id = l.id)
+    RETURNING l.id, l.po_id)
+  SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
+           'po', po.number, 'po_line', inv.po_line_number(o.id)) ORDER BY o.id), '[]')
+    FROM reopened o JOIN inv.purchase_orders po ON po.id = o.po_id
+$$;
+
+-- 004's inv.reverse, re-opening a line the reversed delivery closed and
+-- naming it in `reopened_lines`; otherwise as 004.
+CREATE OR REPLACE FUNCTION inv.reverse(p_actor bigint, p_key uuid, p_id bigint, p_note text)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, pg_temp
+AS $$
+DECLARE
+  a record;
+  v_id bigint;
+BEGIN
+  a := inv.claim_action(p_actor, p_key, 'reverse', 'ledger', NULL,
+                        pg_catalog.jsonb_build_object('id', p_id, 'note', p_note));
+  IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
+  v_id := inv.reverse_entry(a.log_id, p_id, nullif(inv.tidy(p_note), ''));
+  RETURN inv.finish_action(a.log_id, v_id, NULL,
+    inv.reversal_json(a.log_id) || pg_catalog.jsonb_build_object('reopened_lines', inv.reopen_self_closed(a.log_id)));
+END
+$$;
+
 -- 016's inv.receive, closing a line with no amount at its delivery and
--- naming it in `closed_lines`; otherwise as 016.
+-- naming it in `closed_lines`, and re-opening one that a replaced line
+-- closed, named in `reopened_lines`; otherwise as 016.
 CREATE OR REPLACE FUNCTION inv.receive(
   p_actor bigint, p_key uuid, p_po_id bigint, p_po_version integer, p_supplier_id bigint, p_bol text, p_lines jsonb,
   p_replaces bigint DEFAULT NULL, p_timing jsonb DEFAULT NULL)
@@ -159,6 +246,7 @@ DECLARE
   n integer;
   v_last integer;  -- the PO's last line number; a line not on the PO comes after it
   v_closed jsonb;  -- the no-amount lines this delivery closed, for the Activity Log
+  v_reopened jsonb := '[]';  -- and those the line it replaces had closed
   v_reason inv.reasons;
 BEGIN
   a := inv.claim_action(p_actor, p_key, 'receive', 'receipts', NULL,
@@ -189,6 +277,8 @@ BEGIN
   -- After the PO's check: reversing a line it replaces on the same PO moves
   -- that PO on too, and must not make this screen look stale (Q76).
   v_at := inv.replaced_at(a.log_id, p_replaces);
+  -- Before the lines are checked, so the delivery may go on the line again.
+  IF p_replaces IS NOT NULL THEN v_reopened := inv.reopen_self_closed(a.log_id); END IF;
   IF pg_catalog.jsonb_typeof(p_lines) IS DISTINCT FROM 'array' THEN
     RAISE EXCEPTION 'A receipt lists its lines.' USING ERRCODE = 'IV400';
   END IF;
@@ -229,7 +319,7 @@ BEGIN
   -- A line with no amount closes itself at a delivery (spec #127), in this
   -- save, so the PO is Finished when nothing else waits. Re-open lets it
   -- take another, after which it closes itself again.
-  SELECT * INTO v_reason FROM inv.reasons WHERE entry = 'receive';
+  SELECT * INTO STRICT v_reason FROM inv.reasons WHERE entry = 'receive';
   WITH closed AS (
     UPDATE inv.po_lines l SET closed_reason_id = v_reason.id
      WHERE l.po_id = p_po_id AND l.ordered IS NULL AND l.closed_reason_id IS NULL
@@ -241,7 +331,8 @@ BEGIN
     FROM closed c;
   v_timed := inv.time_entry(a.log_id, p_replaces, p_timing);
   RETURN inv.finish_action(a.log_id, v_receipt, NULL,
-    inv.receipt_json(v_receipt) || pg_catalog.jsonb_build_object('pack_sizes_added', v_added, 'closed_lines', v_closed)
+    inv.receipt_json(v_receipt) || pg_catalog.jsonb_build_object('pack_sizes_added', v_added, 'closed_lines', v_closed,
+                                                       'reopened_lines', v_reopened)
     || inv.replaced_json(a.log_id, p_replaces) || v_timed);
 END
 $$;

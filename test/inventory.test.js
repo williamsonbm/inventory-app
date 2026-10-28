@@ -331,7 +331,7 @@ test('Receive enters a PO, lists it, and the Overview shows its lines as Incomin
   assert.equal(entered.status, 200, entered.body.error);
   assert.deepEqual(entered.body.po, {
     id: entered.body.po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03', status: 'ordered',
-    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], item: 'LUS28', received: 0, closed_reason: null, waiting: true }],
+    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], item: 'LUS28', received: 0, closed_reason: null, waiting: true, closed_itself: false }],
   });
   assert.deepEqual((await read(ctx, '/api/pos')).pos, [entered.body.po]);
 
@@ -436,17 +436,26 @@ test('a lumber PO with no amounts is received, closes itself and is Finished; th
     lines: [{ po_line_id: po.lines[0].id, item_id: board.id, quantity: 60 }] });
   const received = await change(ctx, '/api/receipts/receive', receipt(entered.body.po));
   assert.equal(received.status, 200, received.body.error);
-  const [po] = (await read(ctx, '/api/pos')).pos;
+  let [po] = (await read(ctx, '/api/pos')).pos;
   assert.deepEqual([po.status, po.lines[0].received, po.lines[0].closed_reason], ['finished', 480, 'Arrived, amount not known']);
   const again = await change(ctx, '/api/receipts/receive', receipt(po));
   assert.equal(again.status, 422, 'a second delivery is refused: the PO is Finished (#128)');
+
+  const reversed = await change(ctx, '/api/ledger/reverse', { id: received.body.receipt.lines[0].id, note: null });
+  assert.equal(reversed.status, 200, reversed.body.error);
+  const [waiting] = (await read(ctx, '/api/pos')).pos;
+  assert.deepEqual([waiting.status, waiting.lines[0].received, waiting.lines[0].closed_reason], ['ordered', 0, null]);
+  assert.equal((await change(ctx, '/api/receipts/receive', receipt(waiting))).status, 200);
+  [po] = (await read(ctx, '/api/pos')).pos;
 
   const edited = await change(ctx, '/api/pos/edit', { id: po.id, version: po.version, supplier_id: supplier.id, number: '4520',
     po_date: '2026-10-28', lines: [{ id: po.lines[0].id, item_id: board.id, ordered: 960, pack_size: null }] });
   assert.equal(edited.status, 200, edited.body.error);
   const { entries } = await read(ctx, '/api/activity');
-  assert.deepEqual(entries.slice(0, 2).map((e) => [e.action, e.target, e.change]), [
+  assert.deepEqual(entries.slice(0, 4).map((e) => [e.action, e.target, e.change]), [
     ['edit PO', 'PO 4520', 'line 1 re-opened; line 1 ordered: Not known → 960'],
+    ['receive', 'PO 4520', 'added: 60 2x4 #2 8′ on line 1; line 1 closed: Arrived, amount not known'],
+    ['reverse', entries[2].target, 'added: reversal of the receipt: 2x4 #2 8′ −60; PO 4520 line 1 re-opened'],
     ['receive', 'PO 4520', 'added: 60 2x4 #2 8′ on line 1; line 1 closed: Arrived, amount not known'],
   ]);
 });

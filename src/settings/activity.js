@@ -124,7 +124,7 @@ const ADDED = {
   receipts: describeReceipt,
   jobs: (row) => `${row.name ?? 'no job name'}, revision ${row.revision}`,
   ledger: (row) => `on hand ${signed(row.quantity)}, ${row.reason}${noted(row)}`,
-  reverse: (row) => `reversal of ${reversalLines(row)}${noted(row)}`,
+  reverse: (row) => `reversal of ${reversalLines(row)}${reopened(row)}${noted(row)}`,
   counts: (row) => countLabel(row),
   trim: (row) => `${row.boards} trimmed to ${row.length_ft}′`
     + `${row.item_added ? ' (new item, Non-Stock)' : row.item_unretired ? ' (put back in use)' : ''}${noted(row)}`,
@@ -134,7 +134,9 @@ const ADDED = {
 const reversalLines = (r) => `${ENTRY_NAMES[r.reverses]}: ${r.lines.map((l) => `${l.item} ${signed(l.quantity)}`).join(', ')}`;
 const signed = (n) => `${n > 0 ? '+' : '−'}${Math.abs(n)}`;
 // The entry a receipt, correction or trim replaced, reversed in the same save.
-const replaced = (row) => (row.reversed ? `; reverses ${reversalLines(row.reversed)}` : '');
+const replaced = (row) => (row.reversed ? `; reverses ${reversalLines(row.reversed)}${reopened(row)}` : '');
+// A line with no amount the reversal re-opened (#129); none before #129.
+const reopened = (row) => (row.reopened_lines ?? []).map((l) => `; PO ${l.po} line ${l.po_line} re-opened`).join('');
 
 const noted = (row) => (row.note ? `; note: ${row.note}` : '');
 
