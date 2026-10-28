@@ -194,8 +194,9 @@
     available: { head: 'Available', width: 14, sort: available, cell: (i) => signedCell(i, available(i)) },
     // What open POs still bring, in the family's order unit: "1,280 LF" for
     // lumber (Q14). None shows blank, not 0. "On order" while a line with no
-    // amount waits, alone or after the number (#130).
-    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming,
+    // amount waits, alone or after the number (#130). It sorts half a unit
+    // above the same number without it, so "On order" alone sits next to the blanks.
+    incoming: { head: 'Incoming', width: 14, sort: (i) => i.incoming + (i.on_order ? 0.5 : 0),
       cell: (i) => [i.incoming ? inUnit(i, i.incoming) : '', i.on_order ? 'On order' : ''].filter(Boolean).join(' + ') },
     // An LVL length that is short names how many pieces (Q58: "Short (−6)").
     reorder: { head: 'Reorder', width: 14, sort: (i) => REORDER_RANK[i.reorder], cell: (i) => {
