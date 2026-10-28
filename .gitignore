@@ -16,3 +16,6 @@ node_modules/
 # npm run reset-local keeps (src/local.js).
 .local-session-secret
 .local-people.json
+
+# Claude Code permissions for one machine. Never shared.
+.claude/settings.local.json
