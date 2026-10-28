@@ -24,6 +24,8 @@ DECLARE
   v_pieces integer;
 BEGIN
   SELECT * INTO i FROM inv.items WHERE id = NEW.item_id;
+  -- No such item: the foreign key refuses the row, as it did before 019.
+  IF NOT FOUND THEN RETURN NEW; END IF;
   SELECT * INTO f FROM inv.families WHERE code = i.family;
   IF NEW.ordered IS NULL THEN
     IF NOT f.amount_optional THEN

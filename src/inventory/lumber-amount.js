@@ -31,9 +31,11 @@
   function fill(item, box, text) {
     if (String(text).trim() === '') return asSaved(item, null);
     const perPiece = { lf: item.length_ft, boardFeet: item.length_ft * perFoot(item), pieces: 1 }[box];
-    // Board feet are shown rounded to 0.1, so one piece of 2x8 10′ (13.33)
-    // shows as 13.3; typed back, up to 0.05 more counts, and it stays one
-    // piece.
+    // Board feet are shown rounded to 0.1, so deliberately up to 0.05 more
+    // than typed counts: a shown figure typed back keeps its pieces. Without
+    // it, rounding down strictly, one piece of 2x8 10′ (13.33, shown 13.3)
+    // types back as 0 pieces. The cost: 5.3 board feet of 2x4 8′ (5.33 is
+    // one piece) counts as one piece.
     const typed = Number(text) + (box === 'boardFeet' ? 0.05 : 0);
     const pieces = Math.max(0, Math.floor(typed / perPiece));
     return asSaved(item, pieces * item.length_ft);

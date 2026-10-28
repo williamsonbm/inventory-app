@@ -2,8 +2,11 @@
 <!-- Inventory → Receive. Its page code has no test in the repo: it runs only
      in a browser, and a test of it needs jsdom, a new dependency. A jsdom
      check outside the repo verifies each change instead (#128: no Receive on
-     a Finished PO, Close only while a line waits, "(on file)"); the database
-     and HTTP tests cover the rules the page shows. -->
+     a Finished PO, Close only while a line waits, "(on file)"; #131: a
+     lumber line's LF, board feet and pieces boxes, a new item refilling them
+     in whole pieces, and a saved line kept as it is); the database and HTTP
+     tests cover the rules the page shows, and test/lumber-amount.test.js the
+     box arithmetic. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -244,19 +247,23 @@
       '<td>' + (!saved ? '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>'
         : closedLabel(saved)) + '</td>';
     el('lines').append(tr);
-    showUnit(tr, item);
+    showUnit(tr, item, false);
   }
 
   // A line's unit, and for a lumber item its board feet and pieces, filled
-  // from the LF as saved or typed: part of a piece shows as it is, so an
-  // amount saved before #131 is kept until a box is typed in (J246).
-  function showUnit(tr, item) {
+  // from the LF box. A saved line shows part of a piece as it is, so an
+  // amount saved before #131 is kept until a box is typed in (J246). An
+  // item picked while typing (`picked`) refills all three in its whole
+  // pieces: 104 LF of 8′ becomes 96 LF of 12′, not 8.7 pieces (#138
+  // review, F1).
+  function showUnit(tr, item, picked) {
     const lumber = !!item && inLf(item);
     tr.querySelector('[data-f="unit"]').textContent = item ? unitOf(item) : '';
     tr.querySelector('[data-f="lumber"]').hidden = !lumber;
     if (!lumber) return;
     const lf = tr.querySelector('[data-f="ordered"]').value.trim();
-    const boxes = LumberAmount.asSaved(item, lf === '' ? null : Number(lf));
+    const boxes = picked ? LumberAmount.fill(item, 'lf', lf) : LumberAmount.asSaved(item, lf === '' ? null : Number(lf));
+    tr.querySelector('[data-f="ordered"]').value = boxes.lf;
     tr.querySelector('[data-f="boardFeet"]').value = boxes.boardFeet;
     tr.querySelector('[data-f="pieces"]').value = boxes.pieces;
   }
@@ -307,7 +314,7 @@
     const tr = e.target.closest('tr');
     const item = lineItem(tr, e.target.value);
     tr.dataset.picked = item ? item.id : '';
-    showUnit(tr, item);
+    showUnit(tr, item, true);
   });
   el('lines').addEventListener('change', (e) => {
     if (e.target.dataset.f in LUMBER_BOXES) fillLumber(e, true);

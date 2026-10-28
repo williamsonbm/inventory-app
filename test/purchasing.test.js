@@ -240,6 +240,9 @@ test('a new or changed lumber amount is whole pieces, whatever writes it; a line
     const one = await refused(owner.query('INSERT INTO inv.po_lines (po_id, item_id, ordered) VALUES ($1, $2, 12)',
       [po.id, board.id]), 'IV422', 'a direct insert of 12 LF of 8′');
     assert.equal(one.message, 'Line 5: 12 LF of 2x4 #2 8′ is not a whole number of pieces. 8 LF is 1 piece.');
+    // An item that does not exist is the foreign key's refusal, as before 019.
+    await refused(owner.query('INSERT INTO inv.po_lines (po_id, item_id, ordered) VALUES ($1, 999999, 100)', [po.id]),
+      '23503', 'a direct insert of an item that does not exist');
   });
 });
 
