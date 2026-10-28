@@ -11,7 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { fill, asSaved } = require('../src/inventory/lumber-amount.js');
+const { fill, asSaved, onePiece } = require('../src/inventory/lumber-amount.js');
 
 const board = (size, length_ft) => ({ size, length_ft });
 
@@ -46,4 +46,9 @@ test('a saved amount shows as it is, even part of a piece, until a box is typed 
   assert.deepEqual(asSaved(board('2x10', 12), 1000), { lf: '1000', boardFeet: '1666.7', pieces: '83.3' },
     'Preview PO 9988 line 2, saved before #131');
   assert.deepEqual(asSaved(board('2x12', 16), 160), { lf: '160', boardFeet: '320', pieces: '10' });
+});
+
+test('one piece in LF and board feet: what an arrow in each box adds (owner hand-check, PR #138)', () => {
+  assert.deepEqual(onePiece(board('2x4', 8)), { lf: 8, boardFeet: 16 / 3 });
+  assert.deepEqual(onePiece(board('2x10', 12)), { lf: 12, boardFeet: 20 });
 });

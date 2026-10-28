@@ -24,6 +24,12 @@
   })();
 </script>
 <link rel="stylesheet" href="/planner.css">
+<style>
+  /* A PO line's amount boxes, each with its unit above it, as a column heading reads. */
+  .amt{display:inline-flex;flex-direction:column;gap:3px;margin-right:14px}
+  .cap{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted);min-height:1.2em}
+</style>
 </head>
 <body>
 <!--
@@ -87,7 +93,7 @@
     <p class="sub">Fill in only what arrived; a line left empty receives nothing. Pieces received fills in from packs × pack size + loose. To have the two checked, type the total from the Bill of Lading over it: if they do not add up, nothing saves. Split a line to enter one item that came in packs of different sizes. A pack size typed here is kept on this line; it becomes the item's size on file only if the item has none of that kind.</p>
   </form>
 
-  <form id="po">
+  <form id="po" novalidate>
     <h2 style="margin:8px 0" id="form-title">Enter a PO</h2>
     <div class="row" style="align-items:flex-end">
       <label class="field">Supplier <select id="supplier" required></select></label>
@@ -95,7 +101,7 @@
       <label class="field">PO date <input id="po-date" type="date" required></label>
     </div>
     <div class="tw" style="margin-top:10px"><table class="one-line">
-      <thead><tr><th style="width:55%">Item</th><th>Amount ordered</th><th>Pack size (optional)</th><th></th></tr></thead>
+      <thead><tr><th style="width:30%">Item</th><th>Amount ordered</th><th>Pieces per pack (optional)</th><th></th></tr></thead>
       <tbody id="lines"></tbody>
     </table></div>
     <div class="row" style="margin-top:10px">
@@ -103,7 +109,7 @@
       <button id="save">Save PO</button>
       <button type="button" class="ghost" id="cancel-edit" hidden>Cancel</button>
     </div>
-    <p class="sub" id="edit-note" hidden>A saved line is not removed here: cancel, then use Close… on the line.</p>
+    <p class="sub" id="edit-note" hidden>This changes what was ordered. To enter what arrived, cancel, then use Receive on the PO. A saved line is not removed here: cancel, then use Close… on the line.</p>
   </form>
 
   <datalist id="item-choices"></datalist>  <!-- the item lists of both forms -->
@@ -114,7 +120,7 @@
     <button type="button" class="ghost" id="receive-no-po">Receive without a PO…</button>
   </div>
   <div class="tw"><table class="one-line">
-    <thead><tr><th>#</th><th style="width:40%">Item</th><th>Ordered</th><th>Received</th><th>Pack size</th><th></th></tr></thead>
+    <thead><tr><th>#</th><th style="width:40%">Item</th><th>Ordered</th><th>Received</th><th>Pieces per pack</th><th></th></tr></thead>
     <tbody id="pos"></tbody>
   </table></div>
   <p class="sub" id="count"></p>
@@ -213,6 +219,8 @@
       current = f;
       paintChoices();
       paintPos();
+      // A blank line takes its unit from the new tab (J256).
+      for (const tr of el('lines').rows) if (!lineItem(tr, tr.querySelector('[data-f="item"]').value)) showUnit(tr, null, false);
     });
   }
 
@@ -238,34 +246,43 @@
     if (fixed) tr.className = 'sub';
     tr.innerHTML = '<td><input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…" value="' +
         esc(item ? choiceLabel(item) : '') + '"' + fixed + '></td>' +
-      '<td><input data-f="ordered" type="number" min="1" step="1" style="width:8em" value="' + (saved?.ordered ?? '') + '"' + amountFixed + '>' +
-        ' <span class="sub" data-f="unit"></span>' +
-        '<span data-f="lumber" hidden> <input data-f="boardFeet" type="number" min="0" step="any" style="width:7em"' + amountFixed + '>' +
-        ' <span class="sub">board feet</span> <input data-f="pieces" type="number" min="0" step="any" style="width:6em"' + amountFixed + '>' +
-        ' <span class="sub">pieces</span></span></td>' +
-      '<td><input data-f="pack" type="number" min="1" step="1" style="width:7em" value="' + (saved?.pack_size ?? '') + '"' + fixed + '></td>' +
+      '<td><label class="amt"><span class="cap" data-f="unit"></span><input data-f="ordered" type="number" min="1" step="1" style="width:6em" value="' +
+        (saved?.ordered ?? '') + '"' + amountFixed + '></label>' +
+        '<span data-f="lumber" hidden><label class="amt"><span class="cap">BF</span><input data-f="boardFeet" type="number" min="0" step="any" style="width:6em"' + amountFixed + '></label>' +
+        '<label class="amt"><span class="cap">Pieces</span><input data-f="pieces" type="number" min="1" step="1" style="width:5em"' + amountFixed + '></label></span></td>' +
+      '<td><span class="cap" style="display:block">&nbsp;</span><input data-f="pack" type="number" min="1" step="1" style="width:6em" value="' + (saved?.pack_size ?? '') + '"' + fixed + '></td>' +
       '<td>' + (!saved ? '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>'
         : closedLabel(saved)) + '</td>';
     el('lines').append(tr);
     showUnit(tr, item, false);
   }
 
-  // A line's unit, and for a lumber item its board feet and pieces, filled
-  // from the LF box. A saved line shows part of a piece as it is, so an
-  // amount saved before #131 is kept until a box is typed in (J246). A
-  // new item picked while typing (`picked`) refills all three in its whole
-  // pieces: 104 LF of 8′ becomes 96 LF of 12′, not 8.7 pieces (#138
-  // review, F1). Re-picking the saved item does not (F7).
+  // A line's unit above its amount box, and for a lumber item its board
+  // feet and pieces, filled from the LF box. A saved line shows part of a
+  // piece as it is, so an amount saved before #131 is kept until a box is
+  // typed in (J246). A new item picked while typing (`picked`) refills all
+  // three in its whole pieces: 104 LF of 8′ becomes 96 LF of 12′, not 8.7
+  // pieces (#138 review, F1). Re-picking the saved item does not (F7).
+  // With no item, the family tab gives the unit: under Lumber, a blank line
+  // shows all three boxes, board feet and pieces greyed (J256). An arrow
+  // in a lumber box adds one piece (owner hand-check, J255).
   function showUnit(tr, item, picked) {
-    const lumber = !!item && inLf(item);
-    tr.querySelector('[data-f="unit"]').textContent = item ? unitOf(item) : '';
+    const fam = item ? family(item.family) : current !== 'all' && family(current);
+    const lumber = !!fam && fam.order_unit === 'linear feet';
+    const [ordered, boardFeet, pieces] = ['ordered', 'boardFeet', 'pieces'].map((f) => tr.querySelector('[data-f="' + f + '"]'));
+    tr.querySelector('[data-f="unit"]').textContent = fam ? unitShort(fam.order_unit) : '';
     tr.querySelector('[data-f="lumber"]').hidden = !lumber;
+    const one = lumber && item ? LumberAmount.onePiece(item) : null;
+    ordered.step = ordered.min = one ? one.lf : 1;
+    boardFeet.step = boardFeet.min = one ? one.boardFeet : 'any';
+    for (const box of [boardFeet, pieces]) box.disabled = !item || ordered.disabled;
     if (!lumber) return;
-    const lf = tr.querySelector('[data-f="ordered"]').value.trim();
-    const boxes = picked ? LumberAmount.fill(item, 'lf', lf) : LumberAmount.asSaved(item, lf === '' ? null : Number(lf));
-    tr.querySelector('[data-f="ordered"]').value = boxes.lf;
-    tr.querySelector('[data-f="boardFeet"]').value = boxes.boardFeet;
-    tr.querySelector('[data-f="pieces"]').value = boxes.pieces;
+    const lf = ordered.value.trim();
+    const boxes = !item ? { lf, boardFeet: '', pieces: '' }
+      : picked ? LumberAmount.fill(item, 'lf', lf) : LumberAmount.asSaved(item, lf === '' ? null : Number(lf));
+    ordered.value = boxes.lf;
+    boardFeet.value = boxes.boardFeet;
+    pieces.value = boxes.pieces;
   }
 
   // Typing in one lumber box fills the other two in whole pieces, rounded
@@ -373,8 +390,17 @@
     }
     paintPos();
   }
+  // The form is deliberately novalidate, and checks itself here as a
+  // browser would, but skips a lumber line's amount boxes. Their step is
+  // one piece so an arrow adds a piece; a browser check would refuse a
+  // saved 1000 LF of 12′, or 106.7 board feet shown, and Save would do
+  // nothing. inv.check_po_line_amount still refuses LF that is not whole
+  // pieces, or 0.
+  const offStepAllowed = (box) => box.dataset.f in LUMBER_BOXES && !box.closest('tr').querySelector('[data-f="lumber"]').hidden;
   el('po').addEventListener('submit', (e) => {
     e.preventDefault();
+    const bad = [...el('po').elements].find((box) => !offStepAllowed(box) && !box.checkValidity());
+    if (bad) return bad.reportValidity();
     let route, body;
     try { [route, body] = request(); } catch (err) { return say(err.message, 'bad'); }
     el('save').disabled = true;

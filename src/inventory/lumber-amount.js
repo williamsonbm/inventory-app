@@ -19,6 +19,9 @@
   };
   const shown = (n) => String(Math.round(n * 10) / 10);
 
+  // One piece in LF and in board feet: what an arrow in each box adds.
+  const onePiece = (item) => ({ lf: item.length_ft, boardFeet: item.length_ft * perFoot(item) });
+
   // All three boxes from LF, which may be part of a piece only on a line
   // saved before #131.
   function asSaved(item, lf) {
@@ -30,7 +33,7 @@
   // or 'pieces'), in whole pieces. Blank text clears all three.
   function fill(item, box, text) {
     if (String(text).trim() === '') return asSaved(item, null);
-    const perPiece = { lf: item.length_ft, boardFeet: item.length_ft * perFoot(item), pieces: 1 }[box];
+    const perPiece = { ...onePiece(item), pieces: 1 }[box];
     // Board feet are shown rounded to 0.1, so deliberately up to 0.05 more
     // than typed counts: a shown figure typed back keeps its pieces. Without
     // it, rounding down strictly, one piece of 2x8 10′ (13.33, shown 13.3)
@@ -41,7 +44,7 @@
     return asSaved(item, pieces * item.length_ft);
   }
 
-  const api = { fill, asSaved };
+  const api = { fill, asSaved, onePiece };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.LumberAmount = api;
 })(typeof window !== 'undefined' ? window : globalThis);
