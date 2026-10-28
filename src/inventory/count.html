@@ -213,9 +213,10 @@
     for (const po of pos) {
       po.lines.forEach((l, n) => {
         const item = itemById(l.item_id);
-        if (item.family !== f.code || l.closed_reason || l.received >= l.ordered) return;
+        if (item.family !== f.code || !l.waiting) return;
         due.push('<li>PO ' + esc(po.number) + ' · ' + esc(po.supplier) + ' · line ' + (n + 1) + ': ' + esc(itemLabel(item)) + ', ' +
-          fmtInt(l.received) + ' of ' + fmtInt(l.ordered) + ' ' + unitShort(f.order_unit) + ' in</li>');
+          fmtInt(l.received) + (l.ordered === null ? ' ' + unitShort(f.order_unit) + ' in, amount not known'
+            : ' of ' + fmtInt(l.ordered) + ' ' + unitShort(f.order_unit) + ' in') + '</li>');
       });
     }
     el('open-pos').innerHTML = due.length

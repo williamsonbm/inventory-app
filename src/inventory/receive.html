@@ -142,7 +142,9 @@
   const family = (code) => families.find((f) => f.code === code);
   const unitOf = (item) => unitShort(family(item.family).order_unit);
   // An amount in its item's order unit: "1 piece", "40 pieces", "640 LF".
-  const amount = (n, item) => fmtInt(n) + ' ' + (n === 1 && unitOf(item) === 'pieces' ? 'piece' : unitOf(item));
+  // A lumber line's amount ordered may be blank: "Not known" (spec #127).
+  const amount = (n, item) => (n === null ? 'Not known'
+    : fmtInt(n) + ' ' + (n === 1 && unitOf(item) === 'pieces' ? 'piece' : unitOf(item)));
   // An item as the item box offers it: under All, its family first, so a
   // plate and a hanger with the same SKU stay two choices. Either form is
   // read back, so a line typed before the family bar changed still matches.
@@ -220,11 +222,14 @@
     const tr = document.createElement('tr');
     const item = saved && itemById(saved.item_id);
     const fixed = saved?.closed_reason ? ' disabled' : '';
+    // A line that closed itself at a delivery with no amount may still be
+    // given one; Edit re-opens it when the amount is above what arrived.
+    const amountFixed = saved?.closed_reason && !saved.closed_itself ? ' disabled' : '';
     if (saved) Object.assign(tr.dataset, { id: saved.id, itemId: saved.item_id });
     if (fixed) tr.className = 'sub';
     tr.innerHTML = '<td><input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…" value="' +
         esc(item ? choiceLabel(item) : '') + '"' + fixed + '></td>' +
-      '<td><input data-f="ordered" type="number" min="1" step="1" style="width:8em" value="' + (saved ? saved.ordered : '') + '"' + fixed + '>' +
+      '<td><input data-f="ordered" type="number" min="1" step="1" style="width:8em" value="' + (saved?.ordered ?? '') + '"' + amountFixed + '>' +
         ' <span class="sub" data-f="unit">' + (item ? unitOf(item) : '') + '</span></td>' +
       '<td><input data-f="pack" type="number" min="1" step="1" style="width:7em" value="' + (saved?.pack_size ?? '') + '"' + fixed + '></td>' +
       '<td>' + (!saved ? '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>'
@@ -369,13 +374,13 @@
   // Why a line is closed, as the list and the edit form both say it; nothing
   // for an open line.
   const closedLabel = (l) => (l.closed_reason ? 'Closed: ' + esc(l.closed_reason) : '');
-  // An open line still waiting for part of its amount offers Close, which
+  // A line still waiting (inv.po_json's `waiting`) offers Close, which
   // first asks for a reason; a closed line says why and offers Re-open.
   // Neither while its PO is open in a form.
   function lineAction(po, l) {
     if (busy(po)) return closedLabel(l) + ' <span class="sub">Save or cancel the form first.</span>';
     if (l.closed_reason) return closedLabel(l) + ' <button type="button" class="ghost" data-do="reopen">Re-open</button>';
-    if (l.received >= l.ordered) return '';
+    if (!l.waiting) return '';
     if (l.id !== closing) return '<button type="button" class="ghost" data-do="close">Close…</button>';
     return '<select data-f="reason"><option value="">Reason…</option>' +
       reasons.map((r) => '<option value="' + r.id + '">' + esc(r.text) + '</option>').join('') + '</select> ' +
@@ -447,7 +452,8 @@
       '<td>' + (line ? esc(choiceLabel(item))
         : '<input data-f="item" list="item-choices" autocomplete="off" style="width:100%" placeholder="Type to pick an item…">' +
           '<button type="button" class="ghost" data-f="add" hidden></button>') + '</td>' +
-      '<td class="sub">' + (line ? 'Line ' + n + ' · ' + fmtInt(line.received) + ' of ' + amount(line.ordered, item) + ' in'
+      '<td class="sub">' + (line ? 'Line ' + n + ' · ' + (line.ordered === null ? amount(line.received, item) + ' in, amount not known'
+        : fmtInt(line.received) + ' of ' + amount(line.ordered, item) + ' in')
         + (split ? '' : '<div data-f="over" hidden></div>') : receiving.po ? 'not on the PO' : '') + '</td>' +
       box('quantity', '7em', 1) + box('packs', '5em', 0) + box('pack', '6em', 1) +
       '<td><select data-f="kind"></select></td>' +
@@ -576,7 +582,7 @@
       const item = itemById(line.item_id);
       const after = line.received + inOrderUnit(pieces, item, family(item.family).order_unit);
       const over = cell(own[0], 'over');
-      over.hidden = !pieces || after <= line.ordered;
+      over.hidden = !pieces || line.ordered === null || after <= line.ordered;
       over.textContent = over.hidden ? '' : 'This brings line ' + (n + 1) + ' to ' + fmtInt(after) + ' of ' + amount(line.ordered, item) + ' ordered.';
     });
   }

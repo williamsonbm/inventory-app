@@ -129,6 +129,16 @@ on a PO as 3,200 pieces with a pack size of 32.
 _Not_: purchase unit — in the web app that is the box, pack or pallet a supplier sells, which this
 app records as the line's pack size.
 
+**Not known**:
+A lumber PO line's amount when the supplier has not said how much will come; the amount is left
+blank. The line closes itself at its delivery with the reason "Arrived, amount not known", and a
+reversal of that delivery opens it again. Other families always need an amount.
+
+**Waiting** (a PO line):
+Open, and either more is to arrive than has, or its amount is not known. A PO is Finished when no
+line waits.
+_Not_: a count's status *waiting* — that is a count waiting for approval.
+
 **Live in Inventory**:
 A family whose switch is on, so the database takes its POs, receipts and counts. Every family starts
 off, because until the cutover the web app is the record of what is in the yard. The owner switches
