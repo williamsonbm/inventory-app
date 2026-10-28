@@ -25,7 +25,7 @@ under `claude-pod` they are at `/workspace/`.
 - **Review loop.** This session, in the pod, builds from the issue and opens the PR. A
   separate session outside the pod reviews it for correctness and bugs and posts its findings
   as a PR comment. The owner brings them back; this session answers each finding, fixes the
-  accepted ones test-first, and shows the reply before posting. Run `/code-review` in the
+  accepted ones test-first, and posts the reply under the posting rule below. Run `/code-review` in the
   authoring session only when asked.
   - The reviewer runs `/code-review` and one cold review that reads only the diff and the
     issue.
@@ -34,13 +34,21 @@ under `claude-pod` they are at `/workspace/`.
   - A second review follows only when the fixes change a migration or a database rule.
   - The reviewer runs outside the pod: a file it must read is named by its host path,
     `~/Projects/claude-sandbox/...`, not `/workspace/...`.
+  - **Hand-off.** When a stage ends (PR opened, review posted, fixes pushed), end the reply
+    with one fenced code block: the prompt the owner pastes into the other session. It names
+    the other role, the PR and issue, the commit SHA, the review-comment link if any, and the
+    next step. Nothing this file already says. Example: `Review PR #133 (issue #129) at
+    f40776e under the CLAUDE.md Review loop.`
 - **State test results plainly** — real counts, real pass/fail, never "should pass".
 - **Short replies to the owner.** Under 300 words, at most 3 questions per reply. Log every
   question, recommendation and answer in the open-questions memory, numbered continuously.
 - **Say it, then do it.** If a reply says work is starting, it makes the first tool call in the
   same reply. Otherwise say what waits and why.
-- **Show exact PR or issue text before posting.** A yes to "reply on the PR" approves the
-  action, not wording the owner has not seen.
+- **Post when told to post.** "Post it" approves the wording too. Post, check the posted text
+  matches the draft, then give the link and a short summary. Show the exact text first only
+  when the owner asks, or when it speaks for the owner on something not yet agreed (a
+  decision, a commitment, an answer to another person). The `guard-attribution` hook checks
+  every message, message file and stdin body for Claude attribution.
 
 ## Getting facts right
 
