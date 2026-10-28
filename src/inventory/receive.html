@@ -27,6 +27,8 @@
 <style>
   /* A PO line's amount boxes, each with its unit above it, as a column heading reads. */
   .amt{display:inline-flex;flex-direction:column;gap:3px;margin-right:14px}
+  /* The item and pack boxes sit level with the amount boxes, below their captions. */
+  #lines td{vertical-align:bottom}
   .cap{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:10.5px;letter-spacing:.09em;
     text-transform:uppercase;color:var(--muted);min-height:1.2em}
   /* The BF box has no arrows: a shown BF is rounded, so a step from it lands back on the same piece (#138 review, F8). */
@@ -253,7 +255,7 @@
         (saved?.ordered ?? '') + '"' + amountFixed + '></label>' +
         '<span data-f="lumber" hidden><label class="amt"><span class="cap">BF</span><input data-f="boardFeet" class="no-arrows" type="number" min="0" step="any" style="width:6em"' + amountFixed + '></label>' +
         '<label class="amt"><span class="cap">Pieces</span><input data-f="pieces" type="number" min="1" step="1" style="width:5em"' + amountFixed + '></label></span></td>' +
-      '<td><span class="cap" style="display:block">&nbsp;</span><input data-f="pack" type="number" min="1" step="1" style="width:6em" value="' + (saved?.pack_size ?? '') + '"' + fixed + '></td>' +
+      '<td><input data-f="pack" type="number" min="1" step="1" style="width:6em" value="' + (saved?.pack_size ?? '') + '"' + fixed + '></td>' +
       '<td>' + (!saved ? '<button type="button" class="ghost" data-f="remove" aria-label="Remove this line">✕</button>'
         : closedLabel(saved)) + '</td>';
     el('lines').append(tr);
