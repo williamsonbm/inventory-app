@@ -32,8 +32,8 @@ test('a PO for a live family shows its lines as incoming, and one log row record
   assert.deepEqual(po, {
     id: po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03', status: 'ordered',
     lines: [
-      { id: po.lines[0].id, item_id: hanger.id, item: 'LUS28', ordered: 100, received: 0, pack_size: 50, closed_reason: null },
-      { id: po.lines[1].id, item_id: hanger.id, item: 'LUS28', ordered: 30, received: 0, pack_size: null, closed_reason: null },
+      { id: po.lines[0].id, item_id: hanger.id, item: 'LUS28', ordered: 100, received: 0, pack_size: 50, closed_reason: null, waiting: true },
+      { id: po.lines[1].id, item_id: hanger.id, item: 'LUS28', ordered: 30, received: 0, pack_size: null, closed_reason: null, waiting: true },
     ],
   });
   assert.equal((await incoming(db))[hanger.id], 130);
@@ -155,6 +155,42 @@ test('a lumber line orders linear feet, and its incoming is in linear feet (Q14)
   assert.equal((await incoming(db))[board.id], 1280);
 });
 
+test('a lumber line may leave its amount blank and waits; plates, hangers and LVL still need one, whatever writes it (#129)', async () => {
+  const { db, ann, supplier, hanger } = await withHanger();
+  for (const family of ['lumber', 'plates', 'lvl']) await goLive(db, family);
+  const board = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 8 });
+  const plate = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'plates', { sku: 'MT20 3x4' });
+  const lvl = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl',
+    { product: '2.1 RigidLam LVL 1-3/4', size: '14', length_ft: 48 });
+
+  const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4510', '2026-10-28',
+    JSON.stringify([{ item_id: board.id, ordered: null }, { item_id: board.id }]));
+  assert.equal(po.status, 'ordered', 'a line with no amount waits, so the PO is not finished');
+  assert.deepEqual(po.lines.map((l) => [l.ordered, l.waiting]), [[null, true], [null, true]]);
+
+  const before = (await logRows(db)).length;
+  for (const [label, item, unit] of [['hangers', hanger, 'pieces'], ['plates', plate, 'pieces'], ['LVL', lvl, 'pieces']]) {
+    const err = await refused(call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4511', '2026-10-28',
+      JSON.stringify([{ item_id: item.id }])), 'IV400', label);
+    assert.equal(err.message, `Line 1: the amount ordered is a whole number of ${unit} above 0.`, label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+
+  // The guarantee: even the owner's own insert or update is refused.
+  await as(db, null, async (owner) => {
+    const { rows: [{ id }] } = await owner.query(
+      "INSERT INTO inv.purchase_orders (supplier_id, number, po_date) VALUES ($1, 'X1', '2026-10-28') RETURNING id", [supplier.id]);
+    const insert = await refused(owner.query('INSERT INTO inv.po_lines (po_id, item_id) VALUES ($1, $2)', [id, hanger.id]),
+      'IV422', 'a direct insert of a hanger line with no amount');
+    assert.equal(insert.message, 'A Hangers PO line needs its amount ordered.');
+    const { rows: [line] } = await owner.query(
+      'INSERT INTO inv.po_lines (po_id, item_id) VALUES ($1, $2) RETURNING id', [id, board.id]);
+    const update = await refused(owner.query('UPDATE inv.po_lines SET item_id = $1 WHERE id = $2', [hanger.id, line.id]),
+      'IV422', 'a direct update that moves a no-amount line to a hanger');
+    assert.equal(update.message, 'A Hangers PO line needs its amount ordered.');
+  });
+});
+
 test('the owner switches a family live, logged with the admin they name; never twice, never EWP (story 99)', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
@@ -193,7 +229,7 @@ test('a closed PO line leaves incoming, and re-opening it brings it back, each l
   const line = po.lines[1];
   const closed = await call(db, 'close_po_line', ann.id, crypto.randomUUID(), line.id, po.version, reason.id);
   assert.equal(closed.version, po.version + 1, 'closing a line moves its PO on');
-  assert.deepEqual(closed.lines[1], { ...line, closed_reason: 'Cancelled by supplier' });
+  assert.deepEqual(closed.lines[1], { ...line, closed_reason: 'Cancelled by supplier', waiting: false });
   assert.equal((await incoming(db))[hanger.id], 100);
   const log = (await logRows(db)).at(-1);
   assert.equal(log.action, 'close PO line');
@@ -237,7 +273,7 @@ test('an edit fixes the PO\'s header and lines and adds a line, logged was → n
     lines: [
       { ...first, ordered: 80, pack_size: 40 },
       { ...second, item_id: other.id, item: 'HUS26' },
-      { id: edited.lines[2].id, item_id: hanger.id, item: 'LUS28', ordered: 5, received: 0, pack_size: null, closed_reason: null },
+      { id: edited.lines[2].id, item_id: hanger.id, item: 'LUS28', ordered: 5, received: 0, pack_size: null, closed_reason: null, waiting: true },
     ],
   });
   assert.deepEqual(await incoming(db), { [hanger.id]: 85, [other.id]: 30 });
@@ -359,6 +395,7 @@ test('a partial delivery against a PO leaves the rest incoming and marks the PO 
     lines: [{ id: receipt.lines[0].id, po_line: 1, item_id: hanger.id, item: 'LUS28', quantity: 40,
       packs: null, pack_size: null, pack_kind: null, loose: null }],
     pack_sizes_added: [],
+    closed_lines: [],
   });
   assert.equal((await incoming(db))[hanger.id], 60 + 30);
   const [now] = await pos(db);
@@ -525,6 +562,77 @@ test('a receipt for a family not live in Inventory is refused, whatever writes i
     await refused(owner.query(`INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, receipt_id)
       VALUES ($1, 5, 'receipt', now(), $2, $3)`, [plate.id, log, id]), 'IV422', 'a direct insert for plates');
   });
+});
+
+test('a line with no amount closes itself at its first delivery, and again after a Re-open; a numbered line still waits (#129)', async () => {
+  const ctx = await withHanger();
+  const { db, ann, supplier } = ctx;
+  await goLive(db, 'lumber');
+  const board = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 8 });
+  const po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4512', '2026-10-28',
+    JSON.stringify([{ item_id: board.id }, { item_id: board.id, ordered: 800 }]));
+
+  const first = await receive(ctx, po, [got(po.lines[0], { quantity: 50 })]);
+  let [now] = await pos(db);
+  assert.deepEqual(now.lines.map((l) => [l.received, l.closed_reason, l.waiting]),
+    [[400, 'Arrived, amount not known', false], [0, null, true]], 'the no-amount line closed itself in the same save');
+  assert.equal(now.status, 'partial', 'the numbered line still waits');
+  assert.equal(first.closed_lines?.length, 1, 'the receipt names the line it closed, for the Activity Log');
+  assert.deepEqual(first.closed_lines[0], { po_line: 1, reason: 'Arrived, amount not known' });
+
+  const second = await receive(ctx, now, [got(now.lines[1], { quantity: 100 })]);
+  assert.deepEqual(second.closed_lines, [], 'a numbered line never closes itself');
+  [now] = await pos(db);
+  assert.equal(now.status, 'finished');
+
+  const reopened = await call(db, 'reopen_po_line', ann.id, crypto.randomUUID(), now.lines[0].id, now.version);
+  assert.equal(reopened.status, 'partial', 're-opened, the no-amount line waits again');
+  await receive(ctx, reopened, [got(reopened.lines[0], { quantity: 10 })]);
+  [now] = await pos(db);
+  assert.deepEqual([now.status, now.lines[0].received, now.lines[0].closed_reason], ['finished', 480, 'Arrived, amount not known']);
+  await refused(receive(ctx, now, [got(now.lines[0], { quantity: 1 })]), 'IV422', 'a Finished PO takes no receipt (#128)');
+});
+
+test('Edit clears an amount, and an amount added to a line that closed itself re-opens it only when above what arrived (#129)', async () => {
+  const ctx = await withHanger();
+  const { db, ann, supplier } = ctx;
+  await goLive(db, 'lumber');
+  const board = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 8 });
+  const reason = await call(db, 'add_reason', ann.id, crypto.randomUUID(), 'Cancelled by supplier');
+  let po = await call(db, 'enter_po', ann.id, crypto.randomUUID(), supplier.id, '4513', '2026-10-28',
+    JSON.stringify([{ item_id: board.id, ordered: 800 }, { item_id: board.id, ordered: 400 }]));
+  const edit = (p, lines) => call(db, 'edit_po', ann.id, crypto.randomUUID(), p.id, p.version, supplier.id, p.number,
+    p.po_date, JSON.stringify(lines.map((l, i) => ({ id: p.lines[i].id, item_id: board.id, ...l }))));
+
+  po = await edit(po, [{ ordered: null }, { ordered: 400 }]);
+  assert.deepEqual(po.lines.map((l) => [l.ordered, l.waiting]), [[null, true], [400, true]], 'cleared, the line waits');
+
+  await receive(ctx, po, [got(po.lines[0], { quantity: 50 })]);  // 400 LF; closes itself
+  [po] = await pos(db);
+  const err = await refused(edit(po, [{ ordered: 399 }, { ordered: 400 }]), 'IV422', 'below what arrived (rule 4)');
+  assert.match(err.message, /^Line 1: 400 linear feet have arrived on this line, so it orders at least 400\.$/);
+  await refused(edit(po, [{ ordered: 800, pack_size: 10 }, { ordered: 400 }]), 'IV422', 'a pack size on a line that closed itself');
+
+  po = await edit(po, [{ ordered: 400 }, { ordered: 400 }]);
+  assert.deepEqual([po.lines[0].ordered, po.lines[0].closed_reason, po.lines[0].waiting],
+    [400, 'Arrived, amount not known', false], 'an amount met stays closed');
+  po = await edit(po, [{ ordered: 800 }, { ordered: 400 }]);
+  assert.deepEqual([po.lines[0].ordered, po.lines[0].closed_reason, po.lines[0].waiting], [800, null, true],
+    'an amount above what arrived re-opens it');
+
+  po = await call(db, 'close_po_line', ann.id, crypto.randomUUID(), po.lines[1].id, po.version, reason.id);
+  const closed = await refused(edit(po, [{ ordered: 800 }, { ordered: 600 }]), 'IV422', 'a line closed by hand');
+  assert.match(closed.message, /^Line 2: that line is closed\. Re-open it before you change it\.$/);
+});
+
+test('"Arrived, amount not known" is built in: no one picks it to close a line by hand (#129)', async () => {
+  const { db, ann, po } = await withPo();
+  const { rows: [r] } = await as(db, APP, (app) => app.query(
+    "SELECT id, built_in, entry FROM inv.reasons WHERE text = 'Arrived, amount not known'"));
+  assert.deepEqual([r.built_in, r.entry], [true, 'receive']);
+  const err = await refused(call(db, 'close_po_line', ann.id, crypto.randomUUID(), po.lines[0].id, po.version, r.id),
+    'IV422', 'a hand close with the built-in reason');
+  assert.equal(err.message, '"Arrived, amount not known" is set by a delivery on a line with no amount.');
 });
 
 test('lumber is received in pieces and counts against its PO line in linear feet (Q14)', async () => {

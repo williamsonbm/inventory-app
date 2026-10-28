@@ -90,7 +90,7 @@ test('Settings lists and changes pack sizes, suppliers, reasons and LVL depth th
   const back = (await change(ctx, '/api/reasons/unretire', { id: reason.id, version: 2 })).body.reason;
   assert.equal(retired.active, false);
   const { reasons } = await read(ctx, '/api/reasons');
-  assert.equal(reasons.length, 7, 'the six built in, and Miscounted');
+  assert.equal(reasons.length, 8, 'the seven built in, and Miscounted');
   assert.deepEqual(reasons.find((r) => r.id === reason.id), back);
 
   const depth = (await change(ctx, '/api/lvl-depth-thresholds/set', { depth: '14', version: null, threshold_lf: 720 })).body.threshold;
@@ -331,7 +331,7 @@ test('Receive enters a PO, lists it, and the Overview shows its lines as Incomin
   assert.equal(entered.status, 200, entered.body.error);
   assert.deepEqual(entered.body.po, {
     id: entered.body.po.id, version: 1, supplier_id: supplier.id, supplier: 'Simpson', number: '4501', po_date: '2026-10-03', status: 'ordered',
-    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], item: 'LUS28', received: 0, closed_reason: null }],
+    lines: [{ id: entered.body.po.lines[0].id, ...lines[0], item: 'LUS28', received: 0, closed_reason: null, waiting: true }],
   });
   assert.deepEqual((await read(ctx, '/api/pos')).pos, [entered.body.po]);
 
@@ -422,6 +422,35 @@ test('Receive takes a delivery against a PO and one without; Incoming and the Ac
   ]);
 });
 
+test('a lumber PO with no amounts is received, closes itself and is Finished; the Activity Log says so (#129)', async () => {
+  const ctx = await withAdmin();
+  await goLive(ctx.db, 'lumber');
+  const board = (await change(ctx, '/api/items/add', { family: 'lumber', identity: { size: '2x4', grade: '#2', length_ft: 8 } })).body.item;
+  const supplier = (await change(ctx, '/api/suppliers/add', { name: 'Weyerhaeuser' })).body.supplier;
+  const entered = await change(ctx, '/api/pos/enter', { supplier_id: supplier.id, number: '4520', po_date: '2026-10-28',
+    lines: [{ item_id: board.id, ordered: null }] });
+  assert.equal(entered.status, 200, entered.body.error);
+  assert.deepEqual([entered.body.po.status, entered.body.po.lines[0].ordered], ['ordered', null]);
+
+  const receipt = (po) => ({ po_id: po.id, po_version: po.version, supplier_id: null,
+    lines: [{ po_line_id: po.lines[0].id, item_id: board.id, quantity: 60 }] });
+  const received = await change(ctx, '/api/receipts/receive', receipt(entered.body.po));
+  assert.equal(received.status, 200, received.body.error);
+  const [po] = (await read(ctx, '/api/pos')).pos;
+  assert.deepEqual([po.status, po.lines[0].received, po.lines[0].closed_reason], ['finished', 480, 'Arrived, amount not known']);
+  const again = await change(ctx, '/api/receipts/receive', receipt(po));
+  assert.equal(again.status, 422, 'a second delivery is refused: the PO is Finished (#128)');
+
+  const edited = await change(ctx, '/api/pos/edit', { id: po.id, version: po.version, supplier_id: supplier.id, number: '4520',
+    po_date: '2026-10-28', lines: [{ id: po.lines[0].id, item_id: board.id, ordered: 960, pack_size: null }] });
+  assert.equal(edited.status, 200, edited.body.error);
+  const { entries } = await read(ctx, '/api/activity');
+  assert.deepEqual(entries.slice(0, 2).map((e) => [e.action, e.target, e.change]), [
+    ['edit PO', 'PO 4520', 'line 1 re-opened; line 1 ordered: Not known → 960'],
+    ['receive', 'PO 4520', 'added: 60 2x4 #2 8′ on line 1; line 1 closed: Arrived, amount not known'],
+  ]);
+});
+
 test('Correct on hand changes an item\'s on hand with a reason; the Overview and the Activity Log follow (stories 44–46)', async () => {
   const ctx = await withAdmin();
   const hanger = (await change(ctx, '/api/items/add', { family: 'hangers', identity: { sku: 'LUS28' } })).body.item;
@@ -429,7 +458,7 @@ test('Correct on hand changes an item\'s on hand with a reason; the Overview and
   const { reasons } = await read(ctx, '/api/reasons');
   const reason = (text) => reasons.find((r) => r.text === text).id;
   assert.deepEqual(reasons.filter((r) => r.entry).map((r) => [r.text, r.entry]).sort(),
-    [['Opening balance (web app)', 'import'], ['Weathered – trimmed', 'trim']], 'the page hides reasons kept for another entry (Q31)');
+    [['Arrived, amount not known', 'receive'], ['Opening balance (web app)', 'import'], ['Weathered – trimmed', 'trim']], 'the page hides reasons kept for another entry (Q31)');
 
   const returned = await change(ctx, '/api/items/correct',
     { item_id: hanger.id, quantity: 6, reason_id: reason('Returned from job site'), note: 'Job 1234' });

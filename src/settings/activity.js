@@ -149,7 +149,7 @@ const ENTRY_NAMES = { receive: 'the receipt', correct: 'the correction', trim: '
 
 // What a receipt brought, line by line, with the PO line each went on and
 // how it came, then its Bill of Lading and any pack size it put on file
-// (story 19).
+// (story 19), and any line with no amount it closed (#129).
 function describeReceipt(row) {
   const lines = row.lines.map((l) => {
     const where = l.po_line ? ` on line ${l.po_line}` : row.po_id ? ' not on the PO' : '';
@@ -158,6 +158,8 @@ function describeReceipt(row) {
   });
   if (row.bol) lines.push(`Bill of Lading or tracking number ${row.bol}`);
   for (const p of row.pack_sizes_added) lines.push(`${p.kind} size on file for ${p.item}: ${p.pieces}`);
+  // A receipt saved before #129 closed no line itself.
+  for (const c of row.closed_lines ?? []) lines.push(`line ${c.po_line} closed: ${c.reason}`);
   return lines.join('; ');
 }
 
@@ -173,7 +175,9 @@ function howItCame(l) {
 // line, numbered as the Receive page numbers them (lines in the order
 // entered, so a new line comes last).
 const PO_FIELDS = { supplier: 'supplier', number: 'number', po_date: 'date' };
-const LINE_FIELDS = { ordered: 'ordered', pack_size: 'pack size' };
+// Each line field with the word for it blank: a lumber line's amount
+// ordered may be "Not known" (spec #127).
+const LINE_FIELDS = { ordered: ['ordered', 'Not known'], pack_size: ['pack size', 'none'] };
 function describePoChange(was, now) {
   const changes = Object.entries(PO_FIELDS).filter(([k]) => was[k] !== now[k]).map(([k, word]) => `${word}: ${was[k]} → ${now[k]}`);
   now.lines.forEach((line, n) => {
@@ -183,9 +187,9 @@ function describePoChange(was, now) {
       changes.push(line.closed_reason ? `line ${n + 1} closed: ${line.closed_reason}` : `line ${n + 1} re-opened`);
     }
     if (before.item_id !== line.item_id) changes.push(`line ${n + 1} item: ${before.item} → ${line.item}`);
-    for (const [k, word] of Object.entries(LINE_FIELDS)) {
+    for (const [k, [word, blank]] of Object.entries(LINE_FIELDS)) {
       if (before[k] === line[k]) continue;
-      changes.push(`line ${n + 1} ${word}: ${before[k] ?? 'none'} → ${line[k] ?? 'none'}`);
+      changes.push(`line ${n + 1} ${word}: ${before[k] ?? blank} → ${line[k] ?? blank}`);
     }
   });
   return changes.join('; ');
