@@ -33,8 +33,10 @@ const SKU_EXPORT = {
 const ON_HAND_FILES = {
   plates: SKU_EXPORT,
   hangers: SKU_EXPORT,
+  // Lumber Incoming is in LF, the order unit (CONTEXT.md), so it goes under
+  // incoming_lf: the reader takes a dropped file's `incoming` as boards.
   lumber: {
-    header: 'size,grade,length,on_hand,committed,available,incoming,threshold,flag',
+    header: 'size,grade,length,on_hand,committed,available,incoming_lf,threshold,flag',
     cells: (i) => [i.size, i.grade, i.length_ft, ...figures(i), ''],
   },
   lvl: {

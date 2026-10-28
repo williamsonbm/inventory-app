@@ -19,6 +19,8 @@
 //     on-hand is a data fault, not an empty shelf.
 //   * `incoming` is surfaced, never netted — an inbound PO may not land before the
 //     job ships, so it's the buyer's call, shown beside the buy figure.
+//   * `incoming` counts boards (x length = LF); `incoming_lf` is already LF and
+//     is added as is. This app's database writes incoming_lf (#135).
 //   * blank/non-numeric rows (subtotals, spacers) are skipped, not errors.
 //
 // Returns { byKey, warnings }.
@@ -39,6 +41,7 @@ const GRADE_COLS = ['grade'];
 const LENGTH_COLS = ['length', 'span', 'stock_length', 'stocklength'];
 const QTY_COLS = ['available', 'qty', 'quantity', 'on_hand', 'onhand'];
 const INCOMING_COLS = ['incoming', 'on_po', 'on_order', 'onorder'];
+const INCOMING_LF_COLS = ['incoming_lf'];
 
 const norm = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, '_');
 
@@ -71,6 +74,9 @@ const numOrNull = (v) => {
   return Number.isFinite(n) ? n : null;
 };
 
+// A column's whole, non-negative number; 0 when the column is absent (-1) or blank.
+const wholeAt = (cols, i) => Math.max(0, Math.floor(i === -1 ? 0 : (numOrNull(cols[i]) || 0)));
+
 /**
  * @param   {string} text
  * @returns {{ byKey, warnings }}
@@ -94,6 +100,7 @@ function parseLumberStockCsv(text) {
   const iLength = findCol(header, LENGTH_COLS);
   const iQty = findCol(header, QTY_COLS);
   const iIncoming = findCol(header, INCOMING_COLS);
+  const iIncomingLf = findCol(header, INCOMING_LF_COLS);
 
   const byKey = new Map();
   const warnings = [];
@@ -125,7 +132,6 @@ function parseLumberStockCsv(text) {
     // Boards are discrete: floor to whole sticks so linear-feet (qty x span) and
     // the on-hand board loop in planLumber can never disagree on a fractional row.
     const usable = Math.max(0, Math.floor(qty));
-    const incoming = Math.max(0, Math.floor(iIncoming === -1 ? 0 : (numOrNull(cols[iIncoming]) || 0)));
     rowCount++;
 
     // On-hand boards for netting: merge duplicate (key, span) rows by summing.
@@ -135,7 +141,7 @@ function parseLumberStockCsv(text) {
     if (board) { board.qty += usable; }
     else g.boards.push({ span, qty: usable });
     g.onHandLf += usable * span;
-    g.incomingLf += incoming * span;   // group-level incoming (surfaced, never netted)
+    g.incomingLf += wholeAt(cols, iIncoming) * span + wholeAt(cols, iIncomingLf);   // group-level incoming (surfaced, never netted)
   }
 
   if (negatives.length) {

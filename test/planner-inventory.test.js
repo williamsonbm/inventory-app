@@ -239,13 +239,13 @@ test('the on-hand text built from the database reads back as the same figures in
   assert.deepEqual(hangers.rows.map((r) => r.sku), ['LUS28', 'HUS26, "special"'], 'a SKU with a comma and quotes stays one cell');
 
   const lumber = parseLumberStockCsv(onHandText('lumber', [
-    { size: '2x4', grade: '#2', length_ft: 8, on_hand: 10, committed: 0, available: 10, incoming: 4, threshold: null },
-    { size: '2x4', grade: '#2', length_ft: 16, on_hand: 5, committed: 0, available: 5, incoming: 0, threshold: 30 },
+    { size: '2x4', grade: '#2', length_ft: 8, on_hand: 10, committed: 0, available: 10, incoming: 200, threshold: null },
+    { size: '2x4', grade: '#2', length_ft: 16, on_hand: 5, committed: 0, available: 5, incoming: 320, threshold: 30 },
   ]));
   const group = lumber.byKey.get('2x4|#2');
   assert.deepEqual(group.boards, [{ span: 8, qty: 10 }, { span: 16, qty: 5 }]);
   assert.equal(group.onHandLf, 160);
-  assert.equal(group.incomingLf, 32);
+  assert.equal(group.incomingLf, 520, 'the database keeps lumber Incoming in LF: 200 + 320, not multiplied by the length (#135)');
 
   const lvl = parseStockCsv(onHandText('lvl', [
     { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 24, on_hand: 3, committed: 1, available: 2, incoming: 2, threshold: null },
