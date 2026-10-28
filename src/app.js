@@ -60,6 +60,7 @@ const PAGE_FILES = {
   '/password': ['settings/password.html', 'text/html'],
   '/app-header.js': ['settings/app-header.js', 'application/javascript'],
   '/new-item.js': ['inventory/new-item.js', 'application/javascript'],
+  '/lumber-amount.js': ['inventory/lumber-amount.js', 'application/javascript'],
 };
 
 // Express 4 does not catch a rejected promise: without this, an async
