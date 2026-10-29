@@ -36,7 +36,10 @@
   repo has no DOM harness. Every route it calls is tested in
   test/inventory.test.js. The layout, filters, sorting, the family bar's
   saved choice and the Special Order extras cell with its link (Q32) are
-  checked by hand (#81, Testing Decisions).
+  checked by hand (#81, Testing Decisions). A jsdom check outside the repo
+  verifies the family bar's question (#142): an untouched add form or
+  Rename, Correct or Trim panel closes on a tab click, a changed one asks
+  by its heading, and one question names both when both have changes.
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -779,9 +782,11 @@
   const PANEL = { rename: 'Rename ', correct: 'Correct on hand of ', trim: 'Trim ' };
   // A box of `form` differs from the value the page drew it with (#142). A
   // pick list with no option marked starts on its first. A button is no box.
+  // A number box reports text it cannot read ("-") as blank, so badInput
+  // counts too (PR #147 review, F1).
   const changed = (form) => [...form.elements].some((box) => (box.tagName === 'SELECT'
     ? box.selectedIndex !== Math.max(0, [...box.options].findIndex((o) => o.defaultSelected))
-    : box.tagName !== 'BUTTON' && box.value !== box.defaultValue));
+    : box.tagName !== 'BUTTON' && (box.value !== box.defaultValue || box.validity.badInput)));
 
   // "+ Add item" adds to the open family, with that family's name fields,
   // starting with `fill`: by hand, the open size or depth tab (Q210).
