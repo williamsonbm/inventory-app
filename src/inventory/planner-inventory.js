@@ -7,7 +7,8 @@
 // The choice of on-hand input: for a family that is live in Inventory, the
 // database's figures, written in the web app's export format and passed
 // where a dropped file goes (#81, "The app"); a dropped on-hand file is not
-// used. For a family not live yet, the dropped file, as before.
+// used. For a family not live yet, the dropped file, as before. One
+// difference from the export: lumber Incoming goes in `incoming_lf` (#135).
 //
 // Each line of the answer gets flags (#81 design item 4): when it was last
 // counted, whether it is retired, whether it is in the catalog at all.
@@ -33,8 +34,10 @@ const SKU_EXPORT = {
 const ON_HAND_FILES = {
   plates: SKU_EXPORT,
   hangers: SKU_EXPORT,
+  // Lumber Incoming is in LF, the order unit (CONTEXT.md), so it goes under
+  // incoming_lf: the reader takes a dropped file's `incoming` as boards.
   lumber: {
-    header: 'size,grade,length,on_hand,committed,available,incoming,threshold,flag',
+    header: 'size,grade,length,on_hand,committed,available,incoming_lf,threshold,flag',
     cells: (i) => [i.size, i.grade, i.length_ft, ...figures(i), ''],
   },
   lvl: {
