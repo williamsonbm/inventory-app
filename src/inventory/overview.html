@@ -36,7 +36,10 @@
   repo has no DOM harness. Every route it calls is tested in
   test/inventory.test.js. The layout, filters, sorting, the family bar's
   saved choice and the Special Order extras cell with its link (Q32) are
-  checked by hand (#81, Testing Decisions).
+  checked by hand (#81, Testing Decisions). A jsdom check outside the repo
+  verifies the family bar's question (#142): an untouched add form or
+  Rename, Correct or Trim panel closes on a tab click, a changed one asks
+  by its heading, and one question names both when both have changes.
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -267,7 +270,15 @@
       el('add-open').disabled = f === 'all';
       el('add-open').title = f === 'all' ? 'Pick a family to add an item.' : '';
       paint();
-    }, addFor);
+    }, addFor, () => {
+      // The add form and the open row's Rename, Correct or Trim panel, each
+      // with changes, by its heading (#142; owner, J283). The pick above
+      // closes both, so Discard changes has nothing more to do.
+      const form = PANEL[mode] && el('rows').querySelector('form');
+      const names = [!el('add').hidden && changed(el('add')) && el('add-title').textContent.replace(/:$/, ''),
+        form && changed(form) && PANEL[mode] + itemLabel(itemOf(form))].filter(Boolean);
+      return names.length ? { names, discard: () => {} } : null;
+    });
     if (addFor !== null) {
       history.replaceState(null, '', '/inventory');
       if (current === addFor) openAdd(fill);
@@ -766,6 +777,16 @@
     }
     return identity;
   }
+
+  // A panel's heading in the family bar's question, before the item's name.
+  const PANEL = { rename: 'Rename ', correct: 'Correct on hand of ', trim: 'Trim ' };
+  // A box of `form` differs from the value the page drew it with (#142). A
+  // pick list with no option marked starts on its first. A button is no box.
+  // A number box reports text it cannot read ("-") as blank, so badInput
+  // counts too (PR #147 review, F1).
+  const changed = (form) => [...form.elements].some((box) => (box.tagName === 'SELECT'
+    ? box.selectedIndex !== Math.max(0, [...box.options].findIndex((o) => o.defaultSelected))
+    : box.tagName !== 'BUTTON' && (box.value !== box.defaultValue || box.validity.badInput)));
 
   // "+ Add item" adds to the open family, with that family's name fields,
   // starting with `fill`: by hand, the open size or depth tab (Q210).
