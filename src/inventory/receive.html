@@ -228,9 +228,10 @@
       // An open Edit PO or Receive form closes, so it never shows another
       // family's lines under the tab picked (#141). Deliberately whole, not
       // line by line: a saved line is never deleted, and one PO can hold
-      // lines of several families.
-      if (receiving) hideReceipt();
-      if (editing) showForm(null);
+      // lines of several families. A click on the tab already shown asks
+      // nothing, so it keeps the forms (PR #146 review, F1).
+      if (f !== current && receiving) hideReceipt();
+      if (f !== current && editing) showForm(null);
       current = f;
       paintChoices();
       paintPos();
@@ -239,7 +240,7 @@
     }, null, () => {
       // Each form with changes, by its title: the Receive form, and the PO
       // form, even hidden behind it (owner, Q275, Q278).
-      const names = [receiving && boxes('receipt') !== receiptOpened && 'receipt-title', boxes('po') !== opened && 'form-title']
+      const names = [receiving && snapshot('receipt') !== receiptOpened && 'receipt-title', snapshot('po') !== opened && 'form-title']
         .filter(Boolean).map((id) => el(id).textContent);
       return names.length ? { names, discard: () => showForm(null) } : null;
     });
@@ -323,7 +324,7 @@
   // Every box of a form as it opened (`opened`, `receiptOpened`) or is now:
   // a box changed, or a line added or removed, makes them differ (#140,
   // #141). Neither form has a checkbox, so .value is every box's state.
-  const boxes = (form) => JSON.stringify([...el(form).elements].map((box) => box.value));
+  const snapshot = (form) => JSON.stringify([...el(form).elements].map((box) => box.value));
   let opened = null;
   let receiptOpened = null;
 
@@ -340,7 +341,7 @@
     el('lines').replaceChildren();
     if (po) po.lines.forEach(addLine);
     addLine();
-    opened = boxes('po');
+    opened = snapshot('po');
     paintPos();
   }
 
@@ -597,7 +598,7 @@
       ? po.lines.map((l, i) => !l.closed_reason && receiptRow(l, i + 1)).filter(Boolean)
       : [receiptRow(null)]));
     renumber();
-    receiptOpened = boxes('receipt');
+    receiptOpened = snapshot('receipt');
     paintPos();
     el('receipt').scrollIntoView({ behavior: 'smooth' });
   }
