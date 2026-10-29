@@ -226,7 +226,7 @@
       paintPos();
       // A blank line takes its unit from the new tab (J256).
       for (const tr of el('lines').rows) if (!lineItem(tr, tr.querySelector('[data-f="item"]').value)) showUnit(tr, null, false);
-    });
+    }, null, () => (!editing && formState() !== opened ? { name: 'Enter a PO', discard: () => showForm(null) } : null));
   }
 
   function paintChoices() {
@@ -304,6 +304,12 @@
     }
   }
 
+  // Every box of the form as it opened (`opened`) or is now: a box changed,
+  // or a line added or removed, makes them differ (#140). The Edit PO form
+  // is not asked about yet (#141).
+  const formState = () => JSON.stringify([...el('po').elements].map((box) => box.value));
+  let opened = null;
+
   // The form enters a new PO (po null) or edits `po`, with all its lines.
   function showForm(po) {
     editing = po;
@@ -317,6 +323,7 @@
     el('lines').replaceChildren();
     if (po) po.lines.forEach(addLine);
     addLine();
+    opened = formState();
     paintPos();
   }
 
