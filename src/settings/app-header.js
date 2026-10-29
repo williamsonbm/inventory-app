@@ -210,6 +210,9 @@ window.AppHeader = (() => {
   // tab (#140): null, or the name of a form with changes not saved and
   // `discard()`, which blanks or closes it. Then the bar asks in #message;
   // Keep editing leaves the tab, the saved choice and the form as they were.
+  // Either answer puts back what #message said before the question, so a
+  // "Try again" or a before-or-after question is not lost (#145 review, F1),
+  // and moves the focus to the tab shown.
   const FAMILY_KEY = 'app.family';
   function familyBar(families, pick, first, unsaved = () => null) {
     const bar = el('family-filter');
@@ -224,6 +227,8 @@ window.AppHeader = (() => {
       for (const b of bar.children) b.setAttribute('aria-pressed', String(b.dataset.family === code));
       pick(code);
     };
+    let question = null;   // Keep editing, while the bar's question shows
+    let kept = [];         // what #message held before the question
     const choose = (code) => {
       show(code);
       try { localStorage.setItem(FAMILY_KEY, code); } catch { /* storage blocked: this visit only */ }
@@ -233,10 +238,12 @@ window.AppHeader = (() => {
       if (!b) return;
       const form = b.getAttribute('aria-pressed') !== 'true' && unsaved();
       if (!form) return choose(b.dataset.family);
-      const [keep] = ask(form.name + ' has changes that are not saved.', '', [
-        ['Keep editing', '', () => say('')],
-        ['Discard changes', 'ghost', () => { say(''); form.discard(); choose(b.dataset.family); }]]);
-      keep.focus();
+      if (!question?.isConnected) kept = [...el('message').childNodes];
+      const answer = (then) => () => { el('message').replaceChildren(...kept); then(); };
+      [question] = ask(form.name + ' has changes that are not saved.', '', [
+        ['Keep editing', '', answer(() => bar.querySelector('[aria-pressed="true"]').focus())],
+        ['Discard changes', 'ghost', answer(() => { form.discard(); choose(b.dataset.family); b.focus(); })]]);
+      question.focus();
     });
     let saved = null;
     try { saved = localStorage.getItem(FAMILY_KEY); } catch { /* storage blocked */ }
