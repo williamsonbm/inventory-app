@@ -6,7 +6,9 @@
      lumber line's LF, board feet and pieces boxes, a new item refilling them
      in whole pieces, and a saved line kept as it is; #140: a tab click on a
      changed Enter a PO form asks first, Keep editing and Discard changes,
-     the message and focus after each); the database and HTTP
+     the message and focus after each; #141: an untouched Edit PO or Receive
+     form closes on a tab click, a changed one asks by its title, and one
+     question names both forms when both have changes); the database and HTTP
      tests cover the rules the page shows, and test/lumber-amount.test.js the
      box arithmetic. -->
 <html lang="en">
@@ -223,12 +225,24 @@
       : 'Not live in Inventory yet: ' + off.join(', ') + '. Their items cannot be ordered or received until the cutover.';
     showForm(null);
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+      // An open Edit PO or Receive form closes, so it never shows another
+      // family's lines under the tab picked (#141). Deliberately whole, not
+      // line by line: a saved line is never deleted, and one PO can hold
+      // lines of several families.
+      if (receiving) hideReceipt();
+      if (editing) showForm(null);
       current = f;
       paintChoices();
       paintPos();
       // A blank line takes its unit from the new tab (J256).
       for (const tr of el('lines').rows) if (!lineItem(tr, tr.querySelector('[data-f="item"]').value)) showUnit(tr, null, false);
-    }, null, () => (!editing && formState() !== opened ? { name: 'Enter a PO', discard: () => showForm(null) } : null));
+    }, null, () => {
+      // Each form with changes, by its title: the Receive form, and the PO
+      // form, even hidden behind it (owner, Q275, Q278).
+      const names = [receiving && boxes('receipt') !== receiptOpened && 'receipt-title', boxes('po') !== opened && 'form-title']
+        .filter(Boolean).map((id) => el(id).textContent);
+      return names.length ? { names, discard: () => showForm(null) } : null;
+    });
   }
 
   function paintChoices() {
@@ -306,11 +320,12 @@
     }
   }
 
-  // Every box of the form as it opened (`opened`) or is now: a box changed,
-  // or a line added or removed, makes them differ (#140). The Edit PO form
-  // is not asked about yet (#141).
-  const formState = () => JSON.stringify([...el('po').elements].map((box) => box.value));
+  // Every box of a form as it opened (`opened`, `receiptOpened`) or is now:
+  // a box changed, or a line added or removed, makes them differ (#140,
+  // #141). Neither form has a checkbox, so .value is every box's state.
+  const boxes = (form) => JSON.stringify([...el(form).elements].map((box) => box.value));
   let opened = null;
+  let receiptOpened = null;
 
   // The form enters a new PO (po null) or edits `po`, with all its lines.
   function showForm(po) {
@@ -325,7 +340,7 @@
     el('lines').replaceChildren();
     if (po) po.lines.forEach(addLine);
     addLine();
-    opened = formState();
+    opened = boxes('po');
     paintPos();
   }
 
@@ -582,6 +597,7 @@
       ? po.lines.map((l, i) => !l.closed_reason && receiptRow(l, i + 1)).filter(Boolean)
       : [receiptRow(null)]));
     renumber();
+    receiptOpened = boxes('receipt');
     paintPos();
     el('receipt').scrollIntoView({ behavior: 'smooth' });
   }
