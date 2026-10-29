@@ -207,12 +207,15 @@ window.AppHeader = (() => {
   // arrival would let an old bookmark silently replace the saved choice,
   // so every later visit would open on that family with no hint why.
   // `unsaved()`, if the page gives it, is asked before a click changes the
-  // tab (#140): null, or the name of a form with changes not saved and
-  // `discard()`, which blanks or closes it. Then the bar asks in #message;
+  // tab (#140): null, or the names of the forms with changes not saved and
+  // `discard()`, which blanks or closes them. Then the bar asks in #message;
   // Keep editing leaves the tab, the saved choice and the form as they were.
   // Either answer puts back what #message said before the question, so a
   // "Try again" or a before-or-after question is not lost (#145 review, F1),
-  // and moves the focus to the tab shown.
+  // and moves the focus to the tab shown. Discard changes reads `unsaved()`
+  // again: if the forms with changes are not the ones the question named,
+  // it asks again, so it never drops a form it did not name (PR #146
+  // review, F2).
   const FAMILY_KEY = 'app.family';
   function familyBar(families, pick, first, unsaved = () => null) {
     const bar = el('family-filter');
@@ -240,9 +243,12 @@ window.AppHeader = (() => {
       if (!form) return choose(b.dataset.family);
       if (!question?.isConnected) kept = [...el('message').childNodes];
       const answer = (then) => () => { el('message').replaceChildren(...kept); then(); };
-      [question] = ask(form.name + ' has changes that are not saved.', '', [
+      [question] = ask(form.names.join(' and ') + (form.names.length > 1 ? ' have' : ' has') + ' changes that are not saved.', '', [
         ['Keep editing', '', answer(() => bar.querySelector('[aria-pressed="true"]').focus())],
-        ['Discard changes', 'ghost', answer(() => { form.discard(); choose(b.dataset.family); b.focus(); })]]);
+        ['Discard changes', 'ghost', answer(() => {
+          if (String(unsaved()?.names) !== String(form.names)) return b.click();
+          form.discard(); choose(b.dataset.family); b.focus();
+        })]]);
       question.focus();
     });
     let saved = null;
