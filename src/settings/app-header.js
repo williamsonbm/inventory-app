@@ -119,22 +119,28 @@ window.AppHeader = (() => {
   function askTiming(err, resend) {
     const counts = err.current && err.current.counts;
     if (!Array.isArray(counts)) return false;
-    say(err.message, 'bad');
-    const note = el('message').firstChild;
     const count = (c) => 'the ' + c.family_name + ' count of ' + showTime(c.counted_at);
     const last = counts[counts.length - 1];
     const answers = !last ? [['Save', null]] : counts.map((c, n) =>
       [n ? 'Between ' + count(counts[n - 1]) + ' and ' + count(c) : 'Before ' + count(c), { before: c.id }])
       .concat([['After ' + count(last), { after: last.id }]]);
-    const button = (label, className, onClick) => {
-      const pick = document.createElement('button');
-      Object.assign(pick, { type: 'button', className, textContent: label });
-      pick.addEventListener('click', onClick);
-      note.append(' ', pick);
-    };
-    for (const [label, timing] of answers) button(label, '', () => resend(timing));
-    button('Cancel', 'ghost', () => say(''));
+    ask(err.message, 'bad', answers.map(([label, timing]) => [label, '', () => resend(timing)])
+      .concat([['Cancel', 'ghost', () => say('')]]));
     return true;
+  }
+
+  // A question in #message: `text`, then one button per answer
+  // ([label, className, onClick]), in that order. Returns the buttons.
+  function ask(text, kind, answers) {
+    say(text, kind);
+    const note = el('message').firstChild;
+    return answers.map(([label, className, onClick]) => {
+      const answer = document.createElement('button');
+      Object.assign(answer, { type: 'button', className, textContent: label });
+      answer.addEventListener('click', onClick);
+      note.append(' ', answer);
+      return answer;
+    });
   }
 
   // Reads every route a page lists from at once; null, with the reason said
@@ -200,8 +206,15 @@ window.AppHeader = (() => {
   // old family address arrives as /?family=<family>, and saving it on
   // arrival would let an old bookmark silently replace the saved choice,
   // so every later visit would open on that family with no hint why.
+  // `unsaved()`, if the page gives it, is asked before a click changes the
+  // tab (#140): null, or the name of a form with changes not saved and
+  // `discard()`, which blanks or closes it. Then the bar asks in #message;
+  // Keep editing leaves the tab, the saved choice and the form as they were.
+  // Either answer puts back what #message said before the question, so a
+  // "Try again" or a before-or-after question is not lost (#145 review, F1),
+  // and moves the focus to the tab shown.
   const FAMILY_KEY = 'app.family';
-  function familyBar(families, pick, first) {
+  function familyBar(families, pick, first, unsaved = () => null) {
     const bar = el('family-filter');
     const choices = families.concat({ code: 'all', label: 'All' });
     bar.replaceChildren(...choices.map(({ code, label }) => {
@@ -214,11 +227,23 @@ window.AppHeader = (() => {
       for (const b of bar.children) b.setAttribute('aria-pressed', String(b.dataset.family === code));
       pick(code);
     };
+    let question = null;   // Keep editing, while the bar's question shows
+    let kept = [];         // what #message held before the question
+    const choose = (code) => {
+      show(code);
+      try { localStorage.setItem(FAMILY_KEY, code); } catch { /* storage blocked: this visit only */ }
+    };
     bar.addEventListener('click', (e) => {
       const b = e.target.closest('button[data-family]');
       if (!b) return;
-      show(b.dataset.family);
-      try { localStorage.setItem(FAMILY_KEY, b.dataset.family); } catch { /* storage blocked: this visit only */ }
+      const form = b.getAttribute('aria-pressed') !== 'true' && unsaved();
+      if (!form) return choose(b.dataset.family);
+      if (!question?.isConnected) kept = [...el('message').childNodes];
+      const answer = (then) => () => { el('message').replaceChildren(...kept); then(); };
+      [question] = ask(form.name + ' has changes that are not saved.', '', [
+        ['Keep editing', '', answer(() => bar.querySelector('[aria-pressed="true"]').focus())],
+        ['Discard changes', 'ghost', answer(() => { form.discard(); choose(b.dataset.family); b.focus(); })]]);
+      question.focus();
     });
     let saved = null;
     try { saved = localStorage.getItem(FAMILY_KEY); } catch { /* storage blocked */ }
