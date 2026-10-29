@@ -12,6 +12,7 @@
 // COLUMNS — by header name, not position (real exports carry a title line and
 // vary column order):
 //   size,grade,length,on_hand,committed,available,incoming,threshold,flag
+//   (this app's database writes incoming_lf in place of incoming; see Rules)
 // Rules ported from the EWP/plate readers, each already paid for once:
 //   * `available` (on hand - committed) wins over on_hand/qty — a board promised
 //     to another job can't be cut for this one.
