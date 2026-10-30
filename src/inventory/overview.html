@@ -93,7 +93,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, showDay, monthName, countKind } = AppHeader;
+  const { send, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, showDay, monthName, countKind, changed } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -273,11 +273,11 @@
     }, addFor, () => {
       // The add form and the open row's Rename, Correct or Trim panel, each
       // with changes, by its heading (#142; owner, J283). The pick above
-      // closes both, so Discard changes has nothing more to do.
+      // closes both, so Discard changes has nothing more to do: no discard.
       const form = PANEL[mode] && el('rows').querySelector('form');
       const names = [!el('add').hidden && changed(el('add')) && el('add-title').textContent.replace(/:$/, ''),
         form && changed(form) && PANEL[mode] + itemLabel(itemOf(form))].filter(Boolean);
-      return names.length ? { names, discard: () => {} } : null;
+      return names.length ? { names } : null;
     });
     if (addFor !== null) {
       history.replaceState(null, '', '/inventory');
@@ -780,13 +780,6 @@
 
   // A panel's heading in the family bar's question, before the item's name.
   const PANEL = { rename: 'Rename ', correct: 'Correct on hand of ', trim: 'Trim ' };
-  // A box of `form` differs from the value the page drew it with (#142). A
-  // pick list with no option marked starts on its first. A button is no box.
-  // A number box reports text it cannot read ("-") as blank, so badInput
-  // counts too (PR #147 review, F1).
-  const changed = (form) => [...form.elements].some((box) => (box.tagName === 'SELECT'
-    ? box.selectedIndex !== Math.max(0, [...box.options].findIndex((o) => o.defaultSelected))
-    : box.tagName !== 'BUTTON' && (box.value !== box.defaultValue || box.validity.badInput)));
 
   // "+ Add item" adds to the open family, with that family's name fields,
   // starting with `fill`: by hand, the open size or depth tab (Q210).

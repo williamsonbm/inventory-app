@@ -31,7 +31,10 @@
   Glue, NOT UNIT-TESTED: the list and the correction form need a browser,
   and this repo has no DOM harness. Its routes and the CSV are tested in
   test/inventory.test.js, the record's rules in test/counts.test.js. The
-  layout is checked by hand (#81, Testing Decisions).
+  layout is checked by hand (#81, Testing Decisions). A jsdom check outside
+  the repo verifies the family bar's question (#143): an untouched
+  correction form closes on a tab click, and a changed one asks by its
+  heading.
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -65,7 +68,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, getAll, say, itemLabel, showTime, showDate, monthName } = AppHeader;
+  const { send, getAll, say, itemLabel, showTime, showDate, monthName, changed } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -84,8 +87,18 @@
     if (!got) return;
     [{ families, items }, { records }] = got;
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
+      // A switch closes the correction form to the read view, even under
+      // All, where the record still shows (owner, J290).
+      if (f !== current) fixing = false;
       current = f;
       paint();
+    }, null, () => {
+      // The correction form, by its heading, when a box changed or a missed
+      // item was added, its box still blank (#143; owner, J289). The pick
+      // above closes it, so Discard changes has nothing more to do.
+      const form = el('correct-form');
+      return form && (changed(form) || form.querySelector('[data-was=""]'))
+        ? { names: [el('correct-title').textContent] } : null;
     });
   }
 
@@ -124,7 +137,7 @@
     const onRecord = new Set(r.lines.map((l) => l.item_id));
     const missed = items.filter((i) => i.family === r.family && i.active && !onRecord.has(i.id))
       .sort((a, b) => itemLabel(a).localeCompare(itemLabel(b), 'en', { numeric: true }));
-    return '<form id="correct-form"><p><b>Correct ' + esc(label(r)) + '</b>. Saving makes revision ' + (r.revision + 1) +
+    return '<form id="correct-form"><p><b id="correct-title">Correct ' + esc(label(r)) + '</b>. Saving makes revision ' + (r.revision + 1) +
       '; revision ' + r.revision + ' stays on the record. Change only the pieces that were wrong.</p>' +
       '<div class="tw"><table class="one-line"><thead><tr><th>Item</th><th>Pieces</th></tr></thead><tbody id="correct-lines">' +
       r.lines.map((l) => correctionRow(l.item_id, esc(l.item), l.quantity)).join('') + '</tbody></table></div>' +
