@@ -95,6 +95,13 @@ Committing a job and marking it shipped in one step, so all of its material is c
 It leaves the same job record as the longer path.
 _Avoid_: deduct from stock, write off, quick deduct
 
+**Already handled**:
+A sheet dropped into the Planner whose job is already committed, built or shipped in the app,
+matched by job number alone. The Planner lists it with who handled the job and when, and leaves it
+out of the plan. It goes to Jobs only when it differs from the job's current sheet, to save as a
+revision.
+_Avoid_: done, processed, imported
+
 **Cancel**:
 Ending a job's commitment so its material returns to available. Only material not yet consumed
 returns.
