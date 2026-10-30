@@ -28,7 +28,7 @@
 <body>
 <!--
   board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it, or
-  Deduct directly (#100); and the Job board, one row per job, with a Print menu for a job with a lumber
+  Deduct directly (#100); drop many, or send them from the Planner, and commit them in one save (#103); and the Job board, one row per job, with a Print menu for a job with a lumber
   pull list (#99), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68);
   Cancel job, Un-build and Un-ship on each row, one job at a time, after a confirmation (#101, J86, J87).
   The board sorts by any column, searches job number or name, filters by status and family; a job's row
@@ -63,8 +63,8 @@
 
 <div class="wrap">
   <label class="drop" id="drop">
-    Drop a job's material sheet here, or click to choose it.
-    <input type="file" id="file" accept=".csv,text/csv" hidden>
+    Drop job material sheets here, or click to choose them.
+    <input type="file" id="file" accept=".csv,text/csv" multiple hidden>
     <div class="sub">Plates, hangers, lumber and LVL are committed now. EWP: step 5.</div>
   </label>
   <div id="message" role="status"></div>
@@ -342,19 +342,27 @@
     }
   });
 
-  // The sheet last dropped, checked before it is committed (J27), and the
-  // version of its job when the check found it committed: a revised
+  // The sheets last dropped, or sent from the Planner (#103), each checked
+  // before it is committed (J27). One sheet shows its own screen (check);
+  // two or more, a list with one Commit (checkAll). `version` is the one
+  // sheet's job version when the check found it committed: a revised
   // sheet's save sends it (#120).
-  let sheet = null;
+  let sheets = [];
   let version;
-  // The lines on screen, each with its catalog flag (J8), so a fix button finds its line.
-  let shownLines = [];
+  // The catalog flags on screen, by button key (J8), so a fix button finds its line.
+  let shownFlags = {};
 
+  function linesHtml(lines, prefix) {
+    return '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
+      lines.map((l, i) => {
+        shownFlags[prefix + i] = l.flag;
+        return '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + (l.lf ? ' · ' + esc(l.lf) + ' LF' : '') + '</td><td>' + esc(l.quantity) + '</td><td>' +
+          flagsHtml(l.flag, prefix + i, l.family) + '</td></tr>';
+      }).join('') + '</tbody></table>';
+  }
   function showLines(lines, intro) {
-    shownLines = lines;
-    el('sheet-view').innerHTML = !lines.length ? '' : intro + '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
-      lines.map((l, i) => '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + (l.lf ? ' · ' + esc(l.lf) + ' LF' : '') + '</td><td>' + esc(l.quantity) + '</td><td>' +
-        flagsHtml(l.flag, String(i), l.family) + '</td></tr>').join('') + '</tbody></table>';
+    shownFlags = {};
+    el('sheet-view').innerHTML = !lines.length ? '' : intro + linesHtml(lines, '');
   }
 
   // A revised sheet's change screen (#120, story 28): each line added,
@@ -391,7 +399,7 @@
     showLines([], '');
     let body;
     try {
-      body = await send('/api/jobs/check', { file: sheet });
+      body = await send('/api/jobs/check', { file: sheets[0] });
     } catch (err) {
       say(err.unconfirmed ? 'The sheet could not be checked. Drop it again.' : err.message, 'bad');
       return;
@@ -452,29 +460,119 @@
       say(err.message, 'bad', err.unconfirmed ? () => fixAll(requests) : null);
       return;
     }
-    if (sheet) check();
+    recheck();
   }
+
+  // Two or more sheets (#103): each with its job and lines (J27) and a
+  // Remove (J298), and one Commit that saves every new job in one save
+  // (J297). A sheet whose job is in the app already, or that the commit
+  // would refuse, is shown and left out: a revised or cancelled job's sheet
+  // commits on its own, with its change screen. A flagged line, or a sheet
+  // that could not be checked, keeps Commit off until fixed or removed.
+  // Each sheet as last checked, in `sheets` order: { file, body } or { file, error }.
+  let checked = [];
+  let checking = 0;
+  async function checkAll() {
+    const run = checking;
+    say('Checking ' + sheets.length + ' sheets…');
+    showLines([], '');
+    const answers = [];
+    for (const file of sheets) {
+      try {
+        answers.push({ file, body: await send('/api/jobs/check', { file }) });
+      } catch (err) {
+        answers.push({ file, error: err.unconfirmed ? 'The sheet could not be checked. Remove it and drop it again.' : err.message });
+      }
+      if (run !== checking) return;
+    }
+    checked = answers;
+    say('');
+    showSheets();
+  }
+  // Why a checked sheet is left out of the batch, or null when it goes in.
+  function leftOut({ body: { job, cancelled, refusal } }) {
+    if (refusal) return refusal;
+    if (cancelled) return 'Job ' + job.number + ' was ' + cancelled.handled + ': commit its sheet on its own.';
+    if (!job.status) return null;
+    return job.unchanged ? 'Job ' + job.number + ' already has this sheet; nothing to commit.'
+      : 'Job ' + job.number + ' is already in the app, and this is a revised sheet: commit it on its own.';
+  }
+  const going = () => checked.filter((c) => !c.error && !leftOut(c));
+  function showSheets() {
+    shownFlags = {};
+    const n = going().length;
+    const blocked = checked.some((c) => c.error || (!leftOut(c) && c.body.lines.some((l) => l.flag)));
+    el('sheet-view').innerHTML = '<h2>' + checked.length + ' sheets</h2><p>' +
+      (n ? '<button type="button" id="commit-many"' + (blocked ? ' disabled' : '') + '>Commit ' + n + (n === 1 ? ' job' : ' jobs') + '</button> '
+        : '<span class="sub">No sheet here has a new job to commit.</span> ') +
+      '<button type="button" class="ghost" id="clear-job">Clear</button>' +
+      (n && blocked ? ' <span class="sub">Fix or remove the flagged sheets first.</span>' : '') + '</p>' +
+      checked.map((c, i) => {
+        const remove = '<p><button type="button" class="ghost" data-remove="' + i + '">Remove</button></p>';
+        if (c.error) return '<h3>' + esc(c.file.name) + '</h3><p class="note bad">' + esc(c.error) + '</p>' + remove;
+        const { job, lines, warnings } = c.body;
+        const why = leftOut(c);
+        return '<h3>Job ' + esc(job.number) + (job.name ? ' · ' + esc(job.name) : '') + '</h3><p class="sub">Delivery ' + dayText(job.delivery_date) + '. ' +
+          (warnings.length ? 'Notes from the sheet: ' + esc(warnings.join(' ')) : '') + '</p>' +
+          (why ? '<p class="note">' + esc(why) + '</p>' : '') + linesHtml(lines, i + '.') + remove;
+      }).join('');
+  }
+  // The batch is built once with its retry key, so "Try again" after an
+  // unconfirmed save sends the very same one and acts once.
+  async function commitMany(request) {
+    say('');
+    try {
+      const { jobs: saved } = await send('/api/jobs/commit-many', request);
+      sheets = [];
+      showLines([], '');
+      say((saved.length === 1 ? 'Job ' : 'Jobs ') + saved.map((j) => j.number).join(', ') + ' committed.', 'ok');
+      loadBoard();
+    } catch (err) {
+      say(err.message, 'bad', err.unconfirmed ? () => commitMany(request) : null);
+    }
+  }
+
+  // Checks the sheets again: none clears the screen, one shows its own.
+  function recheck() {
+    checking++;
+    if (!sheets.length) { say(''); showLines([], ''); } else if (sheets.length === 1) check(); else checkAll();
+  }
+
   el('sheet-view').addEventListener('click', (e) => {
     if (e.target.id === 'commit-job') {
       const keep = document.querySelector('input[name="keep-date"]:checked');
-      commit({ key: crypto.randomUUID(), file: sheet, version, keep_date: keep ? keep.value === 'true' : undefined });
+      commit({ key: crypto.randomUUID(), file: sheets[0], version, keep_date: keep ? keep.value === 'true' : undefined });
     }
-    if (e.target.id === 'deduct-job') commit({ key: crypto.randomUUID(), file: sheet }, '/api/jobs/deduct');
-    if (e.target.id === 'clear-job') { sheet = null; version = undefined; say(''); showLines([], ''); }
+    if (e.target.id === 'deduct-job') commit({ key: crypto.randomUUID(), file: sheets[0] }, '/api/jobs/deduct');
+    if (e.target.id === 'commit-many') commitMany({ key: crypto.randomUUID(), files: going().map((c) => c.file) });
+    if (e.target.id === 'clear-job') { sheets = []; recheck(); }
+    if (e.target.dataset.remove) {
+      checked.splice(Number(e.target.dataset.remove), 1);
+      sheets = checked.map((c) => c.file);
+      if (sheets.length > 1) showSheets(); else recheck();
+    }
     const button = e.target.closest('[data-flag-do]');
-    if (button) fixAll(PlannerUI.flagFixes(button.dataset.flagDo, shownLines[Number(button.dataset.flagKey)].flag));
+    if (button) fixAll(PlannerUI.flagFixes(button.dataset.flagDo, shownFlags[button.dataset.flagKey]));
   });
 
-  async function take(file) {
-    if (!file) return;
-    sheet = { name: file.name, text: await file.text() };
-    check();
+  async function take(list) {
+    if (!list.length) return;
+    sheets = await Promise.all(Array.from(list, async (file) => ({ name: file.name, text: await file.text() })));
+    recheck();
   }
-  el('file').addEventListener('change', (e) => { take(e.target.files[0]); e.target.value = ''; });
+  el('file').addEventListener('change', (e) => { take(e.target.files); e.target.value = ''; });
   const drop = el('drop');
   drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over'); });
   drop.addEventListener('dragleave', () => drop.classList.remove('over'));
-  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files[0]); });
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('over'); take(e.dataTransfer.files); });
+
+  // The sheets the Planner's Commit button sent (#103), read once.
+  let sent = null;
+  try {
+    sent = JSON.parse(sessionStorage.getItem('jobs.sheets'));
+    sessionStorage.removeItem('jobs.sheets');
+  } catch { /* storage blocked, or not JSON: nothing was sent */ }
+  if (Array.isArray(sent) && sent.length) { sheets = sent; recheck(); }
 
   loadBoard();
 })();
