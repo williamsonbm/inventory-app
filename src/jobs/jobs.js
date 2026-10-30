@@ -401,9 +401,17 @@ async function commitSheets(database, person, { key, files } = {}) {
   }
   const catalog = await readCatalogKeys(database);
   const jobs = [];
+  // A job number once per batch, compared as the database compares it
+  // (inv.tidy, upper): a second sheet would read as a revision of the first.
+  const seen = new Map();
   for (const file of files) {
     const { refusal, sheet, rows, plan } = await matchSheet(database, file, catalog);
     if (refusal) return refusal;
+    const number = String(sheet.meta.job_number).trim().toUpperCase();
+    if (seen.has(number)) {
+      return { status: 422, body: { ok: false, error: `Job ${seen.get(number)} is on more than one sheet: remove all but one.` } };
+    }
+    seen.set(number, sheet.meta.job_number);
     if (rows.some((r) => !r.item_id)) return flagRefusal(sheet, rows);
     jobs.push(jobPayload(sheet, rows, plan));
   }

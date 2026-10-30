@@ -1794,3 +1794,21 @@ test('a batch is a list of 1 to 50 sheets (#103)', async () => {
     assert.deepEqual([res.status, (await res.json()).error], [400, 'Pick 1 to 50 sheets to commit.'], String(files?.length));
   }
 });
+
+test('a batch with one job on two sheets saves none, and names the job (PR #149 review F1)', async () => {
+  const ctx = await appWithCatalog();
+  const first = sheetFor('70001');
+  const cases = [
+    [sheetFor('50001'), first, { ...sheetFor('70001', '1,Hanger,LUS28,,,,$1.00,$1.00'), name: 'other.csv' }],
+    [first, { ...first, name: 'copy.csv' }],
+    [first, { ...sheetFor(' 70001 '), name: 'spaced.csv' }],
+    [sheetFor('k1'), sheetFor('K1')],
+  ];
+  for (const files of cases) {
+    const res = await commitMany(ctx, files);
+    const body = await res.json();
+    assert.equal(res.status, 422, JSON.stringify(body));
+    assert.match(body.error, /^Job (70001|k1|K1) is on more than one sheet: remove all but one\.$/);
+  }
+  assert.equal((await board(ctx)).length, 0, 'no job was saved');
+});

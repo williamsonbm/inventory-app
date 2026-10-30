@@ -30,11 +30,14 @@
   runner that posts to each family's plan route and hands the response to that
   family's section (src/planner/<family>-section.js), the Un-retire and
   Add to catalog buttons on its lines (PlannerUI.flagsHtml), and the Already
-  handled list with its Commit button, which opens Jobs with the other sheets
-  (#103; the list's data is tested over HTTP in test/planner-inventory.test.js). NOT UNIT-TESTED: the
+  handled list with its Commit button, which opens Jobs with the other sheets,
+  and a listed sheet that differs, through sessionStorage `jobs.sheets` (#103; the list's data is tested over
+  HTTP in test/planner-inventory.test.js). NOT UNIT-TESTED: the
   tabs, the saved filter, the theme switch and the print buttons need a browser,
   and this repo has no DOM harness. Checked by hand: a pass over the four
-  families (spec #72, Testing Decisions). The routes are proven by
+  families (spec #72, Testing Decisions). The Already handled list and the
+  Commit button are checked by a jsdom script kept outside the repo (J300).
+  The routes are proven by
   test/recorded-output.test.js, the home page and the redirects by
   test/port-guards.test.js.
 -->
@@ -226,9 +229,10 @@
 
   // ── Already handled, and Commit (#103) ─────────────────────────────────────
   // Each run asks which sheets' jobs the app already has (J299). Those are
-  // listed, left out of the plans by the plan routes, and not sent to Jobs.
-  // The other sheets go to Jobs in sessionStorage, which Jobs reads once on
-  // load. Until the answer comes, or when it fails, no sheet is offered.
+  // listed and left out of the plans by the plan routes. A listed sheet that
+  // differs from the job's current one still goes to Jobs, to save as a
+  // revision (J306); so do the sheets not listed. They go in sessionStorage,
+  // which Jobs reads once on load. Until the answer comes, or when it fails, no sheet is offered.
   const btnCommit = el('btn-commit');
   let handledRun = 0;
   let toCommit = [];
@@ -251,7 +255,7 @@
       const data = await res.json();
       if (run !== handledRun) return;
       if (!res.ok || !data.ok) throw new Error(data.error || 'The check failed.');
-      const handled = new Set(data.jobs.map((j) => j.file));
+      const handled = new Set(data.jobs.filter((j) => !j.differs).map((j) => j.file));
       offer(jobFiles.filter((f) => !handled.has(f.name)));
       if (!data.jobs.length) return;
       el('handled').innerHTML = '<h2>Already handled</h2><p class="sub">These jobs are in the app already, so the plans leave them out.</p>' +
