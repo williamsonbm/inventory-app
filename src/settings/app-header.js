@@ -3,13 +3,15 @@
 // a page posts a change, `getAll`, the way it reads its lists, `say`, its
 // message area, `itemLabel`, `unitShort`,
 // `inOrderUnit`,
-// `familyBar`, the family filter the Planner and Inventory share, and
+// `familyBar`, the family filter the Planner and Inventory share,
+// `changed`, which tells a page whether a form has changes, and
 // `typingIn`, which keeps a box's typing through a repaint.
 //
 // Glue, NOT UNIT-TESTED: it needs a browser, and this repo has no DOM harness.
 // The routes it calls are tested in test/sign-in.test.js and
 // test/users.test.js; the header is checked by hand (#77, Testing Decisions).
-// The one exception is `showDay`, which test/app-header.test.js loads in a vm.
+// The exceptions are `showDay` and `changed`, which test/app-header.test.js
+// loads in a vm.
 //
 // Expects #theme-btn, #user-name and #sign-out in the page, #message
 // where it calls `say`, and #family-filter where it calls `familyBar`. The theme itself

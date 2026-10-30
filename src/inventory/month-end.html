@@ -87,9 +87,11 @@
     if (!got) return;
     [{ families, items }, { records }] = got;
     AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => {
-      // A switch closes the correction form to the read view, even under
-      // All, where the record still shows (owner, J290).
-      if (f !== current) fixing = false;
+      // A click on the tab already shown asks nothing, so it keeps the form
+      // (PR #148 review, F1). A switch closes the correction form to the
+      // read view, even under All, where the record still shows (owner, J290).
+      if (f === current) return;
+      fixing = false;
       current = f;
       paint();
     }, null, () => {
