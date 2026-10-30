@@ -216,13 +216,17 @@ test('a lumber line redirected whole buys nothing, so it is not flagged as not i
 // as the owner, after Ann signs in and before all four plans, and after, so a
 // changed value fails too, not only an added or removed row. The database's
 // grants are the guarantee (test/database.test.js, S62).
-test('running all four plans, one family live and one on a dropped file, changes no row in any table', async () => {
+test('running all four plans and listing the jobs already handled, one family live, one on a dropped file and a job in the app, changes no row in any table (story 50, ADR 0001)', async () => {
   const ctx = await setUp();
   const hus26 = await ctx.add('hangers', { sku: 'HUS26' });
   await goLive(ctx.db, 'hangers');
   await ctx.receive(hus26, 4);
+  await call(ctx.db, 'commit_job', ctx.ann.id, crypto.randomUUID(),
+    { number: 'CANON1', name: 'Canon Test', delivery_date: null, lines: [{ item_id: hus26.id, quantity: 3 }] });
   const before = await contents(ctx.db);
-  assert.ok(before.items.length === 1 && before.ledger.length > 0, 'the check sees the app\'s rows');
+  assert.ok(before.items.length === 1 && before.ledger.length > 0 && before.jobs.length === 1, 'the check sees the app\'s rows');
+  const handled = await post(ctx.base, '/api/planner/already-handled', { files: [HANGER_SHEET, LUMBER_LVL_SHEET] }, ctx.cookie);
+  assert.deepEqual((await handled.json()).jobs.map((j) => [j.number, j.differs]), [['CANON1', true]]);
 
   const plateFile = { name: 'plate-stock.csv', text: 'sku,on_hand,committed,available,incoming,threshold,flag,last_counted\nMT20 2x4,500,0,500,0,,,\n' };
   await ctx.plan('/api/hangers/plan', { files: [HANGER_SHEET] });
@@ -267,4 +271,74 @@ test('the on-hand text built from the database reads back as the same figures in
     { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 24, on_hand: 3, committed: 1, available: 2, incoming: 2, threshold: null },
   ]));
   assert.deepEqual(lvl.items, [{ source: 'inventory', item: '2.1 RigidLam LVL 1-3/4 x 11-7/8', depth: '11-78', span: 24, qty: 2, incoming: 2 }]);
+});
+
+// ── #103: jobs already handled ──────────────────────────────────────────────
+
+// Job 33864R's sheet: one plate, LUS28 and HUS26.
+const JOB_SHEET = {
+  name: '33864R-materials.csv',
+  text: [
+    'Quote Date:,1/5/2026,Job Number:,33864R',
+    'Order Date:,1/12/2026,Product:,Roof',
+    'Delivery Date:,11/2/2026,,',
+    'Job Name:,Smith Residence,Delivery Area,',
+    'LUMBER SUMMARY,,,,',
+    'SKU,Qty,LENGTH,MATERIAL NAME,USAGE',
+    'PLATE SUMMARY,,,,',
+    'SKU,QUANTITY,SIZE-GAUGE,WEIGHT,SQ. INCHES',
+    ',,,,',
+    ',930,MT20  3x4,64.18,5580',
+    'Hangers,,,,,,,',
+    'QTY,TYPE,SIZE,LENGTH,,NOTE,SELL,SELL',
+    '12,Hanger,LUS28,,,,$1.00,$12.00',
+    '4,Hanger,HUS26,,,,$1.00,$4.00',
+    'Total Hangers:,,$16.00',
+  ].join('\n'),
+};
+// Today in New York, as the app writes who handled a job.
+const todayInWords = () => new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'long', day: 'numeric', year: 'numeric' }).format(new Date());
+
+test('a job already committed, built or shipped is listed as already handled, with who and when, and its sheet is left out of every plan (story 49, J299)', async () => {
+  const ctx = await setUp();
+  for (const [family, sku] of [['plates', 'MT20 3x4'], ['hangers', 'LUS28'], ['hangers', 'HUS26']]) await ctx.add(family, { sku });
+  const committed = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: JOB_SHEET }, ctx.cookie);
+  assert.equal(committed.status, 200, await committed.clone().text());
+  const handled = async (files) => {
+    const res = await post(ctx.base, '/api/planner/already-handled', { files }, ctx.cookie);
+    const json = await res.json();
+    assert.equal(res.status, 200, JSON.stringify(json));
+    return json.jobs;
+  };
+  const entry = (status, differs) => ({ file: '33864R-materials.csv', number: '33864R', name: 'Smith Residence', status,
+    handled: `${status} by Ann Lee on ${todayInWords()}`, differs });
+
+  assert.deepEqual(await handled([JOB_SHEET, HANGER_SHEET]), [entry('committed', false)]);
+  const plan = await ctx.plan('/api/hangers/plan', { files: [JOB_SHEET, HANGER_SHEET] });
+  assert.deepEqual(plan.jobs.map((j) => j.jobNumber), ['CANON1'], 'the job already handled is not planned again');
+  assert.equal(hangerLine(plan, 'LUS28'), undefined, 'only job 33864R needs LUS28');
+  const plates = await ctx.plan('/api/plates/plan', { files: [JOB_SHEET, PLATE_SHEET] });
+  assert.deepEqual(plates.jobs.map((j) => j.jobNumber), ['10001R'], 'every family leaves it out');
+  assert.deepEqual(await ctx.plan('/api/hangers/plan', { files: [JOB_SHEET] }), { ok: true, allHandled: true },
+    'with every sheet handled, there is nothing to plan, and that is no failure');
+
+  // A changed sheet of the job is still handled, and says it differs.
+  const changed = { ...JOB_SHEET, text: JOB_SHEET.text.replace('12,Hanger,LUS28', '10,Hanger,LUS28') };
+  assert.deepEqual(await handled([changed]), [entry('committed', true)]);
+  assert.deepEqual((await ctx.plan('/api/hangers/plan', { files: [changed, HANGER_SHEET] })).jobs.map((j) => j.jobNumber), ['CANON1']);
+
+  const shipped = await post(ctx.base, '/api/jobs/mark', { key: crypto.randomUUID(), to: 'shipped', jobs: [{ number: '33864R', version: 1 }] }, ctx.cookie);
+  assert.equal(shipped.status, 200, await shipped.clone().text());
+  assert.deepEqual(await handled([JOB_SHEET]), [entry('shipped', false)]);
+});
+
+test('a cancelled job is not handled: its sheet is planned again (story 49)', async () => {
+  const ctx = await setUp();
+  const hus26 = await ctx.add('hangers', { sku: 'HUS26' });
+  await call(ctx.db, 'commit_job', ctx.ann.id, crypto.randomUUID(),
+    { number: 'CANON1', name: 'Canon Test', delivery_date: null, lines: [{ item_id: hus26.id, quantity: 3 }] });
+  await call(ctx.db, 'cancel_job', ctx.ann.id, crypto.randomUUID(), 'CANON1', 1);
+  const res = await post(ctx.base, '/api/planner/already-handled', { files: [HANGER_SHEET] }, ctx.cookie);
+  assert.deepEqual(await res.json(), { ok: true, jobs: [] });
+  assert.deepEqual((await ctx.plan('/api/hangers/plan', { files: [HANGER_SHEET] })).jobs.map((j) => j.jobNumber), ['CANON1']);
 });

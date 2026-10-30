@@ -24,6 +24,7 @@ const { parsePlateStockCsv } = require('../plates/readPlateStockCsv.js');
 const { parseHangerStockCsv } = require('../hangers/readHangerStockCsv.js');
 const { parseLumberStockCsv } = require('../lumber/readLumberStockCsv.js');
 const { parseStockCsv } = require('../ewp/readStockCsv.js');
+const { parsePlateSummary } = require('../plates/parsePlateSummary.js');
 
 // Each family's columns in the web app's export, and one item's cells.
 const figures = (i) => [i.on_hand, i.committed, i.available, i.incoming, i.threshold];
@@ -190,7 +191,23 @@ const PLAN_OPTIONS = {
   plates: async (database) => ({ packs: await readPlatePacks(database) }),
 };
 
-// One plan, with the database's inputs. Returns { status, body }.
+// The dropped sheets `files` whose job is already committed, built or
+// shipped (story 49), each as { file, job } with the job as
+// inv.jobs_handled answers it. A file that is not a sheet is left to the
+// plan, which refuses it.
+async function handledSheets(database, files) {
+  const sheets = (Array.isArray(files) ? files : []).filter(isCsvFile)
+    .map((file) => ({ file, number: parsePlateSummary(file.text).meta?.job_number })).filter((s) => s.number);
+  if (!sheets.length) return [];
+  const jobs = new Map((await database.read('SELECT * FROM inv.jobs_handled($1)', [sheets.map((s) => s.number)]))
+    .map((j) => [j.sheet_number, j]));
+  return sheets.filter((s) => jobs.has(s.number)).map(({ file, number }) => ({ file, job: jobs.get(number) }));
+}
+
+// One plan, with the database's inputs, leaving out the sheets of jobs
+// already handled: their need is in Committed, or consumed (story 49).
+// With every sheet handled there is nothing to plan: { allHandled: true }.
+// Returns { status, body }.
 async function planFromInventory(database, route, reqBody) {
   const { family } = PLAN_ROUTES[route];
   const [options, { live, items }] = await Promise.all([
@@ -198,7 +215,9 @@ async function planFromInventory(database, route, reqBody) {
     readInventory(database, family),
   ]);
   if (options.error) return { status: 400, body: { ok: false, error: options.error } };
-  const body = { ...reqBody, ...options };
+  const handled = new Set((await handledSheets(database, reqBody?.files)).map((h) => h.file));
+  if (handled.size && handled.size === reqBody.files.length) return { status: 200, body: { ok: true, allHandled: true } };
+  const body = { ...reqBody, ...(handled.size && { files: reqBody.files.filter((f) => !handled.has(f)) }), ...options };
   const warnings = [];
 
   if (live) {
@@ -216,4 +235,4 @@ async function planFromInventory(database, route, reqBody) {
   return result;
 }
 
-module.exports = { planFromInventory, onHandText, readInventory, itemsByKey, catalogFlag, PLAN_OPTIONS };
+module.exports = { planFromInventory, handledSheets, onHandText, readInventory, itemsByKey, catalogFlag, PLAN_OPTIONS };

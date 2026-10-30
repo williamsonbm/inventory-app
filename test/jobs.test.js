@@ -1713,3 +1713,84 @@ test('the route lists the jobs behind an item, and says so for a bad id (#112)',
   const bad = await get(ctx.base, '/api/items/jobs?id=abc', ctx.cookie);
   assert.deepEqual([bad.status, (await bad.json()).error], [400, 'That item is not in the catalog.']);
 });
+
+// ── #103: many sheets commit in one action ──────────────────────────────────
+
+// Sheet SHEET as job `number`; `extra` adds a hanger line.
+const sheetFor = (number, extra = '') => ({
+  name: number + '-materials.csv',
+  text: SHEET.replace('Job Number:,33864R', 'Job Number:,' + number)
+    .replace('Total Hangers:', (extra ? extra + '\n' : '') + 'Total Hangers:'),
+});
+const commitMany = (ctx, files, key = crypto.randomUUID()) => post(ctx.base, '/api/jobs/commit-many', { key, files }, ctx.cookie);
+
+test('a batch of 50 sheets commits in one action, one Activity Log row per job; a retry acts once (stories 3, 5, S22)', async () => {
+  const ctx = await appWithCatalog();
+  const files = Array.from({ length: 50 }, (_, n) => sheetFor('4' + String(n).padStart(4, '0')));
+  const key = crypto.randomUUID();
+  const res = await commitMany(ctx, files, key);
+  assert.equal(res.status, 200, await res.clone().text());
+  const body = await res.json();
+  assert.equal(body.jobs.length, 50);
+  assert.deepEqual(body.jobs.map((j) => j.number).slice(0, 2), ['40000', '40001']);
+  const rows = await board(ctx);
+  assert.deepEqual([rows.length, new Set(rows.map((j) => j.status))], [50, new Set(['committed'])]);
+  const commits = (await logRows(ctx.db)).filter((l) => l.action === 'commit job');
+  assert.equal(commits.length, 50, 'one row per job');
+
+  const again = await commitMany(ctx, files, key);
+  assert.equal(again.status, 200, await again.clone().text());
+  assert.deepEqual((await again.json()).jobs.map((j) => j.number), body.jobs.map((j) => j.number));
+  assert.equal((await logRows(ctx.db)).filter((l) => l.action === 'commit job').length, 50, 'the retry commits nothing more');
+});
+
+test('a batch with one bad sheet saves none: an unknown line, a job already shipped, or a revised sheet (S21, J8, J298)', async () => {
+  const ctx = await appWithCatalog();
+  assert.equal((await commitFile(ctx)).status, 200);
+  const res0 = await post(ctx.base, '/api/jobs/mark', { key: crypto.randomUUID(), to: 'shipped', jobs: [{ number: '33864R', version: 1 }] }, ctx.cookie);
+  assert.equal(res0.status, 200, await res0.clone().text());
+  const rowsBefore = (await logRows(ctx.db)).length;
+  const good = sheetFor('50001');
+  const cases = [
+    [sheetFor('50002', '3,Hanger,HGUS26,,,,$1.00,$3.00'), 422, /^Job 50002 was not committed: 1 line is not in the catalog or is retired\.$/],
+    [sheetFor('33864R'), 422, /Job 33864R was already shipped by /],
+    [sheetFor('33864R', '1,Hanger,LUS28,,,,$1.00,$1.00'), 422, /Job 33864R was already shipped by .*; un-ship it first/],
+  ];
+  for (const [bad, status, error] of cases) {
+    const res = await commitMany(ctx, [good, bad]);
+    const body = await res.json();
+    assert.equal(res.status, status, JSON.stringify(body));
+    assert.match(body.error, error);
+  }
+  assert.equal((await board(ctx)).length, 1, 'job 50001 was never saved');
+  assert.equal((await logRows(ctx.db)).length, rowsBefore, 'no Activity Log row either');
+});
+
+test('a batch refuses a revised sheet of a job in the app, which commits on its own; the same sheet again is unchanged (J7, J298)', async () => {
+  const ctx = await appWithCatalog();
+  assert.equal((await commitFile(ctx)).status, 200);
+  const revised = await commitMany(ctx, [sheetFor('50001'), sheetFor('33864R', '1,Hanger,LUS28,,,,$1.00,$1.00')]);
+  assert.deepEqual([revised.status, (await revised.json()).error],
+    [422, 'Job 33864R is already in the app, and this is a revised sheet: commit it on its own.']);
+  assert.equal((await board(ctx)).length, 1);
+
+  const same = await commitMany(ctx, [sheetFor('50001'), sheetFor('33864R')]);
+  assert.equal(same.status, 200, await same.clone().text());
+  assert.deepEqual((await same.json()).jobs.map((j) => [j.number, !!j.unchanged]), [['50001', false], ['33864R', true]]);
+
+  // A cancelled job's sheet puts it back to committed: that too is its own commit (story 14).
+  const cancel = await post(ctx.base, '/api/jobs/undo', { key: crypto.randomUUID(), action: 'cancel', number: '33864R', version: 1 }, ctx.cookie);
+  assert.equal(cancel.status, 200, await cancel.clone().text());
+  const cancelled = await commitMany(ctx, [sheetFor('50002'), sheetFor('33864R')]);
+  assert.equal(cancelled.status, 422);
+  assert.match((await cancelled.json()).error, /^Job 33864R was cancelled by .+ on .+: commit its sheet on its own\.$/);
+  assert.equal((await board(ctx)).length, 2, 'job 50002 was never saved');
+});
+
+test('a batch is a list of 1 to 50 sheets (#103)', async () => {
+  const ctx = await appWithCatalog();
+  for (const files of [undefined, [], Array.from({ length: 51 }, (_, n) => sheetFor('6' + n))]) {
+    const res = await commitMany(ctx, files);
+    assert.deepEqual([res.status, (await res.json()).error], [400, 'Pick 1 to 50 sheets to commit.'], String(files?.length));
+  }
+});
