@@ -3,13 +3,15 @@
 // a page posts a change, `getAll`, the way it reads its lists, `say`, its
 // message area, `itemLabel`, `unitShort`,
 // `inOrderUnit`,
-// `familyBar`, the family filter the Planner and Inventory share, and
+// `familyBar`, the family filter the Planner and Inventory share,
+// `changed`, which tells a page whether a form has changes, and
 // `typingIn`, which keeps a box's typing through a repaint.
 //
 // Glue, NOT UNIT-TESTED: it needs a browser, and this repo has no DOM harness.
 // The routes it calls are tested in test/sign-in.test.js and
 // test/users.test.js; the header is checked by hand (#77, Testing Decisions).
-// The one exception is `showDay`, which test/app-header.test.js loads in a vm.
+// The exceptions are `showDay` and `changed`, which test/app-header.test.js
+// loads in a vm.
 //
 // Expects #theme-btn, #user-name and #sign-out in the page, #message
 // where it calls `say`, and #family-filter where it calls `familyBar`. The theme itself
@@ -207,8 +209,9 @@ window.AppHeader = (() => {
   // arrival would let an old bookmark silently replace the saved choice,
   // so every later visit would open on that family with no hint why.
   // `unsaved()`, if the page gives it, is asked before a click changes the
-  // tab (#140): null, or the names of the forms with changes not saved and
-  // `discard()`, which blanks or closes them. Then the bar asks in #message;
+  // tab (#140): null, or the names of the forms with changes not saved and,
+  // unless the pick itself closes them, `discard()`, which blanks or closes
+  // them. Then the bar asks in #message;
   // Keep editing leaves the tab, the saved choice and the form as they were.
   // Either answer puts back what #message said before the question, so a
   // "Try again" or a before-or-after question is not lost (#145 review, F1),
@@ -247,7 +250,7 @@ window.AppHeader = (() => {
         ['Keep editing', '', answer(() => bar.querySelector('[aria-pressed="true"]').focus())],
         ['Discard changes', 'ghost', answer(() => {
           if (String(unsaved()?.names) !== String(form.names)) return b.click();
-          form.discard(); choose(b.dataset.family); b.focus();
+          form.discard?.(); choose(b.dataset.family); b.focus();
         })]]);
       question.focus();
     });
@@ -255,6 +258,14 @@ window.AppHeader = (() => {
     try { saved = localStorage.getItem(FAMILY_KEY); } catch { /* storage blocked */ }
     show([first, saved].find((f) => choices.some((c) => c.code === f)) || 'all');
   }
+
+  // A box of `form` differs from the value the page drew it with, for a
+  // family bar's `unsaved()` (#142, #143). A pick list with no option marked
+  // starts on its first. A button is no box. A number box reports text it
+  // cannot read ("-") as blank, so badInput counts too (PR #147 review, F1).
+  const changed = (form) => [...form.elements].some((box) => (box.tagName === 'SELECT'
+    ? box.selectedIndex !== Math.max(0, [...box.options].findIndex((o) => o.defaultSelected))
+    : box.tagName !== 'BUTTON' && (box.value !== box.defaultValue || box.validity.badInput)));
 
   // A repaint rebuilds every row, so text a person is typing in one box while
   // another save comes back would be lost. typingIn(container), called before
@@ -280,5 +291,5 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, showDay, monthName, countKind, today, familyBar, typingIn };
+  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, showDay, monthName, countKind, today, familyBar, changed, typingIn };
 })();

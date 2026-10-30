@@ -1,9 +1,12 @@
 // =============================================================
-// test/app-header.test.js — the date helper in the shared page header.
+// test/app-header.test.js — the date helper and the changed-form check in
+// the shared page header.
 // Run with: node --test test/app-header.test.js
 // app-header.js is browser code with no module.exports, and the rest of it
 // (theme switch, sign-out, family bar) needs a DOM and is checked by hand.
-// This loads it in a Node vm with stub DOM objects and calls showDay only.
+// This loads it in a Node vm with stub DOM objects and calls showDay and
+// changed only. changed reads plain properties, so plain objects stand in
+// for a form's boxes.
 // =============================================================
 
 const { test } = require('node:test');
@@ -46,4 +49,41 @@ test('showDay shows a missing date as a dash', () => {
   assert.equal(showDay(null), '—');
   assert.equal(showDay(undefined), '—');
   assert.equal(showDay(''), '—');
+});
+
+// A form's box as changed reads it: an input or button, or a pick list.
+const box = (value, defaultValue = value, { tagName = 'INPUT', badInput = false } = {}) =>
+  ({ tagName, value, defaultValue, validity: { badInput } });
+const pick = (selectedIndex, marked = -1) =>
+  ({ tagName: 'SELECT', selectedIndex, options: [0, 1, 2].map((i) => ({ defaultSelected: i === marked })) });
+const form = (...elements) => ({ elements });
+
+test('changed: a form as the page drew it has no changes', () => {
+  const { changed } = loadAppHeader();
+  assert.equal(changed(form(box('10'), box(''), pick(0), pick(2, 2))), false);
+});
+
+test('changed: a box with typed text, or with text taken out, has changes', () => {
+  const { changed } = loadAppHeader();
+  assert.equal(changed(form(box('7', '10'))), true);
+  assert.equal(changed(form(box('rack 3', ''))), true);
+  assert.equal(changed(form(box('', '10'))), true);
+});
+
+test('changed: a number box with text it cannot read ("-") has changes', () => {
+  const { changed } = loadAppHeader();
+  // The browser reports the unreadable text as blank, the same as the start.
+  assert.equal(changed(form(box('', '', { badInput: true }))), true);
+});
+
+test('changed: a pick list starts on its marked option, or on its first if none is marked', () => {
+  const { changed } = loadAppHeader();
+  assert.equal(changed(form(pick(1))), true);
+  assert.equal(changed(form(pick(0, 2))), true);
+  assert.equal(changed(form(pick(2, 2))), false);
+});
+
+test('changed: a button is no box', () => {
+  const { changed } = loadAppHeader();
+  assert.equal(changed(form(box('Save', '', { tagName: 'BUTTON' }))), false);
 });
