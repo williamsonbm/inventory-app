@@ -1586,7 +1586,7 @@ test('the job view shows the saved lines, the delivery date and its History; a d
   const first = await view(' 33864r ');
   assert.deepEqual({ ...first, history: first.history.map(({ at, ...h }) => ({ ...h, at: typeof at })) }, {
     ok: true,
-    job: { number: '33864R', version: 1, delivery_date: '2026-11-02', delivery_date_edited: false, can_set_date: true, can_swap: false },
+    job: { number: '33864R', version: 1, delivery_date: '2026-11-02', delivery_date_edited: false, can_set_date: true, can_swap: false, can_return: false },
     lines: [
       { item_id: ctx.items['MT20 3x4'].id, family: 'plates', label: 'MT20 3x4', length_ft: null, quantity: 930 },
       { item_id: ctx.items.HUS26.id, family: 'hangers', label: 'HUS26', length_ft: null, quantity: 8 },
@@ -1595,6 +1595,7 @@ test('the job view shows the saved lines, the delivery date and its History; a d
     ],
     swaps: [],
     plates: [],
+    returnable: [],
     history: [{ action: 'commit job', by: 'Ann Lee', change: 'added: Smith Residence, revision 1', at: 'string' }],
   });
 
@@ -2158,4 +2159,168 @@ test('migration 021 stops with a clear message, and changes nothing, on a databa
   await assert.rejects(migrate(urlFor(db)), { message: 'migration 021-plate-swaps.sql failed, nothing from it was applied: '
     + 'A reason "substitution" is already in the app; 021 adds the built-in reason Substitution. Rename that reason in the database (its rows keep it), then run 021 again.' });
   assert.deepEqual(await contents(db), before, 'nothing from 021');
+});
+
+// ── Seam 1: a return from the job site on a shipped job (#107) ──────────────
+
+// Records `quantity` of `item` returned on job `number` as Ann, at `version`,
+// or the one the board shows now; `lengthFt`, an LVL board's actual length.
+async function giveBack(ctx, item, quantity, { number = '33864R', key = crypto.randomUUID(), lengthFt = null, timing = null, version } = {}) {
+  version ??= (await onBoard(ctx.db, number)).version;
+  return call(ctx.db, 'record_return', ctx.ann.id, key, number, version, item.id, quantity, lengthFt, timing && JSON.stringify(timing));
+}
+
+// A shipped job 33864R that consumed 30 of ctx.lus28 and 930 of ctx.plate;
+// 100 LUS28 and 1,000 plates on hand before.
+async function withShippedJob() {
+  const ctx = await withCatalog();
+  await goLive(ctx.db, 'plates');
+  await goLive(ctx.db, 'hangers');
+  await ctx.receive(ctx.plate, 1000);
+  await ctx.receive(ctx.lus28, 100);
+  await commit(ctx, [[ctx.plate, 930], [ctx.lus28, 30]]);
+  await mark(ctx, 'shipped', ['33864R']);
+  return ctx;
+}
+
+test('a return on a shipped job adds the pieces back to on hand, linked to the job and logged once; the job is not edited; a retry acts once (#107, story 46, Q7, S22)', async () => {
+  const ctx = await withShippedJob();
+  const { db, lus28 } = ctx;
+  assert.equal((await figure(db, 'on_hand'))[lus28.id], 70, '100 − 30 shipped');
+  const key = crypto.randomUUID();
+  const job = await giveBack(ctx, lus28, 4, { key });
+  assert.deepEqual([job.number, job.status, job.version], ['33864R', 'shipped', 3], 'still shipped; a return moves the version');
+  assert.deepEqual(job.returned, { item: 'LUS28', quantity: 4 });
+  assert.deepEqual(await giveBack(ctx, lus28, 4, { key, version: 2 }), job, 'the retry answers as the first return did');
+  assert.equal((await figure(db, 'on_hand'))[lus28.id], 74, '70 + 4 returned');
+  assert.equal((await logRows(db)).filter((l) => l.action === 'record return').length, 1);
+  const rows = await as(db, APP, async (app) => (await app.query(
+    `SELECT g.kind, g.quantity FROM inv.ledger g JOIN inv.jobs j ON j.id = g.job_id
+      WHERE j.number = '33864R' AND g.item_id = $1 ORDER BY g.id`, [lus28.id])).rows);
+  assert.deepEqual(rows, [{ kind: 'ship', quantity: -30 }, { kind: 'return', quantity: 4 }], 'the shipped row stands; the return is its own row on the job');
+});
+
+test('a return is refused unless the job is shipped, on a stale screen, for a job not in the app, for plates and lumber, and for a count that is not whole pieces; a refusal saves nothing (#107, J330, Q7, Q48)', async () => {
+  const ctx = await withShippedJob();
+  const { db, ann, plate, lus28 } = ctx;
+  const board = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 12 });
+  await goLive(db, 'lumber');
+  await commit(ctx, [[lus28, 5]], { number: '2P' });
+  const { version } = await onBoard(db, '33864R');
+  const before = await contents(db);
+  const cases = [
+    [lus28, 1, { number: '2P', version: 1 }, 'IV422', 'Job 2P is committed. Only a shipped job takes a return.'],
+    [lus28, 1, { version: 1 }, 'IV409', 'Someone else changed job 33864R since you opened this screen.'],
+    [lus28, 1, { number: 'NOPE', version: 1 }, 'IV400', 'Job NOPE is not in the app.'],
+    [plate, 1, {}, 'IV422', 'MT20 3x4 does not come back from a job site: it is used up on the job.'],
+    [board, 1, {}, 'IV422', /^2x4 .*12′ does not come back from a job site: it is used up on the job\.$/],
+    [{ id: -1 }, 1, {}, 'IV400', 'Pick the item from the catalog.'],
+    ...[0, -3, 1.5, null].map((n) => [lus28, n, {}, 'IV400', 'Type the pieces returned: a whole number above 0.']),
+  ];
+  for (const [item, quantity, opts, code, message] of cases) {
+    const err = await refused(giveBack(ctx, item, quantity, { version, ...opts }), code, `${item.sku ?? item.id} × ${quantity} ${JSON.stringify(opts)}`);
+    if (message instanceof RegExp) assert.match(err.message, message); else assert.equal(err.message, message);
+  }
+  assert.deepEqual(await contents(db), before, 'no row and no log entry');
+  await as(db, null, async (owner) => {
+    const err = await refused(owner.query(
+      `INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, job_id)
+       SELECT $1, 1, 'return', now(), max(l.id), (SELECT id FROM inv.jobs WHERE number = '33864R') FROM inv.activity_log l`, [plate.id]),
+      'IV422', 'the owner\'s own insert of a plates return');
+    assert.equal(err.message, 'MT20 3x4 does not come back from a job site: it is used up on the job.');
+  });
+});
+
+test('returned LVL is entered at its actual length: a length not in the catalog is added as Non-Stock; a length is for LVL only, a retired item is refused (#107, Q11, Q21, J331)', async () => {
+  const ctx = await withShippedJob();
+  const { db, ann, lus28 } = ctx;
+  const lvl = (length_ft) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.0 LVL 1-3/4', size: '11-7/8', length_ft });
+  const twenty = await lvl(20);
+  await goLive(db, 'lvl');
+  await ctx.receive(twenty, 10);
+  await commit(ctx, [[twenty, 4]], { number: '41L' });
+  await mark(ctx, 'shipped', ['41L']);
+
+  await giveBack(ctx, twenty, 1, { number: '41L' });
+  const job = await giveBack(ctx, twenty, 2, { number: '41L', lengthFt: 14 });
+  assert.deepEqual(job.returned, { item: '2.0 LVL 1-3/4 x 11-7/8 14′', quantity: 2, added: true });
+  const fourteen = await as(db, APP, async (app) => (await app.query(
+    `SELECT id, stocking, active FROM inv.items WHERE family = 'lvl' AND length_ft = 14`)).rows);
+  assert.deepEqual(fourteen.map((i) => [i.stocking, i.active]), [['Non-Stock', true]], 'one new length, Non-Stock (Q21)');
+  const onHand = await figure(db, 'on_hand');
+  assert.deepEqual([onHand[twenty.id], onHand[fourteen[0].id]], [7, 2], '10 − 4 shipped + 1 at 20′; 2 at 14′');
+  assert.deepEqual((await giveBack(ctx, twenty, 1, { number: '41L', lengthFt: 14 })).returned,
+    { item: '2.0 LVL 1-3/4 x 11-7/8 14′', quantity: 1 }, 'the length is in the catalog now');
+
+  const before = await contents(db);
+  for (const [item, lengthFt, message] of [
+    [twenty, 0, 'Type the length returned in whole feet, above 0.'],
+    [twenty, 12.5, 'Type the length returned in whole feet, above 0.'],
+    [lus28, 8, 'Only LVL is returned at a length.'],
+  ]) {
+    const err = await refused(giveBack(ctx, item, 1, { lengthFt }), 'IV400', `${item.sku ?? 'LVL'} at ${lengthFt}′`);
+    assert.equal(err.message, message);
+  }
+  const old = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HU210' });
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), old.id, old.version);
+  const retired = await refused(giveBack(ctx, old, 1), 'IV422', 'a retired hanger');
+  assert.equal(retired.message, 'HU210 is retired. Un-retire it before you record the return.');
+  assert.deepEqual((await contents(db)).ledger, before.ledger, 'no row');
+});
+
+test('Un-ship is refused while the job has a return; reversed, the return gives its pieces back and Un-ship then gives back what was shipped (#107, J332, Q55)', async () => {
+  const ctx = await withShippedJob();
+  const { db, lus28 } = ctx;
+  await giveBack(ctx, lus28, 4);
+  const before = await contents(db);
+  const err = await refused(undo(ctx, 'unship_job', '33864R'), 'IV422', 'Un-ship with a return standing');
+  assert.equal(err.message, 'Job 33864R has a return from the job site. Reverse it in the item\'s History, then Un-ship.');
+  assert.deepEqual(await contents(db), before, 'no row and no log entry');
+
+  const [ret] = await as(db, APP, async (app) => (await app.query(`SELECT id FROM inv.ledger WHERE kind = 'return'`)).rows);
+  await call(db, 'reverse', ctx.ann.id, crypto.randomUUID(), ret.id, 'entered on the wrong job');
+  assert.equal((await figure(db, 'on_hand'))[lus28.id], 70, '74 − the 4 reversed');
+  await undo(ctx, 'unship_job', '33864R');
+  assert.equal(await jobStatus(db, '33864R'), 'built');
+  assert.equal((await figure(db, 'on_hand'))[lus28.id], 100, 'Un-ship gives back the 30 shipped, and only those');
+});
+
+test('the return route saves a return on a shipped job; the job view offers Return… only then, with every active hanger and LVL by product and depth, and shows the return in its History (#107, stories 43, 46, J330, J331)', async () => {
+  const ctx = await appWithCatalog();
+  const lvl = async (length_ft) => (await (await post(ctx.base, '/api/items/add',
+    { key: crypto.randomUUID(), family: 'lvl', identity: { product: '2.0 LVL 1-3/4', size: '11-7/8', length_ft } }, ctx.cookie)).json()).item;
+  const [twenty, twelve] = [await lvl(20), await lvl(12)];
+  await goLive(ctx.db, 'hangers');
+  await goLive(ctx.db, 'lvl');
+  assert.equal((await commitFile(ctx)).status, 200);
+  const view = async () => (await get(ctx.base, '/api/jobs/view?number=33864R', ctx.cookie)).json();
+  const giveBackOver = (item, quantity, version, length_ft = null) => post(ctx.base, '/api/jobs/return',
+    { key: crypto.randomUUID(), number: '33864R', version, item: item.id, quantity, length_ft, timing: null }, ctx.cookie);
+
+  const committed = await view();
+  assert.deepEqual([committed.job.can_return, committed.returnable], [false, []], 'a committed job takes no return and offers nothing');
+  const marked = await post(ctx.base, '/api/jobs/mark', { key: crypto.randomUUID(), to: 'shipped', jobs: [{ number: '33864R', version: 1 }] }, ctx.cookie);
+  assert.equal(marked.status, 200, await marked.clone().text());
+  const shipped = await view();
+  assert.equal(shipped.job.can_return, true);
+  const { HUS26, LUS28, TC26 } = ctx.items;
+  assert.deepEqual(shipped.returnable, [
+    { id: HUS26.id, family: 'Hangers', label: 'HUS26', by_length: false },
+    { id: LUS28.id, family: 'Hangers', label: 'LUS28', by_length: false },
+    { id: TC26.id, family: 'Hangers', label: 'TC26', by_length: false },
+    { id: Math.min(twenty.id, twelve.id), family: 'LVL', label: '2.0 LVL 1-3/4 x 11-7/8', by_length: true },
+  ], 'hangers one by one; LVL once per product and depth; no plates, which are not live and never come back');
+
+  const res = await giveBackOver(LUS28, 2, 2);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual((await res.json()).job.returned, { item: 'LUS28', quantity: 2 });
+  const lvlRes = await giveBackOver(twenty, 1, 3, 9);
+  assert.equal(lvlRes.status, 200, await lvlRes.clone().text());
+  const after = await view();
+  assert.deepEqual(after.history.slice(0, 2).map((h) => [h.action, h.change]), [
+    ['record return', '1 of 2.0 LVL 1-3/4 x 11-7/8 9′ returned from the job site, added as Non-Stock'],
+    ['record return', '2 of LUS28 returned from the job site'],
+  ]);
+  const refusal = await giveBackOver(LUS28, 1, 1);
+  assert.equal(refusal.status, 409, 'a stale screen');
 });

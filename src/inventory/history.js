@@ -24,7 +24,7 @@ const LEDGER_ROWS = `
          inv.po_line_number(g.po_line_id) AS po_line, g.packs, g.pack_size, g.pack_kind, g.loose,
          l.new_value -> 'pack_sizes_added' AS pack_sizes_added, inv.item_label(i) AS item, other.length_ft AS other_length,
          (l.new_value ->> 'item_added')::boolean AS added, (l.new_value ->> 'item_unretired')::boolean AS unretired,
-         l.new_value -> 'timed' AS timed, jb.number AS job_number, jb.name AS job_name
+         l.new_value -> 'timed' AS timed, jb.number AS job_number, jb.name AS job_name, g.kind
     FROM inv.ledger g
     JOIN inv.items i ON i.id = g.item_id
     JOIN inv.activity_log l ON l.id = g.action_id
@@ -120,8 +120,9 @@ async function readHistory(database, id) {
       // reversed again (Q44), so the page offers no Reverse on it.
       reversal: g.reverses !== null,
       // A job's build or ship row: inv.reverse_entry refuses it (#101 undoes
-      // it from the job), so the page offers no Reverse on it.
-      from_job: g.job_number !== null })),
+      // it from the job), so the page offers no Reverse on it. A return is
+      // undone here, by Reverse (#107, J332).
+      from_job: g.job_number !== null && g.kind !== 'return' })),
     ...settings.map((s) => ({ at: s.at, log_id: s.log_id, who: s.who, action: s.action, change: null,
       detail: describeChange(s.action, s.target_table, s.was, s.now) })),
     // No id: a count is never reversed; a new count replaces it.
