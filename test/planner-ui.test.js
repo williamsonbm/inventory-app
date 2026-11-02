@@ -543,6 +543,14 @@ test('jobTabs: a built job\'s swaps on its Plates tab: a plate line says what wa
     'the heading still counts the sheet\'s lines');
 });
 
+test('jobTabs: a built job whose newest sheet has no plate lines still shows its swaps on a Plates tab (#106, PR #155 review F5)', () => {
+  const job = { number: '33864R', lines: [{ item_id: 9, family: 'hangers', label: 'LUS28', length_ft: null, quantity: 12 }],
+    swaps: [{ planned_id: 1, planned: 'MT20 3x4', used_id: 2, used: 'MT20 4x6', quantity: 40 }] };
+  const { tabs } = jobTabs(job, FAMILIES, 'plates');
+  assert.deepEqual(tabs.map((t) => [t.family, t.label]), [['plates', 'Plates (0)'], ['hangers', 'Hangers (1)']]);
+  assert.deepEqual(tabs[0].tables.map((t) => t.rows), [[['MT20 4x6', '40', 'swap']]]);
+});
+
 test('jobTabs: one tab per family on the job, in the families\' order, each with its line count (#102, story 40)', () => {
   const { tabs } = jobTabs(SAVED, FAMILIES, 'all');
   assert.deepEqual(tabs.map((t) => [t.family, t.label]), [

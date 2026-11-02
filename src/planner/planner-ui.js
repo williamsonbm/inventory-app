@@ -797,14 +797,16 @@
       ({ label: g.label, stockLengthFt: b.stockLengthFt, boards: b.boards, first: i === 0 })));
   }
 
-  // A job with no lines for this family has no breakdown. Otherwise every
-  // table that has rows: a lumber job with nothing to cut shows its lines alone.
+  // A job with no lines for this family has no breakdown, unless it has
+  // plates swapped in (#106): a revised sheet may drop every plate line.
+  // Otherwise every table that has rows: a lumber job with nothing to cut
+  // shows its lines alone.
   // `saved`: a job as Jobs saved it, without what only the sheet carries.
   // An `optional` column shows only when one of its cells has text.
   function jobBreakdown(family, job, { saved = false } = {}) {
     const { lines: linesOf, tables } = JOB_BREAKDOWN[family];
     const lines = linesOf(job);
-    if (!lines.length) return [];
+    if (!lines.length && !(job.swapped || []).length) return [];
     const shown = (part) => !(saved && part.sheetOnly);
     return tables.filter(shown)
       .map((t) => {

@@ -88,7 +88,21 @@ What a built job has already had of a plate, lumber or LVL line, so a revised sh
 beyond it: the most any of its sheets asked since its first Built or Shipped after it was last put
 back to committed or cancelled, or what it consumed when that is more. An Un-build, a Cancel or an
 Un-ship back to committed starts this again at the next Built or Shipped. A line whose family was
-not live in Inventory then is settled but not consumed. The change screen shows it as "consumed".
+not live in Inventory then is settled but not consumed. A swap counts as the planned plate
+consumed, not the plate used (owner, J322, J325). The change screen shows it as "consumed".
+
+**Swap**:
+On a built job's Plates tab, *Substitute…* records that the shop used N of another plate in place
+of N of a planned plate: N of the planned plate goes back on hand and N of the plate used comes
+off, with the reason *Substitution* (#106, stories 43–45). The plate used may be any active plate
+in the catalog except the planned one, not only the next size up (owner, J319, 2026-11-02). A
+plate swapped in may be the planned plate of a later swap, so a mistake is fixed by swapping back;
+there is no Undo (J321). The planned line shows "N swapped to <plate>", and the plate used is its
+own row marked "swap" (J320). Un-build drops the swaps: Built again consumes the sheet as planned.
+Built, Shipped and a revised sheet count a swap as the planned plate consumed (J322, J325), so a
+job cancelled and committed again takes nothing more; a sheet that adds the plate used takes it
+in full. A remake comes back under a new job number, so it is a new job (J323).
+_Avoid_: substitution for the act — it is the reason's name; replacement, exchange
 
 **Deduct directly**:
 Committing a job and marking it shipped in one step, so all of its material is consumed at once.

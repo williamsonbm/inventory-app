@@ -4,22 +4,38 @@
 --
 -- Reach: one new action, one new built-in reason (Substitution) with its
 -- entry value, ledger_job_check and the ledger's reason check widened so a
--- job's build row may carry that reason and then may give pieces back,
+-- job's build row may carry that reason (and only that one, by a trigger)
+-- and then may give pieces back,
 -- inv.checked_reason redefined to refuse that reason elsewhere,
--- inv.job_to_consume redefined to leave a swap out of what a job consumed,
--- and a new function. No existing row changes meaning: no build row has a
--- reason today, so every row passes both the old and the new rules, and
--- every job consumes as before.
+-- inv.job_to_consume and inv.job_settled redefined to leave a swap out of
+-- what a job consumed, and a new function. No existing row changes meaning:
+-- no build row has a reason today, so every row passes both the old and the
+-- new rules, and every job consumes and settles as before.
 -- Recovery: before any swap is saved, rerun 012's ledger_job_check, 004's
 -- reason check (as ledger_check4, dropping ledger_reason_check), 017's
--- inv.checked_reason and 011's inv.job_to_consume, drop inv.swap_plate and
--- delete the reason and the action. After one is, its build rows are what
--- on hand and the job's consumption read; keep them.
+-- inv.checked_reason, 011's inv.job_to_consume and 015's inv.job_settled,
+-- drop inv.swap_plate and the check_build_reason trigger and function,
+-- delete the reason and the action, then restore 017's
+-- reasons_entry_check (entry IN ('trim', 'import', 'receive')). After one
+-- is, its build rows are what on hand and the job's consumption read; keep
+-- them.
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('swap plate', false);
 
 ALTER TABLE inv.reasons DROP CONSTRAINT reasons_entry_check;
 ALTER TABLE inv.reasons ADD CONSTRAINT reasons_entry_check CHECK (entry IN ('trim', 'import', 'receive', 'swap'));
+-- Reason text is unique whatever its capitals (003), and Settings can add
+-- one, so a person may have added "Substitution" already. Stop with words
+-- that say what to do, not a bare duplicate-key error.
+DO $$
+DECLARE
+  v_text text := (SELECT text FROM inv.reasons WHERE pg_catalog.lower(text) = 'substitution');
+BEGIN
+  IF v_text IS NOT NULL THEN
+    RAISE EXCEPTION 'A reason "%" is already in the app; 021 adds the built-in reason Substitution. Rename that reason in the database (its rows keep it), then run 021 again.', v_text;
+  END IF;
+END
+$$;
 INSERT INTO inv.reasons (text, built_in, entry) VALUES ('Substitution', true, 'swap');
 
 -- A swap is two of the job's build rows saved together, each with the
@@ -47,6 +63,26 @@ $$;
 ALTER TABLE inv.ledger DROP CONSTRAINT ledger_check4;
 ALTER TABLE inv.ledger ADD CONSTRAINT ledger_reason_check
   CHECK (CASE kind WHEN 'correction' THEN reason_id IS NOT NULL WHEN 'build' THEN true ELSE reason_id IS NULL END);
+
+-- What a job consumed leaves out a build row whose reason is the swap's
+-- (inv.job_to_consume, inv.job_settled), so a build row with any other
+-- reason would be counted as neither. The reason check above cannot read
+-- inv.reasons; this trigger holds the rest, whatever writes the row
+-- (PR #155 review F4). inv.swap_plate sets the reason itself.
+CREATE FUNCTION inv.check_build_reason() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM inv.reasons WHERE id = NEW.reason_id AND entry = 'swap') THEN
+    RAISE EXCEPTION 'A job''s build row with a reason is a swap, so its reason is Substitution.' USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_build_reason BEFORE INSERT ON inv.ledger
+  FOR EACH ROW WHEN (NEW.kind = 'build' AND NEW.reason_id IS NOT NULL) EXECUTE FUNCTION inv.check_build_reason();
 
 -- 017's inv.checked_reason, refusing the reason a swap sets; otherwise as 017.
 CREATE OR REPLACE FUNCTION inv.checked_reason(p_id bigint, what text) RETURNS inv.reasons
@@ -154,10 +190,8 @@ GRANT EXECUTE ON FUNCTION inv.swap_plate(bigint, uuid, text, integer, bigint, bi
 -- committed again, Built or Shipped would take the swapped pieces of the
 -- planned plate a second time. The cost: a sheet that newly adds the plate
 -- used takes it in full. Un-build reverses the swap with the rest, so
--- Built again still consumes the sheet as planned (J321). 015's
--- inv.job_settled keeps the plain sum, and needs no change for a swap: the
--- planned plate is settled at the most any sheet asked, the plate used at
--- what was swapped in.
+-- Built again still consumes the sheet as planned (J321). inv.job_settled,
+-- below, counts the same way (J325).
 CREATE OR REPLACE FUNCTION inv.job_to_consume(p_job inv.jobs, p_to text)
 RETURNS TABLE (item_id bigint, quantity integer, live boolean)
 LANGUAGE sql STABLE
@@ -177,4 +211,42 @@ AS $$
               WHEN p_job.status = 'built' THEN f.consumed_when = 'shipped'
               ELSE true END
      AND l.quantity > c.consumed
+$$;
+
+-- 015's inv.job_settled, counting a swap as job_to_consume does (owner
+-- J325): its rows, and their reversals, are left out of what the job
+-- consumed. Deliberately not 015's plain sum: with it, a revised sheet on
+-- the built job settled a line of the plate used at what was swapped in,
+-- and the same sheet committed again after a cancel did not, so the two
+-- took different pieces for the same facts. The cost, as for Built: a
+-- revised sheet that shows the swap as a line of the plate used takes that
+-- plate a second time. The check before a commit reads this function
+-- (src/jobs/jobs.js, checkSheet), so it shows the same figures. 015's
+-- comment stands for the rest.
+CREATE OR REPLACE FUNCTION inv.job_settled(p_job inv.jobs)
+RETURNS TABLE (item_id bigint, quantity integer)
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  WITH built AS (
+    SELECT pg_catalog.min(l.id) AS id FROM inv.activity_log l
+     WHERE l.target_table = 'jobs' AND l.target_id = p_job.id AND l.action IN ('mark built', 'mark shipped')
+       AND l.id > coalesce((SELECT pg_catalog.max(u.id) FROM inv.activity_log u
+                             WHERE u.target_table = 'jobs' AND u.target_id = p_job.id
+                               AND u.action IN ('un-build', 'cancel job', 'un-ship')
+                               AND u.new_value ->> 'status' IN ('committed', 'cancelled')), 0))
+  SELECT x.item_id, pg_catalog.max(x.quantity)::integer
+    FROM (SELECT l.item_id, l.quantity
+            FROM inv.job_lines l JOIN inv.job_sheets s ON s.id = l.sheet_id
+           WHERE s.job_id = p_job.id
+             AND s.revision >= (SELECT pg_catalog.max(s2.revision) FROM inv.job_sheets s2, built b
+                                 WHERE s2.job_id = p_job.id AND s2.action_id < b.id)
+          UNION ALL
+          SELECT g.item_id, -pg_catalog.sum(g.quantity)
+            FROM inv.ledger g LEFT JOIN inv.ledger o ON o.id = g.reverses_id
+           WHERE g.job_id = p_job.id
+             AND NOT EXISTS (SELECT FROM inv.reasons r
+                              WHERE r.id = coalesce(o.reason_id, g.reason_id) AND r.entry = 'swap')
+           GROUP BY g.item_id) x
+   GROUP BY x.item_id
 $$;

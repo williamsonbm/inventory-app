@@ -10,10 +10,13 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const { freshDatabase, urlFor, as, APP, firstUser, call, logRows, refused, contents, goLive, figure, reasonId } = require('./support/database.js');
 const { withAdmin, get, post } = require('./support/app.js');
 const { openDatabase } = require('../src/db/database.js');
+const { migrate } = require('../src/db/migrate.js');
 const { readItemJobs } = require('../src/inventory/item-jobs.js');
 
 // A database with Ann, a supplier, a plate and two hangers in the catalog;
@@ -1950,25 +1953,28 @@ test('a swap is refused beyond what the job consumed of the planned plate, for a
   await swap(ctx, plate, used, 30);
 });
 
-test('after a swap, a revised sheet consumes only beyond what is settled, Shipped consumes no plate again, and a swap back undoes it (#106, Q27, J321)', async () => {
+test('after a swap, a revised sheet consumes only beyond what is settled, counting the swap as the planned plate consumed, as a sheet committed again does; Shipped consumes no plate again, and a swap back undoes it (#106, Q27, J321, J325)', async () => {
   const ctx = await withBuiltJob();
   const { db, plate, used } = ctx;
   const onHand = async () => { const f = await figure(db, 'on_hand'); return [f[plate.id], f[used.id]]; };
   await swap(ctx, plate, used, 40);
   assert.deepEqual(await onHand(), [110, 960]);
+  const settled = await as(db, APP, async (app) => (await app.query(
+    `SELECT pg_catalog.jsonb_object_agg(t.item_id, t.quantity) AS s FROM inv.jobs j, inv.job_settled(j) t WHERE j.number = '33864R'`)).rows[0].s);
+  assert.deepEqual(settled, { [plate.id]: 930 }, 'what is settled, as the check before a commit shows it, counts the swap as MT20 3x4 consumed');
 
   await commit(ctx, [[plate, 930], [used, 50]], { version: (await onBoard(db, '33864R')).version });
-  assert.deepEqual(await onHand(), [110, 950], 'the sheet now plans 50 of MT20 4x6; 40 were swapped in, so 10 more');
+  assert.deepEqual(await onHand(), [110, 910], 'the sheet now plans 50 of MT20 4x6; the swap counts as MT20 3x4 consumed, so all 50, as when the job is cancelled and this sheet committed again (J325)');
   await commit(ctx, [[plate, 950], [used, 50]], { version: (await onBoard(db, '33864R')).version });
-  assert.deepEqual(await onHand(), [90, 950], '20 more of MT20 3x4: the swap does not lower what is settled');
+  assert.deepEqual(await onHand(), [90, 910], '20 more of MT20 3x4: the swap does not lower what is settled');
 
-  const err = await refused(swap(ctx, used, plate, 51), 'IV422', 'more back than the job consumed of MT20 4x6: 40 swapped in, 10 by the sheet');
-  assert.equal(err.message, 'Job 33864R consumed 50 of MT20 4x6, so at most 50 can be swapped.');
+  const err = await refused(swap(ctx, used, plate, 91), 'IV422', 'more back than the job consumed of MT20 4x6: 40 swapped in, 50 by the sheet');
+  assert.equal(err.message, 'Job 33864R consumed 90 of MT20 4x6, so at most 90 can be swapped.');
   await swap(ctx, used, plate, 40);
-  assert.deepEqual(await onHand(), [50, 990], 'a swap back moves the 40 again');
+  assert.deepEqual(await onHand(), [50, 950], 'a swap back moves the 40 again');
 
   await mark(ctx, 'shipped', ['33864R']);
-  assert.deepEqual(await onHand(), [50, 990], 'Shipped consumes no plate');
+  assert.deepEqual(await onHand(), [50, 950], 'Shipped consumes no plate');
 });
 
 test('Un-build after swaps gives back every plate the job consumed, and drops the swaps: Built again consumes the sheet as planned (#106, J321)', async () => {
@@ -2116,4 +2122,40 @@ test('the reason Substitution is for a swap only: a correction with it is refuse
   assert.equal(err.message, '"Substitution" is set by a swap on a job. Use Substitute… on the job\'s Plates tab.');
   const retire = await refused(call(db, 'retire_reason', ann.id, crypto.randomUUID(), substitution, 1), 'IV422', 'a built-in reason');
   assert.equal(retire.message, 'The app relies on "Substitution", so it cannot be retired.');
+});
+
+test('a job\'s build row with a reason other than Substitution is refused, whatever writes it (#106, PR #155 review F4)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, ann, plate, used } = ctx;
+  await swap(ctx, plate, used, 40);
+  const other = await call(db, 'add_reason', ann.id, crypto.randomUUID(), 'Found on site');
+  await as(db, null, async (owner) => {
+    const insert = (reason) => owner.query(`
+      INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, job_id, reason_id)
+      SELECT item_id, quantity, kind, effective_at, action_id, job_id, $1 FROM inv.ledger
+       WHERE kind = 'build' AND reason_id IS NOT NULL AND quantity > 0`, [reason]);
+    const err = await refused(insert(other.id), '23514', 'the owner\'s own insert');
+    assert.equal(err.message, 'A job\'s build row with a reason is a swap, so its reason is Substitution.');
+    await owner.query('BEGIN');
+    await insert(await reasonId(db, 'Substitution'));
+    await owner.query('ROLLBACK');
+  });
+});
+
+test('migration 021 stops with a clear message, and changes nothing, on a database where a person already added a reason "Substitution" (#106)', async () => {
+  const db = await freshDatabase({ migrated: false });
+  const dir = path.join(__dirname, '..', 'migrations');
+  await as(db, null, async (owner) => {
+    await owner.query('CREATE SCHEMA inv; CREATE TABLE inv.schema_migrations (name text PRIMARY KEY)');
+    for (const file of fs.readdirSync(dir).filter((f) => /^\d{3}-/.test(f) && f < '021').sort()) {
+      await owner.query(fs.readFileSync(path.join(dir, file), 'utf8'));
+      await owner.query('INSERT INTO inv.schema_migrations (name) VALUES ($1)', [file]);
+    }
+  });
+  const ann = await firstUser(db);
+  await call(db, 'add_reason', ann.id, crypto.randomUUID(), 'substitution');
+  const before = await contents(db);
+  await assert.rejects(migrate(urlFor(db)), { message: 'migration 021-plate-swaps.sql failed, nothing from it was applied: '
+    + 'A reason "substitution" is already in the app; 021 adds the built-in reason Substitution. Rename that reason in the database (its rows keep it), then run 021 again.' });
+  assert.deepEqual(await contents(db), before, 'nothing from 021');
 });
