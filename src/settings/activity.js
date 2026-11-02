@@ -2,7 +2,7 @@
 // at a time. Filters by person, by date range, by action and by family.
 //
 // A row's family (story 56) is its item's, or its PO lines', or the items its
-// ledger rows hold (a receipt, correction, trim or reversal); lumber lengths
+// ledger rows hold (a receipt, correction, trim, return or reversal); lumber lengths
 // and grade redirects are Lumber's, LVL depth thresholds LVL's. A row with no
 // family (a person, a supplier, a reason, the catalog import) shows only under
 // All (Q66). The family list rides along for the page's family bar.
@@ -52,7 +52,8 @@ async function readActivity(database, { person, action, family, from, to, before
                THEN EXISTS (SELECT FROM inv.families f WHERE f.code = $7 AND f.name = l.new_value ->> 'name')
              WHEN l.target_table = 'counts'
                THEN EXISTS (SELECT FROM inv.counts c WHERE c.id = l.target_id AND c.family = $7)
-             WHEN l.target_table = 'jobs'
+             -- A return is its item's, on the job's sheet or not (J331): its ledger row's, below.
+             WHEN l.target_table = 'jobs' AND l.action <> 'record return'
                THEN EXISTS (SELECT FROM inv.job_sheets js JOIN inv.job_lines jl ON jl.sheet_id = js.id
                               JOIN inv.items i ON i.id = jl.item_id
                              WHERE js.job_id = l.target_id AND i.family = $7)
@@ -150,7 +151,7 @@ const timed = (row) => (row.timed
   ? `; timed ${row.timed.before ? 'before' : 'after'} the count of ${officeTime.format(new Date(row.timed.counted_at))}` : '');
 
 // The entry a reversal undoes, by the action that wrote it.
-const ENTRY_NAMES = { receive: 'the receipt', correct: 'the correction', trim: 'the trim' };
+const ENTRY_NAMES = { receive: 'the receipt', correct: 'the correction', trim: 'the trim', 'record return': 'the return' };
 
 // What a receipt brought, line by line, with the PO line each went on and
 // how it came, then its Bill of Lading and any pack size it put on file

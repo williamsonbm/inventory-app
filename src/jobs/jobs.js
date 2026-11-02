@@ -577,7 +577,8 @@ function listJobs(database) {
 // (as inv.set_delivery_date allows), its version for that; its current
 // sheet's lines, each an item's name without the length (J105), in the
 // Planner's order; and its History, newest first: who did what, when, and
-// the change in the Activity Log's words.
+// the change in the Activity Log's words, a Reverse of one of its returns
+// included (PR #156 review F1).
 async function jobView(database, number) {
   const [job] = await database.read(`
     SELECT j.id, j.number, j.version, j.delivery_date::text AS delivery_date, j.delivery_date_edited,
@@ -603,9 +604,11 @@ async function jobView(database, number) {
   // back and is live in Inventory; one with a length (LVL) once per product
   // and depth, its length typed (Q11).
   const [history, swapped, plates, returnable] = await Promise.all([database.read(`
-    SELECT l.action, l.at, u.name AS by, l.old_value, l.new_value
+    SELECT l.action, l.target_table, l.at, u.name AS by, l.old_value, l.new_value
       FROM inv.activity_log l JOIN inv.users u ON u.id = l.actor_id
-     WHERE l.target_table = 'jobs' AND l.target_id = $1 ORDER BY l.id DESC`, [id]),
+     WHERE (l.target_table = 'jobs' AND l.target_id = $1)
+        OR l.id IN (SELECT v.action_id FROM inv.ledger v WHERE v.job_id = $1)
+     ORDER BY l.id DESC`, [id]),
     database.read(`
     SELECT p.item_id::int AS planned_id, inv.item_name(pi) AS planned, u.item_id::int AS used_id, inv.item_name(ui) AS used,
            p.quantity::int AS quantity
@@ -626,7 +629,7 @@ async function jobView(database, number) {
      GROUP BY f.name, f.code, inv.item_name(i), CASE WHEN i.length_ft IS NULL THEN i.id END
      ORDER BY pg_catalog.array_position($1::text[], f.code), 3`, [FAMILY_ORDER])]);
   return { status: 200, body: { ok: true, job: shown, lines, swaps: netSwaps(swapped), plates, returnable,
-    history: history.map((h) => ({ action: h.action, at: h.at, by: h.by, change: describeChange(h.action, 'jobs', h.old_value, h.new_value) })) } };
+    history: history.map((h) => ({ action: h.action, at: h.at, by: h.by, change: describeChange(h.action, h.target_table, h.old_value, h.new_value) })) } };
 }
 
 // A job's swaps (J320) as each pair of plates nets out: a swap back

@@ -10,7 +10,7 @@
 -- return out, and a new function. No existing row changes meaning: no row
 -- has the new kind, so every row passes both the old and the new rules, and
 -- every job gives back as before.
--- Recovery: before any return is saved, rerun 012's ledger_job_check, 011's
+-- Recovery: before any return is saved, rerun 021's ledger_job_check, 011's
 -- ledger_kind_check, 011's inv.reverse_entry and 012's
 -- inv.job_to_give_back (both as CREATE OR REPLACE); drop inv.record_return
 -- and the check_return_family and check_unship_return triggers and
@@ -97,8 +97,12 @@ BEGIN
     RAISE EXCEPTION 'Pick the item from the catalog.' USING ERRCODE = 'IV400';
   ELSIF p_length_ft IS NOT NULL AND v_item.length_ft IS NULL THEN
     RAISE EXCEPTION 'Only LVL is returned at a length.' USING ERRCODE = 'IV400';
-  ELSIF p_length_ft IS NOT NULL AND NOT inv.is_whole_above_zero(pg_catalog.to_jsonb(p_length_ft)) THEN
+  ELSIF v_item.family = 'lvl' AND NOT inv.is_whole_above_zero(pg_catalog.to_jsonb(p_length_ft)) THEN
     RAISE EXCEPTION 'Type the length returned in whole feet, above 0.' USING ERRCODE = 'IV400';
+  ELSIF NOT v_item.active THEN
+    -- Refused before a new length is added for it (PR #156 review F3).
+    -- An item found at the new length is checked below.
+    RAISE EXCEPTION '% is retired. Un-retire it before you record the return.', inv.item_label(v_item) USING ERRCODE = 'IV422';
   END IF;
   -- Returned LVL is entered at its actual length (Q11): the same product and
   -- depth at p_length_ft. A length the catalog lacks is added as Non-Stock
@@ -158,9 +162,9 @@ CREATE TRIGGER check_unship_return BEFORE UPDATE OF status ON inv.jobs
 
 -- 011's inv.reverse_entry, now reversing a return too (Q55, J332): its
 -- reversal carries the job, as Un-ship's do (012), so the job reads the
--- return as undone. A build or ship row, undone from its job, is still
--- refused here; 011's and
--- 004's comments stand.
+-- return as undone, and moves the job's version, so a screen that showed
+-- the return standing is stale. A build or ship row, undone from its job, is
+-- still refused here; 011's and 004's comments stand.
 CREATE OR REPLACE FUNCTION inv.reverse_entry(p_log_id bigint, p_id bigint, p_note text) RETURNS bigint
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp
@@ -178,8 +182,9 @@ BEGIN
   IF o.kind = 'reversal' THEN
     RAISE EXCEPTION 'A reversal cannot be reversed. Enter the original again instead.' USING ERRCODE = 'IV422';
   ELSIF o.kind IN ('build', 'ship') THEN
-    -- Its reversal would carry no job (ledger_job_check), so the job would
-    -- still read the pieces as consumed: on hand back up, committed not.
+    -- The job's Un-build and Un-ship own its build and ship rows: they give
+    -- back what the job consumed and move its status. Reversed here, the
+    -- pieces would be back on hand while the job still reads built or shipped.
     RAISE EXCEPTION 'A job''s Built or Shipped cannot be reversed here.' USING ERRCODE = 'IV422';
   END IF;
   FOR g IN SELECT x.* FROM inv.ledger x
@@ -196,6 +201,8 @@ BEGIN
     -- before is stale (S41, owner Q76).
     UPDATE inv.purchase_orders SET version = version + 1
      WHERE id = (SELECT po_id FROM inv.po_lines WHERE id = g.po_line_id);
+    -- A return's job, likewise (PR #156 review F1).
+    UPDATE inv.jobs SET version = version + 1 WHERE id = g.job_id;
     v_first := coalesce(v_first, v_id);
   END LOOP;
   RETURN v_first;
