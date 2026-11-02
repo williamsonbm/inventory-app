@@ -23,7 +23,9 @@
   story 4's counting half). Start a count of one family, monthly or a spot
   check: the start shows the family's PO lines still to arrive, so a
   delivery already in the yard is received first (story 60; shown only,
-  never a gate: owner, Q105). Starting sets the count's moment (story 59,
+  never a gate: owner, Q105), and its jobs not yet marked built (shipped,
+  for hangers and EWP), so a job already done is marked first (#105, Q25,
+  J307; shown only, J308). Starting sets the count's moment (story 59,
   ADR 0002) and opens its sheet: every item of the family in use, to print
   with no time box (story 61) and to fill in, packs × pack size + loose, a
   line per pack size (stories 62–64, S74). A row left blank is not counted;
@@ -79,6 +81,7 @@
       </div>
       <p class="sub">The count is true as of the moment you start it, so start it when you are ready to count. A monthly count closes last month; you can change that on the sheet. A spot check prints the whole family too: count only the rows you need, and leave the rest blank.</p>
       <div id="open-pos"></div>
+      <div id="open-jobs"></div>
     </form>
   </section>
 
@@ -151,7 +154,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, getAll, say, itemLabel, unitShort, showTime, monthName, countKind } = AppHeader;
+  const { send, getAll, say, itemLabel, unitShort, showTime, showDay, monthName, countKind } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -202,13 +205,15 @@
     el('start-pick').hidden = !!f && !open;
     el('start-pick').textContent = open ? 'Finish or close the sheet below to start another count.'
       : 'Pick a family above to count it.';
-    if (!f) return;
+    if (!f || open) return;  // hidden while a sheet is open; painted again when it closes
     el('start-btn').textContent = 'Start ' + f.name + ' count and open the sheet';
     el('start-btn').disabled = !f.live;
+    el('open-jobs').innerHTML = '';
     if (!f.live) {
       el('open-pos').innerHTML = '<p class="sub">' + esc(f.name) + ' is not live in Inventory yet, so it cannot be counted until the cutover.</p>';
       return;
     }
+    paintJobs(f);
     const due = [];
     for (const po of pos) {
       po.lines.forEach((l, n) => {
@@ -223,6 +228,20 @@
       ? '<p><b>Before you count:</b> these ' + esc(f.name) + ' PO lines are still to arrive. If any of it is already in the yard, ' +
         '<a href="/inventory/receive">receive it</a> first, so the count and the receipt agree.</p><ul>' + due.join('') + '</ul>'
       : '<p class="sub">No ' + esc(f.name) + ' PO lines are still to arrive.</p>';
+  }
+
+  // The family's jobs not yet marked built, or shipped (#105), as advice
+  // too. A reply for a family no longer shown is dropped.
+  async function paintJobs(f) {
+    const [body] = (await getAll(['/api/counts/jobs?' + new URLSearchParams({ family: f.code })])) ?? [];
+    if (!body || current !== f.code) return;
+    const done = esc(body.consumed_when), mark = done[0].toUpperCase() + done.slice(1);
+    el('open-jobs').innerHTML = body.jobs.length
+      ? '<p><b>Before you count:</b> these ' + esc(f.name) + ' jobs are not yet marked ' + done + '. If any is already ' + done +
+        ', mark it ' + mark + ' in Jobs first, so the count and the job agree.</p><ul>' +
+        body.jobs.map((j) => '<li><a href="' + esc('/jobs?' + new URLSearchParams({ job: j.number })) + '">Job ' + esc(j.number) + '</a>' +
+          (j.name ? ' · ' + esc(j.name) : '') + ' · delivery ' + esc(showDay(j.delivery_date)) + '</li>').join('') + '</ul>'
+      : '<p class="sub">No ' + esc(f.name) + ' jobs are waiting to be marked ' + done + '.</p>';
   }
 
   el('start-form').addEventListener('submit', async (e) => {

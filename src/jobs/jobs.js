@@ -612,4 +612,23 @@ async function setDeliveryDate(database, person, { key, number, version, deliver
   return { status: 200, body: { ok: true, job } };
 }
 
-module.exports = { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate };
+// The jobs a count of `family` lists before it starts (#105, story 51, Q25):
+// each job with lines of that family that Shipped would still consume, as
+// inv.job_to_consume says and src/inventory/item-jobs.js lists them, so a
+// built job lists only under the families consumed at Shipped (J307) and a
+// family not live in Inventory lists none. `consumed_when` is the step
+// that consumes the family, built or shipped. Returns { status, body }.
+async function jobsBeforeCount(database, family) {
+  const [found] = await database.read('SELECT consumed_when FROM inv.families WHERE code = $1', [family ?? '']);
+  if (!found) return { status: 400, body: { ok: false, error: 'Pick a family to count.' } };
+  const jobs = await database.read(`
+    SELECT j.number, j.name, j.delivery_date::text AS delivery_date
+      FROM inv.jobs j
+     WHERE j.status IN ('committed', 'built')
+       AND EXISTS (SELECT 1 FROM inv.job_to_consume(j, 'shipped') c JOIN inv.items i ON i.id = c.item_id
+                    WHERE c.live AND i.family = $1)
+     ORDER BY j.delivery_date NULLS LAST, j.number`, [family]);
+  return { status: 200, body: { ok: true, consumed_when: found.consumed_when, jobs } };
+}
+
+module.exports = { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, jobsBeforeCount };
