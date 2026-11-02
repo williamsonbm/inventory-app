@@ -25,7 +25,7 @@ const { planLvl } = require('../lvl/planLvl.js');
 const { extractDepth } = require('../ewp/extractDepth.js');
 const { isCsvFile } = require('../planner/server.js');
 const { esc, fmtInt, fmtNum, ftLabel: feet, cutInstruction } = require('../planner/planner-ui.js');
-const { readInventory, itemsByKey, catalogFlag, PLAN_OPTIONS } = require('../inventory/planner-inventory.js');
+const { readInventory, itemsByKey, catalogFlag, handledSheets, PLAN_OPTIONS } = require('../inventory/planner-inventory.js');
 const { FAMILY_ORDER } = require('../inventory/catalog.js');
 const { OFFICE_TIME_ZONE, describeChange } = require('../settings/activity.js');
 
@@ -201,14 +201,26 @@ function planRows(plan) {
   return [...rows.values()];
 }
 
+// Each family's catalog under its line keys (catalogKeys), read once for
+// every sheet of a batch. One family after the other: each read holds two of
+// the pool's three connections.
+async function readCatalogKeys(database) {
+  const behindByFamily = {};
+  for (const family of Object.keys(FAMILIES)) {
+    behindByFamily[family] = catalogKeys(family, (await readInventory(database, family)).items);
+  }
+  return behindByFamily;
+}
+
 // The dropped file read and matched to the catalog: { refusal } for a file
 // that cannot be committed whatever is fixed, else { sheet, rows, plan }.
 // rows end with the lumber lines the plan cannot place, flagged and with no
 // item. A job already in the app keeps the cut plan saved with it while
 // the sheet's lumber lines are the same, never planned again (S32, J138):
 // its lumber lines are that plan's boards, so the same sheet is found
-// unchanged after the buying options change (S20, S22).
-async function matchSheet(database, file) {
+// unchanged after the buying options change (S20, S22). `behindByFamily`,
+// the catalog as readCatalogKeys reads it, when the caller has read it.
+async function matchSheet(database, file, behindByFamily) {
   if (!isCsvFile(file)) return { refusal: { status: 400, body: { ok: false, error: 'The sheet must carry a name and its text.' } } };
   const sheet = await readSheet(file.text, database);
   if (sheet.error) return { refusal: { status: 400, body: { ok: false, error: sheet.error } } };
@@ -216,11 +228,7 @@ async function matchSheet(database, file) {
   if (!sheet.lines.length && !sheet.unplaced.length) {
     return { refusal: { status: 400, body: { ok: false, error: `Job ${number} has no lines to commit.` } } };
   }
-  // One family after the other: each read holds two of the pool's three connections.
-  const behindByFamily = {};
-  for (const family of Object.keys(FAMILIES)) {
-    behindByFamily[family] = catalogKeys(family, (await readInventory(database, family)).items);
-  }
+  behindByFamily ??= await readCatalogKeys(database);
   const found = sheet.lumber && await currentPlan(database, number, sheet.lumber.demand);
   const saved = found?.same_lines ? found : null;
   const { rows, several } = matchLines(saved ? sheet.lines.filter((l) => l.family !== 'lumber') : sheet.lines, behindByFamily);
@@ -352,6 +360,12 @@ function refusalText(number, flagged) {
   return `Job ${number} was not committed: ${why.join('; ')}.`;
 }
 
+// The refusal of a sheet with flagged lines (J8): each line with what fixes it.
+function flagRefusal(sheet, rows) {
+  const flagged = rows.filter((r) => r.flag).map(({ item_id, key, ...line }) => line);
+  return { status: 422, body: { ok: false, error: refusalText(sheet.meta.job_number, flagged), lines: flagged } };
+}
+
 // Commits the job on the dropped sheet as `person`, or, with `deduct`,
 // commits it and marks it shipped in one save (Deduct directly, story 19);
 // `timing` answers "before or after the count?"; `version` and `keep_date`
@@ -360,10 +374,8 @@ function refusalText(number, flagged) {
 async function commitSheet(database, person, { key, file, timing = null, version, keep_date } = {}, { deduct = false } = {}) {
   const { refusal, sheet, rows, plan } = await matchSheet(database, file);
   if (refusal) return refusal;
-  const number = sheet.meta.job_number;
-  const flagged = rows.filter((r) => r.flag).map(({ item_id, key, ...line }) => line);
-  const n = flagged.length;
-  const refused = { status: 422, body: { ok: false, error: refusalText(number, flagged), lines: flagged } };
+  const refused = flagRefusal(sheet, rows);
+  const n = refused.body.lines.length;
   // A line not in the catalog was never committed; a retired line may have
   // been, so the database answers first: a retry answers as the commit it
   // repeats, the same sheet again is unchanged (S20, S22), and a different
@@ -377,6 +389,50 @@ async function commitSheet(database, person, { key, file, timing = null, version
     if (n && err.code === 'IV422' && err.detail === 'inactive items') return refused;
     throw err;
   }
+}
+
+// Commits the jobs on many dropped sheets as `person` in one save (stories
+// 3–5): a sheet the server refuses, or a line not in the catalog, saves
+// none, and the refusal names its job (S21, J298). A revised sheet commits
+// on its own (inv.commit_jobs). Returns { status, body }.
+async function commitSheets(database, person, { key, files } = {}) {
+  if (!Array.isArray(files) || files.length < 1 || files.length > 50) {
+    return { status: 400, body: { ok: false, error: 'Pick 1 to 50 sheets to commit.' } };
+  }
+  const catalog = await readCatalogKeys(database);
+  const jobs = [];
+  // A job number once per batch, compared as the database compares it
+  // (inv.tidy, upper): a second sheet would read as a revision of the first.
+  const seen = new Map();
+  for (const file of files) {
+    const { refusal, sheet, rows, plan } = await matchSheet(database, file, catalog);
+    if (refusal) return refusal;
+    const number = String(sheet.meta.job_number).trim().toUpperCase();
+    if (seen.has(number)) {
+      return { status: 422, body: { ok: false, error: `Job ${seen.get(number)} is on more than one sheet: remove all but one.` } };
+    }
+    seen.set(number, sheet.meta.job_number);
+    if (rows.some((r) => !r.item_id)) return flagRefusal(sheet, rows);
+    jobs.push(jobPayload(sheet, rows, plan));
+  }
+  return { status: 200, body: { ok: true, ...await database.save('commit_jobs', [person.id, key, JSON.stringify(jobs)]) } };
+}
+
+// The Planner's "Already handled" (story 49, J299), read through the
+// Planner's login: each dropped sheet whose job is already committed, built
+// or shipped, with who and when, and whether the sheet differs from the
+// job's current one, as the check before a commit finds it.
+async function alreadyHandled(database, files) {
+  const handled = await handledSheets(database, files);
+  const catalog = handled.length ? await readCatalogKeys(database) : null;
+  const jobs = [];
+  for (const { file, job } of handled) {
+    const { refusal, sheet, rows, plan } = await matchSheet(database, file, catalog);
+    const [{ same }] = refusal ? [{ same: false }]
+      : await database.read('SELECT inv.is_current_sheet($1) AS same', [jobPayload(sheet, rows, plan)]);
+    jobs.push({ file: file.name, number: job.number, name: job.name, status: job.status, handled: job.handled, differs: !same });
+  }
+  return { status: 200, body: { ok: true, jobs } };
 }
 
 // A date as the office writes it: 11/3/2026.
@@ -556,4 +612,4 @@ async function setDeliveryDate(database, person, { key, number, version, deliver
   return { status: 200, body: { ok: true, job } };
 }
 
-module.exports = { checkSheet, commitSheet, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate };
+module.exports = { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate };

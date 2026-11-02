@@ -23,7 +23,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes, readFamilies,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { checkSheet, commitSheet, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate } = require('./jobs/jobs.js');
+const { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -232,6 +232,11 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
     const { status, body } = await commitSheet(database, req.user, req.body);
     res.status(status).json(body);
   }));
+  // Many sheets in one save, from the Planner's "Commit these jobs…" (#103).
+  app.post('/api/jobs/commit-many', catchAsync(async (req, res) => {
+    const { status, body } = await commitSheets(database, req.user, req.body);
+    res.status(status).json(body);
+  }));
   // Built, Shipped and Deduct directly (#100), and what marking consumes.
   app.post('/api/jobs/deduct', catchAsync(async (req, res) => {
     const { status, body } = await commitSheet(database, req.user, req.body, { deduct: true });
@@ -296,6 +301,12 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
       res.status(status).json(body);
     }));
   }
+
+  // The Planner's "Already handled" (#103), through the Planner's login too.
+  app.post('/api/planner/already-handled', catchAsync(async (req, res) => {
+    const { status, body } = await alreadyHandled(plannerDatabase, req.body?.files);
+    res.status(status).json(body);
+  }));
 
   app.use(planner);
   // An API address nobody registered answers JSON, like every other refusal.

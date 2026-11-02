@@ -253,7 +253,7 @@ test('no login can insert, update, delete or empty any table (S62)', async () =>
 
 test('the app runs only its granted functions; the Planner runs only the calculation\'s; the backup login none', async () => {
   const db = await freshDatabase();
-  const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'approve_count', 'base_count', 'cancel_job', 'change_pack_size', 'change_password', 'close_po_line', 'commit_job', 'correct', 'correct_month_end', 'count_entries', 'count_found', 'count_json', 'count_review', 'deduct_directly', 'discard_count',
+  const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'approve_count', 'base_count', 'cancel_job', 'change_pack_size', 'change_password', 'close_po_line', 'commit_job', 'commit_jobs', 'correct', 'correct_month_end', 'count_entries', 'count_found', 'count_json', 'count_review', 'deduct_directly', 'discard_count',
     'edit_item', 'edit_po', 'enter_po', 'grant_admin', 'is_current_sheet', 'item_label', 'item_name', 'job_committed', 'job_handled', 'job_settled', 'job_to_consume', 'job_to_give_back', 'lumber_sizes', 'mark_built', 'mark_shipped', 'month_end_json', 'nothing_before', 'on_hand_at', 'po_json', 'po_line_number', 'reactivate_user', 'receive', 'received',
     'record_password_check', 'reject_count', 'remove_lumber_group', 'remove_user', 'rename_item', 'rename_supplier', 'rename_user', 'reopen_po_line', 'retire_item', 'retire_reason', 'reverse', 'revoke_admin',
     'save_count', 'set_count_approval_by_another', 'set_delivery_date', 'set_grade_redirect', 'set_lumber_lengths', 'set_lvl_depth_threshold', 'set_password', 'set_working_day_window',
@@ -268,16 +268,17 @@ test('the app runs only its granted functions; the Planner runs only the calcula
   assert.ok(rows.length > APP_FUNCTIONS.length, 'the sweep found the private functions too');
   assert.deepEqual(rows.filter((r) => r.app).map((r) => r.name), APP_FUNCTIONS);
   // The functions inv.item_figures calls, and the ones they call (#81, "The Planner login").
-  assert.deepEqual(rows.filter((r) => r.planner).map((r) => r.name), ['base_count', 'count_found', 'job_committed', 'on_hand_at', 'received']);
+  assert.deepEqual(rows.filter((r) => r.planner).map((r) => r.name), ['base_count', 'count_found', 'is_current_sheet', 'job_committed', 'jobs_handled', 'on_hand_at', 'received']);
   assert.deepEqual(rows.filter((r) => r.backup).map((r) => r.name), []);
 });
 
 // What a Planner run reads (#81, "The Planner login"): which families are
 // live, the catalog and its plate pack sizes, the lumber buying options, and
-// the one calculation with every table it reads. Nothing about people, POs
-// as documents, suppliers, reasons or settings.
-const PLANNER_READS = ['count_corrections', 'count_lines', 'count_reflected', 'counts', 'families', 'items', 'ledger',
-  'lumber_grade_redirects', 'lumber_purchasable_lengths', 'lvl_depth_thresholds', 'pack_sizes', 'po_lines'];
+// the one calculation with every table it reads, and the job tables, for
+// "Already handled" (#103). Nothing about people, POs as documents,
+// suppliers, reasons or settings.
+const PLANNER_READS = ['count_corrections', 'count_lines', 'count_reflected', 'counts', 'families', 'items', 'job_lines', 'job_sheets', 'jobs',
+  'ledger', 'lumber_cut_plans', 'lumber_grade_redirects', 'lumber_purchasable_lengths', 'lvl_depth_thresholds', 'pack_sizes', 'po_lines'];
 
 test('the backup login reads every table; the Planner login reads only what a Planner run reads', async () => {
   const db = await freshDatabase();
@@ -293,6 +294,12 @@ test('the backup login reads every table; the Planner login reads only what a Pl
   }
   assert.deepEqual(readable, PLANNER_READS);
   await as(db, 'inv_planner', (c) => c.query('SELECT * FROM inv.item_figures'));
+  // It reads the job tables and writes none of them (ADR 0001).
+  for (const sql of ["INSERT INTO inv.jobs (number, name) VALUES ('1', 'x')", "UPDATE inv.jobs SET name = 'x'", 'DELETE FROM inv.job_sheets',
+    "UPDATE inv.job_lines SET quantity = 1", 'DELETE FROM inv.lumber_cut_plans']) {
+    await as(db, 'inv_planner', (c) => c.query(sql).then(() => assert.fail(`inv_planner ran: ${sql}`),
+      (err) => assert.equal(err.code, '42501', `${sql}: ${err.message}`)));
+  }
 });
 
 test('every function pins its search_path, and no login owns anything or holds special rights', async () => {
