@@ -34,7 +34,7 @@
   The board sorts by any column, searches job number or name, filters by status and family; a job's row
   opens its job view below it: a tab per family, History, and its delivery date to edit (#102). A built
   job's Plates tab shows its swaps and takes a new one, Substitute… (#106, J319–J321). A shipped job
-  takes a return from the job site under its tabs, Return… (#107, J330, J331).
+  takes a return from the job site on its Hangers and LVL tabs, Return… (#107, J330, J342, J343).
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
   repo has no DOM harness. Reading the sheet, matching its lines, the refusals
@@ -204,16 +204,18 @@
 
   // One job's view (#102): its delivery date, to edit unless it is
   // cancelled (J103); a tab per family on the job (PlannerUI.jobTabs), and
-  // History, who did what and when (story 43).
+  // History, who did what and when (story 43). Substitute… is on the Plates
+  // tab; Return… on a tab with items to return, Hangers and LVL (J343).
   async function loadView(number) {
     const [body] = (await getAll(['/api/jobs/view?' + new URLSearchParams({ number })])) ?? [];
     if (body) opened = { tab: opened?.number === number ? opened.tab : null, number, view: body };
   }
 
   function viewHtml() {
-    const { job, history } = opened.view;
+    const { job, history, returnable } = opened.view;
     const { tabs, open } = jobTabs({ number: job.number, lines: opened.view.lines, swaps: opened.view.swaps }, families, family);
     const tab = tabs.some((t) => t.family === opened.tab) || opened.tab === 'history' ? opened.tab : open || 'history';
+    const returning = returnable.filter((i) => i.family === tab);
     const tabButton = (code, label) => '<button type="button" data-tab="' + code + '" aria-pressed="' + (code === tab) + '">' + esc(label) + '</button>';
     const body = renderBreakdown(tab === 'history'
       ? [{ heading: 'History — newest first', columns: [{ label: 'When (Eastern)' }, { label: 'Who' }, { label: 'Action' }, { label: 'Change' }],
@@ -225,7 +227,7 @@
         '<button type="button" class="ghost" id="save-date">Save date</button>' : '') + '</p>' +
       '<div class="seg" role="group" aria-label="Job view">' + tabs.map((t) => tabButton(t.family, t.label)).join('') + tabButton('history', 'History') + '</div>' +
       '<div style="margin-top:10px">' + body + (tab === 'plates' && job.can_swap ? swapHtml() : '') +
-      (job.can_return ? returnHtml() : '') + '</div></div>';
+      (returning.length ? returnHtml(returning) : '') + '</div></div>';
   }
 
   // One <option> of a form's select, selected when its id is the one `picked`.
@@ -246,15 +248,14 @@
       '<button type="button" id="swap-save">Save swap</button> <button type="button" class="ghost" id="swap-cancel">Cancel</button></p>';
   }
 
-  // Return… (J331): any active hanger or LVL that comes back, by family; an
-  // LVL is picked by product and depth and its actual length typed (Q11).
-  function returnHtml() {
+  // Return… (J342, J343): `items`, the job's items of the tab's family that
+  // come back; an LVL is picked by product and depth and its actual length
+  // typed (Q11).
+  function returnHtml(items) {
     const r = opened.ret;
     if (!r) return '<p><button type="button" class="ghost" id="return-open">Return…</button></p>';
-    const items = opened.view.returnable;
-    const groups = [...new Set(items.map((i) => i.family))].map((family) => '<optgroup label="' + esc(family) + '">' +
-      items.filter((i) => i.family === family).map((i) => option([i.id, i.label], r.item)).join('') + '</optgroup>');
-    return '<p>Returned from the job site: <select id="return-item" aria-label="Item returned"><option value="">Pick an item</option>' + groups.join('') +
+    return '<p>Returned from the job site: <select id="return-item" aria-label="Item returned"><option value="">Pick an item</option>' +
+      items.map((i) => option([i.id, i.label], r.item)).join('') +
       '</select> <input type="number" id="return-quantity" min="1" step="1" value="' + esc(r.quantity) + '" aria-label="Pieces returned"> pieces' +
       (returnByLength() ? ' at <input type="number" id="return-length" min="1" step="1" value="' + esc(r.length) + '" aria-label="Actual length in feet">′' : '') +
       ' <button type="button" id="return-save">Save return</button> <button type="button" class="ghost" id="return-cancel">Cancel</button></p>';
@@ -414,7 +415,7 @@
     const opening = e.target.closest('[data-open]');
     if (opening) toggleJob(opening.dataset.open);
     const tab = e.target.closest('[data-tab]');
-    if (tab) { opened.tab = tab.dataset.tab; paint(); }
+    if (tab) { opened.tab = tab.dataset.tab; opened.ret = null; paint(); }
     if (e.target.id === 'save-date') {
       if (el('date').validity.badInput) say('Type the whole date. To remove the date, clear the box.', 'bad');
       else saveDate({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version, delivery_date: el('date').value });

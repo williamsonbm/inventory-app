@@ -600,9 +600,10 @@ async function jobView(database, number) {
     .map(({ menu_key, ...line }) => line);
   // History, the swaps, the plates a swap may pick as used (J319): every
   // active one, the plate planned included, which the page leaves out; and
-  // what a return may pick (J331): every active item of a family that comes
-  // back and is live in Inventory; one with a length (LVL) once per product
-  // and depth, its length typed (Q11).
+  // what a return may pick (J342): each active item on the job's sheet of a
+  // family that comes back and is live in Inventory, with its family's code,
+  // for its tab (J343); one with a length (LVL) once per product and depth, its
+  // length typed (Q11), as inv.refuse_off_job takes it.
   const [history, swapped, plates, returnable] = await Promise.all([database.read(`
     SELECT l.action, l.target_table, l.at, u.name AS by, l.old_value, l.new_value
       FROM inv.activity_log l JOIN inv.users u ON u.id = l.actor_id
@@ -623,11 +624,12 @@ async function jobView(database, number) {
     SELECT i.id::int, inv.item_name(i) AS label FROM inv.items i
      WHERE i.family = 'plates' AND i.active ORDER BY 2`),
     !job.can_return ? [] : database.read(`
-    SELECT pg_catalog.min(i.id)::int AS id, f.name AS family, inv.item_name(i) AS label, pg_catalog.bool_or(i.length_ft IS NOT NULL) AS by_length
-      FROM inv.items i JOIN inv.families f ON f.code = i.family
-     WHERE f.returnable AND f.live AND i.active
-     GROUP BY f.name, f.code, inv.item_name(i), CASE WHEN i.length_ft IS NULL THEN i.id END
-     ORDER BY pg_catalog.array_position($1::text[], f.code), 3`, [FAMILY_ORDER])]);
+    SELECT pg_catalog.min(i.id)::int AS id, i.family, inv.item_name(i) AS label, pg_catalog.bool_or(i.length_ft IS NOT NULL) AS by_length
+      FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id JOIN inv.families f ON f.code = i.family
+     WHERE l.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = $1 ORDER BY s.revision DESC LIMIT 1)
+       AND f.returnable AND f.live AND i.active
+     GROUP BY i.family, inv.item_name(i), CASE WHEN i.length_ft IS NULL THEN i.id END
+     ORDER BY 3`, [id])]);
   return { status: 200, body: { ok: true, job: shown, lines, swaps: netSwaps(swapped), plates, returnable,
     history: history.map((h) => ({ action: h.action, at: h.at, by: h.by, change: describeChange(h.action, h.target_table, h.old_value, h.new_value) })) } };
 }

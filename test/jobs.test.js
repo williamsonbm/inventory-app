@@ -2200,9 +2200,9 @@ test('a return on a shipped job adds the pieces back to on hand, linked to the j
   assert.deepEqual(rows, [{ kind: 'ship', quantity: -30 }, { kind: 'return', quantity: 4 }], 'the shipped row stands; the return is its own row on the job');
 });
 
-test('a return is refused unless the job is shipped, on a stale screen, for a job not in the app, for plates and lumber, and for a count that is not whole pieces; a refusal saves nothing (#107, J330, Q7, Q48)', async () => {
+test('a return is refused unless the job is shipped, on a stale screen, for a job not in the app, for plates and lumber, for an item not on the job, and for a count that is not whole pieces; a refusal saves nothing (#107, J330, J342, Q7, Q48)', async () => {
   const ctx = await withShippedJob();
-  const { db, ann, plate, lus28 } = ctx;
+  const { db, ann, plate, lus28, hus } = ctx;
   const board = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 12 });
   await goLive(db, 'lumber');
   await commit(ctx, [[lus28, 5]], { number: '2P' });
@@ -2216,6 +2216,7 @@ test('a return is refused unless the job is shipped, on a stale screen, for a jo
     [board, 1, {}, 'IV422', /^2x4 .*12′ does not come back from a job site: it is used up on the job\.$/],
     [board, 1, { lengthFt: 12.5 }, 'IV422', /^2x4 .*12′ does not come back from a job site: it is used up on the job\.$/],
     [{ id: -1 }, 1, {}, 'IV400', 'Pick the item from the catalog.'],
+    [hus, 1, {}, 'IV422', 'HUS26 is not on job 33864R. Only an item on the job comes back from its job site.'],
     ...[0, -3, 1.5, null].map((n) => [lus28, n, {}, 'IV400', 'Type the pieces returned: a whole number above 0.']),
   ];
   for (const [item, quantity, opts, code, message] of cases) {
@@ -2229,10 +2230,15 @@ test('a return is refused unless the job is shipped, on a stale screen, for a jo
        SELECT $1, 1, 'return', now(), max(l.id), (SELECT id FROM inv.jobs WHERE number = '33864R') FROM inv.activity_log l`, [plate.id]),
       'IV422', 'the owner\'s own insert of a plates return');
     assert.equal(err.message, 'MT20 3x4 does not come back from a job site: it is used up on the job.');
+    const offJob = await refused(owner.query(
+      `INSERT INTO inv.ledger (item_id, quantity, kind, effective_at, action_id, job_id)
+       SELECT $1, 1, 'return', now(), max(l.id), (SELECT id FROM inv.jobs WHERE number = '33864R') FROM inv.activity_log l`, [hus.id]),
+      'IV422', 'the owner\'s own insert of a return of a hanger not on the job');
+    assert.equal(offJob.message, 'HUS26 is not on job 33864R. Only an item on the job comes back from its job site.');
   });
 });
 
-test('returned LVL is entered at its actual length: a length not in the catalog is added as Non-Stock; a length is for LVL only and LVL needs one; a retired item is refused, also at a new length (#107, Q11, Q21, J331, PR #156 review F2, F3)', async () => {
+test('returned LVL is entered at its actual length: a length not in the catalog is added as Non-Stock; only the product and depth of a job line; a length is for LVL only and LVL needs one; a retired item is refused, also at a new length (#107, Q11, Q21, J331, J342, PR #156 review F2, F3)', async () => {
   const ctx = await withShippedJob();
   const { db, ann, lus28 } = ctx;
   const lvl = (length_ft) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.0 LVL 1-3/4', size: '11-7/8', length_ft });
@@ -2253,24 +2259,28 @@ test('returned LVL is entered at its actual length: a length not in the catalog 
   assert.deepEqual((await returnTo(ctx, twenty, 1, { number: '41L', lengthFt: 14 })).returned,
     { item: '2.0 LVL 1-3/4 x 11-7/8 14′', quantity: 1 }, 'the length is in the catalog now');
 
+  const deeper = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.0 LVL 1-3/4', size: '14', length_ft: 20 });
   const before = await contents(db);
-  for (const [item, lengthFt, message] of [
-    [twenty, 0, 'Type the length returned in whole feet, above 0.'],
-    [twenty, 12.5, 'Type the length returned in whole feet, above 0.'],
-    [twenty, null, 'Type the length returned in whole feet, above 0.'],
-    [lus28, 8, 'Only LVL is returned at a length.'],
+  for (const [item, number, lengthFt, code, message] of [
+    [twenty, '41L', 0, 'IV400', 'Type the length returned in whole feet, above 0.'],
+    [twenty, '41L', 12.5, 'IV400', 'Type the length returned in whole feet, above 0.'],
+    [twenty, '41L', null, 'IV400', 'Type the length returned in whole feet, above 0.'],
+    [lus28, '33864R', 8, 'IV400', 'Only LVL is returned at a length.'],
+    [twenty, '33864R', 14, 'IV422', '2.0 LVL 1-3/4 x 11-7/8 is not on job 33864R. Only an item on the job comes back from its job site.'],
+    [deeper, '41L', 20, 'IV422', '2.0 LVL 1-3/4 x 14 is not on job 41L. Only an item on the job comes back from its job site.'],
+    [deeper, '41L', 15, 'IV422', '2.0 LVL 1-3/4 x 14 is not on job 41L. Only an item on the job comes back from its job site.'],
   ]) {
-    const err = await refused(returnTo(ctx, item, 1, { lengthFt }), 'IV400', `${item.sku ?? 'LVL'} at ${lengthFt}′`);
+    const err = await refused(returnTo(ctx, item, 1, { number, lengthFt }), code, `${item.sku ?? 'LVL'} on ${number} at ${lengthFt}′`);
     assert.equal(err.message, message);
   }
-  const old = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'hangers', { sku: 'HU210' });
-  await call(db, 'retire_item', ann.id, crypto.randomUUID(), old.id, old.version);
-  const retired = await refused(returnTo(ctx, old, 1), 'IV422', 'a retired hanger');
-  assert.equal(retired.message, 'HU210 is retired. Un-retire it before you record the return.');
-  const { version } = await as(db, APP, async (app) => (await app.query('SELECT version FROM inv.items WHERE id = $1', [twenty.id])).rows[0]);
-  await call(db, 'retire_item', ann.id, crypto.randomUUID(), twenty.id, version);
+  assert.deepEqual(await contents(db), before, 'no row, no log entry and no 15′ item added');
+  const version = async (item) => (await as(db, APP, async (app) => (await app.query('SELECT version FROM inv.items WHERE id = $1', [item.id])).rows[0])).version;
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), lus28.id, await version(lus28));
+  const retired = await refused(returnTo(ctx, lus28, 1), 'IV422', 'a retired hanger on the job');
+  assert.equal(retired.message, 'LUS28 is retired. Un-retire it before you record the return.');
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), twenty.id, await version(twenty));
   const items = (await contents(db)).items;
-  const retiredLvl = await refused(returnTo(ctx, twenty, 1, { lengthFt: 13 }), 'IV422', 'a retired LVL at a new length');
+  const retiredLvl = await refused(returnTo(ctx, twenty, 1, { number: '41L', lengthFt: 13 }), 'IV422', 'a retired LVL at a new length');
   assert.equal(retiredLvl.message, '2.0 LVL 1-3/4 x 11-7/8 20′ is retired. Un-retire it before you record the return.');
   const after = await contents(db);
   assert.deepEqual(after.items, items, 'no 13′ item added');
@@ -2296,14 +2306,17 @@ test('Un-ship is refused while the job has a return; reversed, the return gives 
   assert.equal((await figure(db, 'on_hand'))[lus28.id], 100, 'Un-ship gives back the 30 shipped, and only those');
 });
 
-test('the return route saves a return on a shipped job; the job view offers Return… only then, with every active hanger and LVL by product and depth, and shows the return and its reversal in its History; the item\'s History offers Reverse on it; the Activity Log files it under its own family (#107, stories 43, 46, 56, J330–J332, PR #156 review F1, F5, F6)', async () => {
-  const ctx = await appWithCatalog();
-  const lvl = async (length_ft) => (await (await post(ctx.base, '/api/items/add',
-    { key: crypto.randomUUID(), family: 'lvl', identity: { product: '2.0 LVL 1-3/4', size: '11-7/8', length_ft } }, ctx.cookie)).json()).item;
-  const [twenty, twelve] = [await lvl(20), await lvl(12)];
+test('the return route saves a return on a shipped job; the job view offers Return… only then, with the job\'s active hangers and its LVL by product and depth, and shows the return and its reversal in its History; the item\'s History offers Reverse on it; the Activity Log files it under its own family (#107, stories 43, 46, 56, J330–J332, J342, PR #156 review F1, F5, F6)', async () => {
+  const ctx = await appWithCatalog({ plates: ['MT20 3x4'], hangers: ['LUS28', 'HUS26', 'TC26', 'HU210'] });
+  const lvl = async (size, length_ft) => (await (await post(ctx.base, '/api/items/add',
+    { key: crypto.randomUUID(), family: 'lvl', identity: { product: '2.1 RigidLam LVL 1-3/4', size, length_ft } }, ctx.cookie)).json()).item;
+  const twenty = await lvl('11-7/8', 20);
+  await lvl('11-7/8', 12);
+  await lvl('14', 20);
   await goLive(ctx.db, 'hangers');
   await goLive(ctx.db, 'lvl');
-  assert.equal((await commitFile(ctx)).status, 200);
+  const withLvl = SHEET + '\nRectangular EWP,,,,,,,\nLABEL,SIZE,QTY,LENGTH,,,,\n1BM1-4,2.1 RigidLam DF LVL 1-3/4 x 11-7/8,4,20-00-00,,,,';
+  assert.equal((await commitFile(ctx, withLvl)).status, 200);
   const view = async () => (await get(ctx.base, '/api/jobs/view?number=33864R', ctx.cookie)).json();
   const returnOver = (item, quantity, version, length_ft = null) => post(ctx.base, '/api/jobs/return',
     { key: crypto.randomUUID(), number: '33864R', version, item: item.id, quantity, length_ft, timing: null }, ctx.cookie);
@@ -2316,11 +2329,11 @@ test('the return route saves a return on a shipped job; the job view offers Retu
   assert.equal(shipped.job.can_return, true);
   const { HUS26, LUS28, TC26 } = ctx.items;
   assert.deepEqual(shipped.returnable, [
-    { id: HUS26.id, family: 'Hangers', label: 'HUS26', by_length: false },
-    { id: LUS28.id, family: 'Hangers', label: 'LUS28', by_length: false },
-    { id: TC26.id, family: 'Hangers', label: 'TC26', by_length: false },
-    { id: Math.min(twenty.id, twelve.id), family: 'LVL', label: '2.0 LVL 1-3/4 x 11-7/8', by_length: true },
-  ], 'hangers one by one; LVL once per product and depth; no plates, which are not live and never come back');
+    { id: twenty.id, family: 'lvl', label: '2.1 RigidLam LVL 1-3/4 x 11-7/8', by_length: true },
+    { id: HUS26.id, family: 'hangers', label: 'HUS26', by_length: false },
+    { id: LUS28.id, family: 'hangers', label: 'LUS28', by_length: false },
+    { id: TC26.id, family: 'hangers', label: 'TC26', by_length: false },
+  ], 'the job\'s hangers one by one; its LVL once per product and depth; no HU210 or 14″ LVL, which are not on the job, and LVL by the job line, not the 12′; no plates, which are not live and never come back');
 
   const res = await returnOver(LUS28, 2, 2);
   assert.equal(res.status, 200, await res.clone().text());
@@ -2329,7 +2342,7 @@ test('the return route saves a return on a shipped job; the job view offers Retu
   assert.equal(lvlRes.status, 200, await lvlRes.clone().text());
   const after = await view();
   assert.deepEqual(after.history.slice(0, 2).map((h) => [h.action, h.change]), [
-    ['record return', '1 of 2.0 LVL 1-3/4 x 11-7/8 9′ returned from the job site, added as Non-Stock'],
+    ['record return', '1 of 2.1 RigidLam LVL 1-3/4 x 11-7/8 9′ returned from the job site, added as Non-Stock'],
     ['record return', '2 of LUS28 returned from the job site'],
   ]);
   const refusal = await returnOver(LUS28, 1, 1);
@@ -2337,8 +2350,8 @@ test('the return route saves a return on a shipped job; the job view offers Retu
 
   const filed = async (family) => (await (await get(ctx.base, `/api/activity?family=${family}`, ctx.cookie)).json()).entries
     .filter((e) => e.action === 'record return').map((e) => e.change);
-  assert.deepEqual(await filed('lvl'), ['1 of 2.0 LVL 1-3/4 x 11-7/8 9′ returned from the job site, added as Non-Stock'],
-    'an LVL return on a job with no LVL line is LVL\'s');
+  assert.deepEqual(await filed('lvl'), ['1 of 2.1 RigidLam LVL 1-3/4 x 11-7/8 9′ returned from the job site, added as Non-Stock'],
+    'an LVL return is LVL\'s');
   assert.deepEqual(await filed('hangers'), ['2 of LUS28 returned from the job site']);
 
   const itemHistory = async () => (await (await get(ctx.base, `/api/items/history?id=${LUS28.id}`, ctx.cookie)).json()).entries;
@@ -2352,6 +2365,6 @@ test('the return route saves a return on a shipped job; the job view offers Retu
   assert.equal(undone.job.version, after.job.version + 1, 'the job\'s version moves');
   assert.deepEqual(undone.history.slice(0, 2).map((h) => [h.action, h.change]), [
     ['reverse', 'added: reversal of the return: LUS28 −2; note: wrong job'],
-    ['record return', '1 of 2.0 LVL 1-3/4 x 11-7/8 9′ returned from the job site, added as Non-Stock'],
+    ['record return', '1 of 2.1 RigidLam LVL 1-3/4 x 11-7/8 9′ returned from the job site, added as Non-Stock'],
   ], 'the job\'s History shows the return reversed');
 });

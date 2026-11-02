@@ -109,8 +109,10 @@ Material that comes back from the job site after a job shipped, recorded on the 
 *Return…*: N pieces go back on hand, linked to the job and shown in its History; the job's shipped
 record is not edited (#107, Q7). Only a shipped job takes one (J330). Only hangers, LVL and, from
 step 5, EWP come back; plates and lumber are used up on the job, and the database refuses them.
-Any active item of those families may come back, not only the job's lines; LVL is entered at its
-actual length, and a length the catalog lacks is added as Non-Stock (Q11, Q21, J331). A mistake is
+Only an item on the job comes back, and the database refuses any other (J342): a hanger on the job's
+sheet, or LVL of the same product and depth as a line, at its actual length; a length the catalog
+lacks is added as Non-Stock (Q11, Q21). *Return…* is on the job's Hangers and LVL tabs, with that
+tab's items (J343). A mistake is
 undone by Reverse in the item's History; Un-ship is refused until the job's returns are reversed
 (J332). A return for a job not in the app is a correction with the reason "Returned from job site"
 and the job number in its note (story 47).

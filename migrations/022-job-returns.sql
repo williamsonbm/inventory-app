@@ -1,22 +1,24 @@
 -- Step 4 (#107): a return from the job site on a shipped job. Source:
 -- docs/database-design.md Q7, Q11, Q29; spec #96, stories 43, 46, 47; owner
--- J330–J332. Every name is fully qualified (#28).
+-- J330–J332, J342. Every name is fully qualified (#28).
 --
 -- Reach: one new action, a new ledger kind 'return' linked to its job, the
 -- kind and job checks widened for it, a trigger refusing a return of a
 -- family that does not come back (plates, lumber), a trigger refusing a
--- shipped job with a return its way out of shipped, inv.reverse_entry
--- redefined to reverse a return, inv.job_to_give_back redefined to leave a
--- return out, and the functions inv.record_return and
--- inv.refuse_unreturnable. No existing row changes meaning: no row
--- has the new kind, so every row passes both the old and the new rules, and
--- every job gives back as before.
+-- return of an item not on its job, a trigger refusing a shipped job with a
+-- return its way out of shipped, inv.reverse_entry redefined to reverse a
+-- return, inv.job_to_give_back redefined to leave a return out, and the
+-- functions inv.record_return, inv.refuse_unreturnable and
+-- inv.refuse_off_job. No existing row changes meaning: no row has the new
+-- kind, so every row passes both the old and the new rules, and every job
+-- gives back as before.
 -- Recovery: before any return is saved, rerun 021's ledger_job_check, 011's
 -- ledger_kind_check, 011's inv.reverse_entry and 012's
--- inv.job_to_give_back (both as CREATE OR REPLACE); drop inv.record_return
--- and inv.refuse_unreturnable, and the check_return_family and
--- check_unship_return triggers and functions; delete the action. After one
--- is, its rows are what on hand reads; keep them.
+-- inv.job_to_give_back (both as CREATE OR REPLACE); drop inv.record_return,
+-- inv.refuse_unreturnable and inv.refuse_off_job, and the
+-- check_return_family, check_return_job and check_unship_return triggers
+-- and functions; delete the action. After one is, its rows are what on hand
+-- reads; keep them.
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('record return', false);
 
@@ -62,6 +64,39 @@ $$;
 CREATE TRIGGER check_return_family BEFORE INSERT ON inv.ledger
   FOR EACH ROW WHEN (NEW.kind = 'return') EXECUTE FUNCTION inv.check_return_family();
 
+-- Only an item on the job comes back from its job site (owner J342): an
+-- item on the job's current sheet, or LVL of the same product and depth as
+-- a line, at any length, a cut piece (Q11). inv.refuse_off_job holds it,
+-- called by the check_return_job trigger, whatever writes the row, and
+-- first by inv.record_return, before it adds a new length.
+CREATE FUNCTION inv.refuse_off_job(p_item inv.items, p_job inv.jobs) RETURNS void
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NOT EXISTS (SELECT FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id
+                  WHERE l.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = p_job.id ORDER BY s.revision DESC LIMIT 1)
+                    -- the line's item at p_item's length: the same item but for the length
+                    AND inv.same_item(pg_catalog.jsonb_populate_record(i, pg_catalog.jsonb_build_object('length_ft', p_item.length_ft)), p_item)) THEN
+    RAISE EXCEPTION '% is not on job %. Only an item on the job comes back from its job site.', inv.item_name(p_item), p_job.number
+      USING ERRCODE = 'IV422';
+  END IF;
+END
+$$;
+
+CREATE FUNCTION inv.check_return_job() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  PERFORM inv.refuse_off_job((SELECT i FROM inv.items i WHERE i.id = NEW.item_id), (SELECT j FROM inv.jobs j WHERE j.id = NEW.job_id));
+  RETURN NEW;
+END
+$$;
+
+CREATE TRIGGER check_return_job BEFORE INSERT ON inv.ledger
+  FOR EACH ROW WHEN (NEW.kind = 'return') EXECUTE FUNCTION inv.check_return_job();
+
 -- Jobs → the job → Return… (stories 43, 46): job p_number, as its screen
 -- showed it at p_version, got back p_quantity of item p_item_id from the job
 -- site. Saves one return row on the job at the save's moment or the one
@@ -106,6 +141,7 @@ BEGIN
     RAISE EXCEPTION 'Pick the item from the catalog.' USING ERRCODE = 'IV400';
   END IF;
   PERFORM inv.refuse_unreturnable(v_item);
+  PERFORM inv.refuse_off_job(v_item, v_job);
   IF p_length_ft IS NOT NULL AND v_item.length_ft IS NULL THEN
     RAISE EXCEPTION 'Only LVL is returned at a length.' USING ERRCODE = 'IV400';
   ELSIF v_item.length_ft IS NOT NULL AND NOT inv.is_whole_above_zero(pg_catalog.to_jsonb(p_length_ft)) THEN
