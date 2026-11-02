@@ -13,12 +13,12 @@
 -- new rules, and every job consumes and settles as before.
 -- Recovery: before any swap is saved, rerun 012's ledger_job_check, 004's
 -- reason check (as ledger_check4, dropping ledger_reason_check), 017's
--- inv.checked_reason, 011's inv.job_to_consume and 015's inv.job_settled,
--- drop inv.swap_plate and the check_build_reason trigger and function,
--- delete the reason and the action, then restore 017's
--- reasons_entry_check (entry IN ('trim', 'import', 'receive')). After one
--- is, its build rows are what on hand and the job's consumption read; keep
--- them.
+-- inv.checked_reason, 011's inv.job_to_consume and 015's inv.job_settled
+-- (both as CREATE OR REPLACE), drop inv.swap_plate and the
+-- check_build_reason trigger and function, delete the reason and the
+-- action, then restore 017's reasons_entry_check (entry IN ('trim',
+-- 'import', 'receive')). After one is, its build rows are what on hand and
+-- the job's consumption read; keep them.
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('swap plate', false);
 
