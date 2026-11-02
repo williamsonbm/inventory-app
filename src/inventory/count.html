@@ -235,7 +235,7 @@
   async function paintJobs(f) {
     const [body] = (await getAll(['/api/counts/jobs?' + new URLSearchParams({ family: f.code })])) ?? [];
     if (!body || current !== f.code) return;
-    const done = body.until, mark = done[0].toUpperCase() + done.slice(1);
+    const done = esc(body.consumed_when), mark = done[0].toUpperCase() + done.slice(1);
     el('open-jobs').innerHTML = body.jobs.length
       ? '<p><b>Before you count:</b> these ' + esc(f.name) + ' jobs are not yet marked ' + done + '. If any is already ' + done +
         ', mark it ' + mark + ' in Jobs first, so the count and the job agree.</p><ul>' +

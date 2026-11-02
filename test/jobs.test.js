@@ -1828,10 +1828,24 @@ test('before a plates count, the start lists each committed job with plates: num
   assert.equal((await commitFile(ctx, SHEET.replace('33864R', '33865R').replace(',930,MT20  3x4', ',,'))).status, 200);
   assert.equal((await commitFile(ctx, SHEET.replace('33864R', '33866R').replace('Smith Residence', 'Jones Barn'))).status, 200);
   await mark(ctx, 'built', ['33864R']);
+  // PR #153 review F4: a cancelled job; a job with no delivery date; a job
+  // whose newest revision has no plates.
+  const job = (number, edit = (t) => t) => edit(SHEET.replace('33864R', number));
+  assert.equal((await commitFile(ctx, job('33867R'))).status, 200);
+  const cancel = await post(ctx.base, '/api/jobs/undo', { key: crypto.randomUUID(), action: 'cancel', number: '33867R', version: 1 }, ctx.cookie);
+  assert.equal(cancel.status, 200, await cancel.clone().text());
+  assert.equal((await commitFile(ctx, job('33868R', (t) => t.replace('Delivery Date:,11/2/2026', 'Delivery Date:,')))).status, 200);
+  assert.equal((await commitFile(ctx, job('33869R'))).status, 200);
+  const revised = await commitFile(ctx, job('33869R', (t) => t.replace(',930,MT20  3x4', ',,')), crypto.randomUUID(), { version: 1 });
+  assert.equal(revised.status, 200, await revised.clone().text());
 
-  assert.deepEqual(await beforeCount(ctx, 'plates'), { ok: true, until: 'built',
-    jobs: [{ number: '33866R', name: 'Jones Barn', delivery_date: '2026-11-02' }] },
-  'a built job and a hangers-only job are left out');
+  assert.deepEqual(await beforeCount(ctx, 'plates'), { ok: true, consumed_when: 'built', jobs: [
+    { number: '33866R', name: 'Jones Barn', delivery_date: '2026-11-02' },
+    { number: '33868R', name: 'Smith Residence', delivery_date: null },
+  ] }, 'built, hangers-only, cancelled and revised-without-plates jobs are left out; no delivery date sorts last');
+
+  const res = await get(ctx.base, '/api/counts/jobs', ctx.cookie);
+  assert.deepEqual([res.status, (await res.json()).error], [400, 'Pick a family to count.'], 'no family');
 });
 
 test('before a hangers count, the start lists each job with hangers not yet shipped, built ones too, soonest delivery first; a family not live lists none (#105, J307, J4)', async () => {
@@ -1844,11 +1858,11 @@ test('before a hangers count, the start lists each job with hangers not yet ship
   await mark(ctx, 'built', ['33864R']);
   await mark(ctx, 'shipped', ['33866R']);
 
-  assert.deepEqual(await beforeCount(ctx, 'hangers'), { ok: true, until: 'shipped', jobs: [
+  assert.deepEqual(await beforeCount(ctx, 'hangers'), { ok: true, consumed_when: 'shipped', jobs: [
     { number: '33865R', name: 'Smith Residence', delivery_date: '2026-11-09' },
     { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-20' },
   ] });
-  assert.deepEqual(await beforeCount(ctx, 'plates'), { ok: true, until: 'built', jobs: [] }, 'plates are not live');
+  assert.deepEqual(await beforeCount(ctx, 'plates'), { ok: true, consumed_when: 'built', jobs: [] }, 'plates are not live');
 
   const res = await get(ctx.base, '/api/counts/jobs?family=nails', ctx.cookie);
   assert.deepEqual([res.status, (await res.json()).error], [400, 'Pick a family to count.']);

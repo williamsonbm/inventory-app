@@ -128,7 +128,11 @@
   // or built), the family bar's choice, the search, and the sort.
   const STATUSES = { open: { label: 'Open', has: ['committed', 'built'] }, shipped: { label: 'Shipped', has: ['shipped'] },
     cancelled: { label: 'Cancelled', has: ['cancelled'] }, all: { label: 'All', has: null } };
-  let status = 'open';
+  // /jobs?job=<number> (the count start's links, #105) opens that job, so
+  // the board shows every family and status and saves neither (PR #153
+  // review F1): a saved family or the Open filter would hide its row.
+  const asked = new URLSearchParams(location.search).get('job');
+  let status = asked ? 'all' : 'open';
   let family = 'all';
   const sort = { col: null, dir: 'asc' };
   // Status sorts in the job's lifecycle; a job with no delivery date sorts
@@ -165,7 +169,7 @@
     jobs = new Map(body.jobs.map((j) => [j.number, j]));
     if (!families.length) {
       families = body.families;
-      AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => { family = f; paint(); });
+      AppHeader.familyBar(families.map((f) => ({ code: f.code, label: f.name })), (f) => { family = f; paint(); }, asked && 'all');
     }
     for (const n of picked) if (!jobs.has(n) || !canMark.shipped(jobs.get(n))) picked.delete(n);
     if (opened) opened = jobs.has(opened.number) && view ? { ...opened, view, draft: undefined } : null;
@@ -593,12 +597,9 @@
   if (Array.isArray(sent) && sent.length) { sheets = sent; recheck(); }
 
   await loadBoard();
-  // /jobs?job=<number> opens that job below its row, when it is on the
-  // board (the count start's links, #105).
-  const asked = new URLSearchParams(location.search).get('job');
   if (asked && jobs.has(asked)) {
     await toggleJob(asked);
-    document.querySelector('[data-open="' + CSS.escape(asked) + '"]').scrollIntoView();
+    document.querySelector('[data-open="' + CSS.escape(asked) + '"]')?.scrollIntoView();
   }
 })();
 </script>

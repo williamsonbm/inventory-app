@@ -182,6 +182,15 @@ taken on July 1 closes June.
 _Avoid_: month-end count, end-of-month count — it happens at the start of the month.
 _Not_: month-end record — the count is the act; the record is what its approval keeps.
 
+**Jobs before a count**:
+The open jobs the count start lists for the family, so a job already done is marked before the
+count starts (Q25, #105). A family consumed at Built (plates, lumber, LVL) lists its jobs not yet
+marked built; a family consumed at Shipped (hangers, EWP) lists its jobs not yet marked shipped,
+built ones included, because Built consumes none of it (owner, J307, 2026-11-02). A family not
+live in Inventory lists none. Advice only, like the PO lines still to arrive: Start works either
+way (owner, J308).
+_Avoid_: "not yet built" for hangers or EWP — they wait for Shipped.
+
 **Month-end record**:
 An approved monthly count, kept as the record of the month it closes. A correction adds a
 revision; the original stays.
