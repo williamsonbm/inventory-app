@@ -2214,6 +2214,7 @@ test('a return is refused unless the job is shipped, on a stale screen, for a jo
     [lus28, 1, { number: 'NOPE', version: 1 }, 'IV400', 'Job NOPE is not in the app.'],
     [plate, 1, {}, 'IV422', 'MT20 3x4 does not come back from a job site: it is used up on the job.'],
     [board, 1, {}, 'IV422', /^2x4 .*12′ does not come back from a job site: it is used up on the job\.$/],
+    [board, 1, { lengthFt: 12.5 }, 'IV422', /^2x4 .*12′ does not come back from a job site: it is used up on the job\.$/],
     [{ id: -1 }, 1, {}, 'IV400', 'Pick the item from the catalog.'],
     ...[0, -3, 1.5, null].map((n) => [lus28, n, {}, 'IV400', 'Type the pieces returned: a whole number above 0.']),
   ];

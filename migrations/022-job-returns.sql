@@ -7,15 +7,16 @@
 -- family that does not come back (plates, lumber), a trigger refusing a
 -- shipped job with a return its way out of shipped, inv.reverse_entry
 -- redefined to reverse a return, inv.job_to_give_back redefined to leave a
--- return out, and a new function. No existing row changes meaning: no row
+-- return out, and the functions inv.record_return and
+-- inv.refuse_unreturnable. No existing row changes meaning: no row
 -- has the new kind, so every row passes both the old and the new rules, and
 -- every job gives back as before.
 -- Recovery: before any return is saved, rerun 021's ledger_job_check, 011's
 -- ledger_kind_check, 011's inv.reverse_entry and 012's
 -- inv.job_to_give_back (both as CREATE OR REPLACE); drop inv.record_return
--- and the check_return_family and check_unship_return triggers and
--- functions; delete the action. After one is, its rows are what on hand
--- reads; keep them.
+-- and inv.refuse_unreturnable, and the check_return_family and
+-- check_unship_return triggers and functions; delete the action. After one
+-- is, its rows are what on hand reads; keep them.
 
 INSERT INTO inv.actions (name, admin_only) VALUES ('record return', false);
 
@@ -33,19 +34,27 @@ ALTER TABLE inv.ledger ADD CONSTRAINT ledger_job_check
 
 -- Only hangers, EWP and LVL come back from a job site (Q7,
 -- inv.families.returnable): plates and lumber are used up on the job. A
--- check cannot read inv.families; this trigger holds it, whatever writes the
--- row.
+-- check cannot read inv.families; inv.refuse_unreturnable holds it, called
+-- by the check_return_family trigger, whatever writes the row, and first by
+-- inv.record_return, before it checks a length (lumber has one too).
+CREATE FUNCTION inv.refuse_unreturnable(p_item inv.items) RETURNS void
+LANGUAGE plpgsql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+BEGIN
+  IF NOT (SELECT f.returnable FROM inv.families f WHERE f.code = p_item.family) THEN
+    RAISE EXCEPTION '% does not come back from a job site: it is used up on the job.', inv.item_label(p_item)
+      USING ERRCODE = 'IV422';
+  END IF;
+END
+$$;
+
 CREATE FUNCTION inv.check_return_family() RETURNS trigger
 LANGUAGE plpgsql
 SET search_path = pg_catalog, pg_temp
 AS $$
-DECLARE
-  v_item inv.items := (SELECT i FROM inv.items i WHERE i.id = NEW.item_id);
 BEGIN
-  IF NOT (SELECT f.returnable FROM inv.families f WHERE f.code = v_item.family) THEN
-    RAISE EXCEPTION '% does not come back from a job site: it is used up on the job.', inv.item_label(v_item)
-      USING ERRCODE = 'IV422';
-  END IF;
+  PERFORM inv.refuse_unreturnable((SELECT i FROM inv.items i WHERE i.id = NEW.item_id));
   RETURN NEW;
 END
 $$;
@@ -95,9 +104,11 @@ BEGIN
   SELECT * INTO v_item FROM inv.items WHERE id = p_item_id;
   IF NOT FOUND THEN
     RAISE EXCEPTION 'Pick the item from the catalog.' USING ERRCODE = 'IV400';
-  ELSIF p_length_ft IS NOT NULL AND v_item.length_ft IS NULL THEN
+  END IF;
+  PERFORM inv.refuse_unreturnable(v_item);
+  IF p_length_ft IS NOT NULL AND v_item.length_ft IS NULL THEN
     RAISE EXCEPTION 'Only LVL is returned at a length.' USING ERRCODE = 'IV400';
-  ELSIF v_item.family = 'lvl' AND NOT inv.is_whole_above_zero(pg_catalog.to_jsonb(p_length_ft)) THEN
+  ELSIF v_item.length_ft IS NOT NULL AND NOT inv.is_whole_above_zero(pg_catalog.to_jsonb(p_length_ft)) THEN
     RAISE EXCEPTION 'Type the length returned in whole feet, above 0.' USING ERRCODE = 'IV400';
   ELSIF NOT v_item.active THEN
     -- Refused before a new length is added for it (PR #156 review F3).
