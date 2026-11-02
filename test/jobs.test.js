@@ -1812,3 +1812,44 @@ test('a batch with one job on two sheets saves none, and names the job (PR #149 
   }
   assert.equal((await board(ctx)).length, 0, 'no job was saved');
 });
+
+// The jobs a count of `family` lists before it starts (#105).
+async function beforeCount(ctx, family) {
+  const res = await get(ctx.base, '/api/counts/jobs?' + new URLSearchParams({ family }), ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  return res.json();
+}
+
+test('before a plates count, the start lists each committed job with plates: number, name, delivery date (#105, story 51, Q25)', async () => {
+  const ctx = await appWithCatalog();
+  await goLive(ctx.db, 'plates');
+  await goLive(ctx.db, 'hangers');
+  assert.equal((await commitFile(ctx)).status, 200);
+  assert.equal((await commitFile(ctx, SHEET.replace('33864R', '33865R').replace(',930,MT20  3x4', ',,'))).status, 200);
+  assert.equal((await commitFile(ctx, SHEET.replace('33864R', '33866R').replace('Smith Residence', 'Jones Barn'))).status, 200);
+  await mark(ctx, 'built', ['33864R']);
+
+  assert.deepEqual(await beforeCount(ctx, 'plates'), { ok: true, until: 'built',
+    jobs: [{ number: '33866R', name: 'Jones Barn', delivery_date: '2026-11-02' }] },
+  'a built job and a hangers-only job are left out');
+});
+
+test('before a hangers count, the start lists each job with hangers not yet shipped, built ones too, soonest delivery first; a family not live lists none (#105, J307, J4)', async () => {
+  const ctx = await appWithCatalog();
+  await goLive(ctx.db, 'hangers');
+  const sheet = (number, date) => SHEET.replace('33864R', number).replace('11/2/2026', date);
+  for (const [number, date] of [['33864R', '11/20/2026'], ['33865R', '11/9/2026'], ['33866R', '11/2/2026']]) {
+    assert.equal((await commitFile(ctx, sheet(number, date))).status, 200, number);
+  }
+  await mark(ctx, 'built', ['33864R']);
+  await mark(ctx, 'shipped', ['33866R']);
+
+  assert.deepEqual(await beforeCount(ctx, 'hangers'), { ok: true, until: 'shipped', jobs: [
+    { number: '33865R', name: 'Smith Residence', delivery_date: '2026-11-09' },
+    { number: '33864R', name: 'Smith Residence', delivery_date: '2026-11-20' },
+  ] });
+  assert.deepEqual(await beforeCount(ctx, 'plates'), { ok: true, until: 'built', jobs: [] }, 'plates are not live');
+
+  const res = await get(ctx.base, '/api/counts/jobs?family=nails', ctx.cookie);
+  assert.deepEqual([res.status, (await res.json()).error], [400, 'Pick a family to count.']);
+});

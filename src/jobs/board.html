@@ -592,7 +592,14 @@
   } catch { /* storage blocked, or not JSON: nothing was sent */ }
   if (Array.isArray(sent) && sent.length) { sheets = sent; recheck(); }
 
-  loadBoard();
+  await loadBoard();
+  // /jobs?job=<number> opens that job below its row, when it is on the
+  // board (the count start's links, #105).
+  const asked = new URLSearchParams(location.search).get('job');
+  if (asked && jobs.has(asked)) {
+    await toggleJob(asked);
+    document.querySelector('[data-open="' + CSS.escape(asked) + '"]').scrollIntoView();
+  }
 })();
 </script>
 </body>

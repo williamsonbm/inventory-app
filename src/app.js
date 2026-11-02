@@ -23,7 +23,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes, readFamilies,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate } = require('./jobs/jobs.js');
+const { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, jobsBeforeCount } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -171,6 +171,11 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
     const review = await readCountReview(database, req.query.id);
     if (!review) return res.status(404).json({ ok: false, error: 'That count is not on the list.' });
     res.json({ ok: true, ...review });
+  }));
+  // The jobs a count of one family lists before it starts (#105).
+  app.get('/api/counts/jobs', catchAsync(async (req, res) => {
+    const { status, body } = await jobsBeforeCount(database, req.query.family);
+    res.status(status).json(body);
   }));
   // Inventory → Month-end (stories 83–87): everyone reads the records and
   // their CSVs; an admin corrects one (CATALOG_CHANGES).
