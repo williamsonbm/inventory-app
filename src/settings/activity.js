@@ -258,6 +258,8 @@ const CHANGED = {
   purchase_orders: describePoChange, counts: describeCountChange, settings: describeSettingChange,
   'correct month-end': describeMonthEndChange, jobs: (was, now) => `status: ${was.status} → ${now.status}${timed(now)}`,
   'set delivery date': (was, now) => `delivery date: ${was.delivery_date ?? 'none'} → ${now.delivery_date ?? 'none'}`,
+  // A swap on a built job's plate line (#106, J320).
+  'swap plate': (_, now) => `${now.swap.quantity} of ${now.swap.planned} swapped to ${now.swap.used}${timed(now)}`,
   // A revised sheet (#120): its revision, and its name and date when they changed.
   'commit job': (was, now) => [`revision ${was.revision} → ${now.revision}`,
     ...(was.name !== now.name ? [`name: ${was.name ?? 'none'} → ${now.name ?? 'none'}`] : []),

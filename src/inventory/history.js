@@ -101,9 +101,10 @@ const DETAIL = {
   trim: (g) => `trimmed ${g.quantity < 0 ? 'to' : 'from'} ${g.other_length}′${
     g.quantity < 0 ? '' : g.added ? ' and added as Non-Stock' : g.unretired ? ' and put back in use' : ''}${noted(g)}`,
   reverse: (g) => `reverses ${ENTRY_NAMES[g.reverses]}${noted(g)}`,
-  // A job's row, whatever wrote it (Built, Shipped, Un-build or Un-ship,
+  // A job's row, whatever wrote it (Built, Shipped, a swap, Un-build or Un-ship,
   // #101): the action says what happened, this names the job.
-  job: (g) => `Job ${g.job_number}${g.job_name ? `, ${g.job_name}` : ''}`,
+  // A swap's two rows carry the reason Substitution (#106).
+  job: (g) => `Job ${g.job_number}${g.job_name ? `, ${g.job_name}` : ''}${g.reason ? `; ${g.reason}` : ''}`,
 };
 
 // Answers { error } for an item not in the catalog, else { entries }.

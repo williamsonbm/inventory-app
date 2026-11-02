@@ -761,8 +761,8 @@
       lines: (j) => j.items || [],
       tables: [{
         heading: (j, lines) => 'Material list — ' + fmtInt(lines.length) + ' plate line(s) on ' + j.jobNumber + "'s sheet",
-        columns: [{ label: 'SKU', cls: 'mono' }, { label: 'Qty', cls: 'n' }],
-        rows: (j, lines) => lines.map((it) => [it.sku, fmtInt(it.qty)]),
+        columns: [{ label: 'SKU', cls: 'mono' }, { label: 'Qty', cls: 'n' }, { label: 'Swap', optional: true }],
+        rows: (j, lines) => lines.concat(j.swapped || []).map((it) => [it.sku, fmtInt(it.qty), it.swap || '']),
       }],
     },
     hangers: {
@@ -797,22 +797,29 @@
       ({ label: g.label, stockLengthFt: b.stockLengthFt, boards: b.boards, first: i === 0 })));
   }
 
-  // A job with no lines for this family has no breakdown. Otherwise every
-  // table that has rows: a lumber job with nothing to cut shows its lines alone.
+  // A job with no lines for this family has no breakdown, unless it has
+  // plates swapped in (#106): a revised sheet may drop every plate line.
+  // Otherwise every table that has rows: a lumber job with nothing to cut
+  // shows its lines alone.
   // `saved`: a job as Jobs saved it, without what only the sheet carries.
+  // An `optional` column shows only when one of its cells has text.
   function jobBreakdown(family, job, { saved = false } = {}) {
     const { lines: linesOf, tables } = JOB_BREAKDOWN[family];
     const lines = linesOf(job);
-    if (!lines.length) return [];
+    if (!lines.length && !(job.swapped || []).length) return [];
     const shown = (part) => !(saved && part.sheetOnly);
     return tables.filter(shown)
-      .map((t) => ({
-        heading: t.heading(job, lines),
-        title: t.title,
-        columns: t.columns.filter(shown),
-        rows: t.rows(job, lines).map((r) => r.filter((_, i) => shown(t.columns[i]))),
-        footer: t.footer && t.footer(job),
-      }))
+      .map((t) => {
+        const rows = t.rows(job, lines);
+        const kept = t.columns.map((c, i) => shown(c) && !(c.optional && rows.every((r) => !r[i])));
+        return {
+          heading: t.heading(job, lines),
+          title: t.title,
+          columns: t.columns.filter((_, i) => kept[i]),
+          rows: rows.map((r) => r.filter((_, i) => kept[i])),
+          footer: t.footer && t.footer(job),
+        };
+      })
       .filter((t) => t.rows.length > 0);
   }
 
@@ -832,7 +839,15 @@
         totalPieces: lines.reduce((n, l) => n + l.quantity, 0),
       };
     },
-    plates: (lines) => ({ items: skuQty(lines) }),
+    // A built job's swaps (#106, J320): a plate line says what was swapped
+    // from it, and each plate used is its own row marked swap.
+    plates: (lines, swaps = []) => {
+      const from = (id) => swaps.filter((w) => w.planned_id === id).map((w) => fmtInt(w.quantity) + ' swapped to ' + w.used).join('; ');
+      return {
+        items: lines.map((l) => ({ sku: l.label, qty: l.quantity, swap: from(l.item_id) })),
+        swapped: swaps.map((w) => ({ sku: w.used, qty: w.quantity, swap: ['swap', from(w.used_id)].filter(Boolean).join('; ') })),
+      };
+    },
     hangers: (lines) => ({ lines: skuQty(lines) }),
     lvl: (lines) => ({ items: lines.map((l) => ({ size: l.label, qty: l.quantity, length: ftLabel(l.length_ft) })) }),
   };
@@ -842,10 +857,11 @@
   // line count, each the Planner's breakdown of what Jobs saved. `open` is
   // the tab the job opens on: the family `filter` names, or else the first,
   // which is Lumber when the job has lumber: Lumber leads the families' order.
+  // `job.swaps`: a built job's plate swaps, as the view answers them.
   function jobTabs(job, families, filter) {
     const tabs = families.flatMap(({ code, name }) => {
       const lines = job.lines.filter((l) => l.family === code);
-      const tables = jobBreakdown(code, { jobNumber: job.number, ...SAVED_JOB[code](lines) }, { saved: true });
+      const tables = jobBreakdown(code, { jobNumber: job.number, ...SAVED_JOB[code](lines, job.swaps) }, { saved: true });
       return tables.length ? [{ family: code, label: name + ' (' + fmtInt(lines.length) + ')', tables }] : [];
     });
     const open = tabs.find((t) => t.family === filter) || tabs[0];
