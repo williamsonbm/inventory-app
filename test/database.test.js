@@ -257,7 +257,7 @@ test('the app runs only its granted functions; the Planner runs only the calcula
     'edit_item', 'edit_po', 'enter_po', 'grant_admin', 'is_current_sheet', 'item_label', 'item_name', 'job_committed', 'job_handled', 'job_settled', 'job_to_consume', 'job_to_give_back', 'lumber_sizes', 'mark_built', 'mark_shipped', 'month_end_json', 'nothing_before', 'on_hand_at', 'po_json', 'po_line_number', 'reactivate_user', 'receive', 'received',
     'record_password_check', 'reject_count', 'remove_lumber_group', 'remove_user', 'rename_item', 'rename_supplier', 'rename_user', 'reopen_po_line', 'retire_item', 'retire_reason', 'reverse', 'revoke_admin',
     'save_count', 'set_count_approval_by_another', 'set_delivery_date', 'set_grade_redirect', 'set_lumber_lengths', 'set_lvl_depth_threshold', 'set_password', 'set_working_day_window',
-    'sign_out', 'start_count', 'submit_count', 'tidy', 'trim', 'unbuild_job', 'undo_to', 'unretire_item', 'unretire_reason', 'unship_job'];
+    'sign_out', 'start_count', 'submit_count', 'swap_plate', 'tidy', 'trim', 'unbuild_job', 'undo_to', 'unretire_item', 'unretire_reason', 'unship_job'];
   const rows = await as(db, null, async (owner) => (await owner.query(`
     SELECT p.proname AS name,
            pg_catalog.has_function_privilege('inv_app', p.oid, 'EXECUTE') AS app,

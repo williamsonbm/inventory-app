@@ -11,7 +11,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, urlFor, as, APP, firstUser, call, logRows, refused, contents, goLive, figure } = require('./support/database.js');
+const { freshDatabase, urlFor, as, APP, firstUser, call, logRows, refused, contents, goLive, figure, reasonId } = require('./support/database.js');
 const { withAdmin, get, post } = require('./support/app.js');
 const { openDatabase } = require('../src/db/database.js');
 const { readItemJobs } = require('../src/inventory/item-jobs.js');
@@ -1583,13 +1583,15 @@ test('the job view shows the saved lines, the delivery date and its History; a d
   const first = await view(' 33864r ');
   assert.deepEqual({ ...first, history: first.history.map(({ at, ...h }) => ({ ...h, at: typeof at })) }, {
     ok: true,
-    job: { number: '33864R', version: 1, delivery_date: '2026-11-02', delivery_date_edited: false, can_set_date: true },
+    job: { number: '33864R', version: 1, delivery_date: '2026-11-02', delivery_date_edited: false, can_set_date: true, can_swap: false },
     lines: [
-      { family: 'plates', label: 'MT20 3x4', length_ft: null, quantity: 930 },
-      { family: 'hangers', label: 'HUS26', length_ft: null, quantity: 8 },
-      { family: 'hangers', label: 'LUS28', length_ft: null, quantity: 12 },
-      { family: 'hangers', label: 'TC26', length_ft: null, quantity: 6 },
+      { item_id: ctx.items['MT20 3x4'].id, family: 'plates', label: 'MT20 3x4', length_ft: null, quantity: 930 },
+      { item_id: ctx.items.HUS26.id, family: 'hangers', label: 'HUS26', length_ft: null, quantity: 8 },
+      { item_id: ctx.items.LUS28.id, family: 'hangers', label: 'LUS28', length_ft: null, quantity: 12 },
+      { item_id: ctx.items.TC26.id, family: 'hangers', label: 'TC26', length_ft: null, quantity: 6 },
     ],
+    swaps: [],
+    plates: [],
     history: [{ action: 'commit job', by: 'Ann Lee', change: 'added: Smith Residence, revision 1', at: 'string' }],
   });
 
@@ -1866,4 +1868,252 @@ test('before a hangers count, the start lists each job with hangers not yet ship
 
   const res = await get(ctx.base, '/api/counts/jobs?family=nails', ctx.cookie);
   assert.deepEqual([res.status, (await res.json()).error], [400, 'Pick a family to count.']);
+});
+
+// ── Seam 1: a swap on a built job's plate line (#106) ───────────────────────
+
+// Swaps `quantity` of `planned` for `used` on job `number` as Ann, at
+// `version`, or the one the board shows now.
+async function swap(ctx, planned, used, quantity, { number = '33864R', key = crypto.randomUUID(), timing = null, version } = {}) {
+  version ??= (await onBoard(ctx.db, number)).version;
+  return call(ctx.db, 'swap_plate', ctx.ann.id, key, number, version, planned.id, used.id, quantity, timing && JSON.stringify(timing));
+}
+
+// A built job 33864R that consumed 930 of ctx.plate, with a second plate
+// ctx.used in the catalog; 1,000 of each on hand before Built.
+async function withBuiltJob() {
+  const ctx = await withCatalog();
+  ctx.used = await call(ctx.db, 'add_item', ctx.ann.id, crypto.randomUUID(), 'plates', { sku: 'MT20 4x6' });
+  await goLive(ctx.db, 'plates');
+  await ctx.receive(ctx.plate, 1000);
+  await ctx.receive(ctx.used, 1000);
+  await commit(ctx, [[ctx.plate, 930]]);
+  await mark(ctx, 'built', ['33864R']);
+  return ctx;
+}
+
+test('a swap moves what a built job consumed from the planned plate to the plate used, logged once; a retry acts once (#106, Q36, S22)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, plate, used } = ctx;
+  const key = crypto.randomUUID();
+  const job = await swap(ctx, plate, used, 40, { key });
+  assert.deepEqual([job.number, job.status, job.version], ['33864R', 'built', 3], 'a swap moves the version');
+  assert.deepEqual(await swap(ctx, plate, used, 40, { key, version: 2 }), job, 'the retry answers as the first swap did');
+  const onHand = await figure(db, 'on_hand');
+  assert.deepEqual([onHand[plate.id], onHand[used.id]], [110, 960], '1,000 − 930 + 40; 1,000 − 40');
+  assert.equal((await logRows(db)).at(-1).action, 'swap plate');
+  assert.equal((await logRows(db)).filter((l) => l.action === 'swap plate').length, 1);
+});
+
+test('a swap is refused unless the job is built, on a stale screen and for a job not in the app; a refusal saves nothing (#106, Q36, Q48)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, plate, used } = ctx;
+  await commit(ctx, [[plate, 5]], { number: '2P' });
+  const before = await contents(db);
+  const committed = await refused(swap(ctx, plate, used, 1, { number: '2P' }), 'IV422', 'a committed job');
+  assert.equal(committed.message, 'Job 2P is committed. Only a built job takes a swap.');
+  const stale = await refused(swap(ctx, plate, used, 1, { version: 1 }), 'IV409', 'the screen showed 33864R before Built');
+  assert.equal(stale.message, 'Someone else changed job 33864R since you opened this screen.');
+  const unknown = await refused(swap(ctx, plate, used, 1, { number: 'NOPE', version: 1 }), 'IV400', 'no such job');
+  assert.equal(unknown.message, 'Job NOPE is not in the app.');
+  assert.deepEqual(await contents(db), before, 'no row and no log entry');
+  await mark(ctx, 'shipped', ['33864R']);
+  const shipped = await refused(swap(ctx, plate, used, 1), 'IV422', 'a shipped job');
+  assert.equal(shipped.message, 'Job 33864R is shipped. Only a built job takes a swap.');
+});
+
+test('a swap is refused beyond what the job consumed of the planned plate, for a used plate that is the planned one, not a plate or retired, and for a count that is not whole pieces (#106, Q36, J319)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, ann, plate, used, lus28 } = ctx;
+  const old = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'plates', { sku: 'MT20 5x8' });
+  const { version } = await onBoard(db, '33864R');
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), old.id, old.version);
+  const before = await contents(db);
+  const cases = [
+    [plate, used, 931, 'IV422', 'Job 33864R consumed 930 of MT20 3x4, so at most 930 can be swapped.'],
+    [used, plate, 1, 'IV422', 'Job 33864R consumed 0 of MT20 4x6, so at most 0 can be swapped.'],
+    [plate, plate, 1, 'IV400', 'Pick a plate other than the planned one.'],
+    [plate, lus28, 1, 'IV400', 'LUS28 is not a plate. Pick a plate.'],
+    [lus28, used, 1, 'IV400', 'LUS28 is not a plate. Pick a plate.'],
+    [plate, old, 1, 'IV422', 'MT20 5x8 is retired. Pick a plate in use.'],
+    ...[0, -3, 1.5, null].map((n) => [plate, used, n, 'IV400', 'Type the pieces swapped: a whole number above 0.']),
+  ];
+  for (const [planned, usedPlate, quantity, code, message] of cases) {
+    const err = await refused(swap(ctx, planned, usedPlate, quantity, { version }), code, `${planned.sku} → ${usedPlate.sku} × ${quantity}`);
+    assert.equal(err.message, message);
+  }
+  assert.deepEqual(await contents(db), before, 'no row and no log entry');
+
+  await swap(ctx, plate, used, 900);
+  const err = await refused(swap(ctx, plate, used, 31), 'IV422', 'a second swap counts what is left');
+  assert.equal(err.message, 'Job 33864R consumed 30 of MT20 3x4, so at most 30 can be swapped.');
+  await swap(ctx, plate, used, 30);
+});
+
+test('after a swap, a revised sheet consumes only beyond what is settled, Shipped consumes no plate again, and a swap back undoes it (#106, Q27, J321)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, plate, used } = ctx;
+  const onHand = async () => { const f = await figure(db, 'on_hand'); return [f[plate.id], f[used.id]]; };
+  await swap(ctx, plate, used, 40);
+  assert.deepEqual(await onHand(), [110, 960]);
+
+  await commit(ctx, [[plate, 930], [used, 50]], { version: (await onBoard(db, '33864R')).version });
+  assert.deepEqual(await onHand(), [110, 950], 'the sheet now plans 50 of MT20 4x6; 40 were swapped in, so 10 more');
+  await commit(ctx, [[plate, 950], [used, 50]], { version: (await onBoard(db, '33864R')).version });
+  assert.deepEqual(await onHand(), [90, 950], '20 more of MT20 3x4: the swap does not lower what is settled');
+
+  const err = await refused(swap(ctx, used, plate, 51), 'IV422', 'more back than the job consumed of MT20 4x6: 40 swapped in, 10 by the sheet');
+  assert.equal(err.message, 'Job 33864R consumed 50 of MT20 4x6, so at most 50 can be swapped.');
+  await swap(ctx, used, plate, 40);
+  assert.deepEqual(await onHand(), [50, 990], 'a swap back moves the 40 again');
+
+  await mark(ctx, 'shipped', ['33864R']);
+  assert.deepEqual(await onHand(), [50, 990], 'Shipped consumes no plate');
+});
+
+test('Un-build after swaps gives back every plate the job consumed, and drops the swaps: Built again consumes the sheet as planned (#106, J321)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, plate, used } = ctx;
+  const onHand = async () => { const f = await figure(db, 'on_hand'); return [f[plate.id], f[used.id]]; };
+  await swap(ctx, plate, used, 40);
+  await swap(ctx, used, plate, 15);
+  assert.deepEqual(await onHand(), [95, 975]);
+  await undo(ctx, 'unbuild_job', '33864R');
+  assert.deepEqual(await onHand(), [1000, 1000]);
+  assert.equal((await figure(db, 'committed'))[plate.id], 930);
+  await mark(ctx, 'built', ['33864R']);
+  assert.deepEqual(await onHand(), [70, 1000]);
+});
+
+test('a job cancelled after a swap and committed again counts the swap as the planned plate consumed: Built has nothing to take and Shipped takes none; a sheet that adds the plate used takes it in full (#106, J322)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, plate, used } = ctx;
+  const onHand = async () => { const f = await figure(db, 'on_hand'); return [f[plate.id], f[used.id]]; };
+  const committed = async () => { const f = await figure(db, 'committed'); return [f[plate.id], f[used.id]]; };
+  await swap(ctx, plate, used, 40);
+  assert.deepEqual(await onHand(), [110, 960]);
+  await undo(ctx, 'cancel_job', '33864R');
+  await commit(ctx, [[plate, 930]], { version: (await onBoard(db, '33864R')).version });
+  assert.deepEqual(await committed(), [0, 0], 'the 40 swapped out of MT20 3x4 were used, as MT20 4x6');
+  const err = await refused(mark(ctx, 'built', ['33864R']), 'IV422', 'Built has nothing to take, as with no swap');
+  assert.equal(err.message, 'Job 33864R has no plates, lumber or LVL to build; mark it shipped.');
+  await mark(ctx, 'shipped', ['33864R']);
+  assert.deepEqual(await onHand(), [110, 960], 'nor does Shipped from committed');
+
+  const ctx2 = await withBuiltJob();
+  await swap(ctx2, ctx2.plate, ctx2.used, 40);
+  await undo(ctx2, 'cancel_job', '33864R');
+  await commit(ctx2, [[ctx2.plate, 930], [ctx2.used, 50]], { version: (await onBoard(ctx2.db, '33864R')).version });
+  assert.equal((await figure(ctx2.db, 'committed'))[ctx2.used.id], 50, 'the trade-off: the swap does not count toward a line of the plate used');
+});
+
+test('a swap near a count asks "before or after the count?"; before, the count already shows it (#106, Q36, ADR 0002)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, ann, plate, used } = ctx;
+  const bob = await call(db, 'add_user', ann.id, crypto.randomUUID(), 'bob@example.com', 'Bob Ray', 'a stand-in for a password hash');
+  const started = await call(db, 'start_count', ann.id, crypto.randomUUID(), 'plates', 'spot check', null);
+  const lines = JSON.stringify([{ item_id: used.id, loose: 960 }]);
+  const count = await call(db, 'submit_count', ann.id, crypto.randomUUID(), started.id, started.version, started.closes, lines);
+
+  const asked = await refused(swap(ctx, plate, used, 40), 'IV409', 'a swap of a counted plate, with no answer');
+  assert.equal(asked.message, 'Was this before or after the count? Pick one, then save again.');
+  const job = await swap(ctx, plate, used, 40, { timing: { before: count.id } });
+  assert.deepEqual(job.timed, { before: true, counted_at: count.counted_at });
+  assert.deepEqual(job.swap, { planned: 'MT20 3x4', used: 'MT20 4x6', quantity: 40 });
+
+  await call(db, 'approve_count', bob.id, crypto.randomUUID(), count.id, count.version, '{}');
+  const onHand = await figure(db, 'on_hand');
+  assert.deepEqual([onHand[plate.id], onHand[used.id]], [110, 960], 'the count of 960 already took the 40 off');
+});
+
+test("a swap shows in the job's History and in each plate's History, with the reason Substitution and no Reverse (#106, Q36, story 43)", async () => {
+  const ctx = await withBuiltJob();
+  const { db, plate, used } = ctx;
+  await swap(ctx, plate, used, 40);
+  const { readHistory } = require('../src/inventory/history.js');
+  const { jobView } = require('../src/jobs/jobs.js');
+  const database = openDatabase(urlFor(db, 'inv_app'));
+  try {
+    const { body } = await jobView(database, '33864R');
+    assert.deepEqual(body.history.slice(0, 2).map((h) => [h.action, h.change]),
+      [['swap plate', '40 of MT20 3x4 swapped to MT20 4x6'], ['mark built', 'status: committed → built']]);
+    for (const [item, change] of [[plate, 40], [used, -40]]) {
+      const [row] = (await readHistory(database, item.id)).entries;
+      assert.deepEqual([row.action, row.change, row.detail, row.from_job],
+        ['swap plate', change, 'Job 33864R, Smith Residence; Substitution', true]);
+    }
+  } finally {
+    await database.end();
+  }
+});
+
+// ── Seam 2: the swap route and the job view (#106) ─────────────────────────
+
+test('the swap route saves a swap on a built job; the job view offers Substitute… only then, and shows each plate line\'s swaps net of swaps back (#106, stories 43–45, J320, J321)', async () => {
+  const ctx = await appWithCatalog({ plates: ['MT20 3x4', 'MT20 4x6', 'MT20 5x8'], hangers: ['LUS28', 'HUS26', 'TC26'] });
+  const { 'MT20 3x4': planned, 'MT20 4x6': used, 'MT20 5x8': other } = ctx.items;
+  await goLive(ctx.db, 'plates');
+  assert.equal((await commitFile(ctx)).status, 200);
+  const view = async () => (await get(ctx.base, '/api/jobs/view?number=33864R', ctx.cookie)).json();
+  const swap = async (from, to, quantity, version) => post(ctx.base, '/api/jobs/swap',
+    { key: crypto.randomUUID(), number: '33864R', version, planned: from.id, used: to.id, quantity, timing: null }, ctx.cookie);
+
+  const committed = await view();
+  assert.equal(committed.job.can_swap, false, 'a committed job takes no swap');
+  assert.equal(committed.lines[0].item_id, planned.id, 'a line names its item, for the swap');
+  const refusal = await swap(planned, used, 40, 1);
+  assert.equal(refusal.status, 422);
+  assert.equal((await refusal.json()).error, 'Job 33864R is committed. Only a built job takes a swap.');
+
+  const marked = await post(ctx.base, '/api/jobs/mark', { key: crypto.randomUUID(), to: 'built', jobs: [{ number: '33864R', version: 1 }] }, ctx.cookie);
+  assert.equal(marked.status, 200, await marked.clone().text());
+  const built = await view();
+  assert.equal(built.job.can_swap, true);
+  assert.deepEqual(built.plates, [{ id: planned.id, label: 'MT20 3x4' }, { id: used.id, label: 'MT20 4x6' }, { id: other.id, label: 'MT20 5x8' }],
+    'a built job offers every active plate to pick from');
+  assert.deepEqual(committed.plates, [], 'a committed job offers none');
+  const res = await swap(planned, used, 40, 2);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual((await res.json()).job.swap, { planned: 'MT20 3x4', used: 'MT20 4x6', quantity: 40 });
+  assert.equal((await swap(planned, other, 10, 3)).status, 200);
+  assert.equal((await swap(used, planned, 15, 4)).status, 200, 'a swap back');
+
+  const after = await view();
+  assert.deepEqual(after.swaps, [
+    { planned_id: planned.id, planned: 'MT20 3x4', used_id: used.id, used: 'MT20 4x6', quantity: 25 },
+    { planned_id: planned.id, planned: 'MT20 3x4', used_id: other.id, used: 'MT20 5x8', quantity: 10 },
+  ], '40 swapped to MT20 4x6, 15 of them back; 10 to MT20 5x8');
+  assert.deepEqual(after.history.slice(0, 3).map((h) => h.action), ['swap plate', 'swap plate', 'swap plate']);
+
+  assert.equal((await swap(used, planned, 25, 5)).status, 200);
+  assert.deepEqual((await view()).swaps.map((w) => [w.used, w.quantity]), [['MT20 5x8', 10]], 'a swap swapped all the way back is gone');
+  const unbuilt = await post(ctx.base, '/api/jobs/undo', { key: crypto.randomUUID(), action: 'unbuild', number: '33864R', version: 6 }, ctx.cookie);
+  assert.equal(unbuilt.status, 200, await unbuilt.clone().text());
+  assert.deepEqual((await view()).swaps, [], 'Un-build drops the swaps (J321)');
+});
+
+test('a swap back beyond what was swapped, of a plate also on the sheet, shows as a swap the other way (#106, J320, J321)', async () => {
+  const ctx = await appWithCatalog({ plates: ['MT20 3x4', 'MT20 4x6'], hangers: ['LUS28', 'HUS26', 'TC26'] });
+  const { 'MT20 3x4': a, 'MT20 4x6': b } = ctx.items;
+  await goLive(ctx.db, 'plates');
+  assert.equal((await commitFile(ctx, SHEET.replace(',930,MT20  3x4,64.18,5580', ',930,MT20  3x4,64.18,5580\n,20,MT20  4x6,1.00,48'))).status, 200);
+  const marked = await post(ctx.base, '/api/jobs/mark', { key: crypto.randomUUID(), to: 'built', jobs: [{ number: '33864R', version: 1 }] }, ctx.cookie);
+  assert.equal(marked.status, 200, await marked.clone().text());
+  const swap = async (from, to, quantity, version) => post(ctx.base, '/api/jobs/swap',
+    { key: crypto.randomUUID(), number: '33864R', version, planned: from.id, used: to.id, quantity }, ctx.cookie);
+  assert.equal((await swap(a, b, 10, 2)).status, 200);
+  assert.equal((await swap(b, a, 25, 3)).status, 200);
+  const view = await (await get(ctx.base, '/api/jobs/view?number=33864R', ctx.cookie)).json();
+  assert.deepEqual(view.swaps, [{ planned_id: b.id, planned: 'MT20 4x6', used_id: a.id, used: 'MT20 3x4', quantity: 15 }],
+    '10 of MT20 3x4 swapped to MT20 4x6, then 25 back: 15 of MT20 4x6 swapped to MT20 3x4');
+});
+
+test('the reason Substitution is for a swap only: a correction with it is refused, and it cannot be retired (#106)', async () => {
+  const ctx = await withBuiltJob();
+  const { db, ann, plate } = ctx;
+  const substitution = await reasonId(db, 'Substitution');
+  const err = await refused(call(db, 'correct', ann.id, crypto.randomUUID(), plate.id, 5, substitution, null, null), 'IV422', 'a correction');
+  assert.equal(err.message, '"Substitution" is set by a swap on a job. Use Substitute… on the job\'s Plates tab.');
+  const retire = await refused(call(db, 'retire_reason', ann.id, crypto.randomUUID(), substitution, 1), 'IV422', 'a built-in reason');
+  assert.equal(retire.message, 'The app relies on "Substitution", so it cannot be retired.');
 });

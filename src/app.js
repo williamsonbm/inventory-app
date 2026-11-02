@@ -23,7 +23,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes, readFamilies,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, jobsBeforeCount } = require('./jobs/jobs.js');
+const { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, jobsBeforeCount } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -227,6 +227,11 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
   }));
   app.post('/api/jobs/delivery-date', catchAsync(async (req, res) => {
     const { status, body } = await setDeliveryDate(database, req.user, req.body);
+    res.status(status).json(body);
+  }));
+  // A swap on a built job's plate line (#106).
+  app.post('/api/jobs/swap', catchAsync(async (req, res) => {
+    const { status, body } = await swapPlate(database, req.user, req.body);
     res.status(status).json(body);
   }));
   app.post('/api/jobs/check', catchAsync(async (req, res) => {

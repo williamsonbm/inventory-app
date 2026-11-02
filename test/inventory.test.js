@@ -90,7 +90,7 @@ test('Settings lists and changes pack sizes, suppliers, reasons and LVL depth th
   const back = (await change(ctx, '/api/reasons/unretire', { id: reason.id, version: 2 })).body.reason;
   assert.equal(retired.active, false);
   const { reasons } = await read(ctx, '/api/reasons');
-  assert.equal(reasons.length, 8, 'the seven built in, and Miscounted');
+  assert.equal(reasons.length, 9, 'the eight built in, and Miscounted');
   assert.deepEqual(reasons.find((r) => r.id === reason.id), back);
 
   const depth = (await change(ctx, '/api/lvl-depth-thresholds/set', { depth: '14', version: null, threshold_lf: 720 })).body.threshold;
@@ -467,7 +467,7 @@ test('Correct on hand changes an item\'s on hand with a reason; the Overview and
   const { reasons } = await read(ctx, '/api/reasons');
   const reason = (text) => reasons.find((r) => r.text === text).id;
   assert.deepEqual(reasons.filter((r) => r.entry).map((r) => [r.text, r.entry]).sort(),
-    [['Arrived, amount not known', 'receive'], ['Opening balance (web app)', 'import'], ['Weathered – trimmed', 'trim']], 'the page hides reasons kept for another entry (Q31)');
+    [['Arrived, amount not known', 'receive'], ['Opening balance (web app)', 'import'], ['Substitution', 'swap'], ['Weathered – trimmed', 'trim']], 'the page hides reasons kept for another entry (Q31)');
 
   const returned = await change(ctx, '/api/items/correct',
     { item_id: hanger.id, quantity: 6, reason_id: reason('Returned from job site'), note: 'Job 1234' });

@@ -581,9 +581,9 @@ function listJobs(database) {
 async function jobView(database, number) {
   const [job] = await database.read(`
     SELECT j.id, j.number, j.version, j.delivery_date::text AS delivery_date, j.delivery_date_edited,
-           j.status <> 'cancelled' AS can_set_date,
+           j.status <> 'cancelled' AS can_set_date, j.status = 'built' AS can_swap,
            coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
-                              'family', i.family, 'label', n.label, 'length_ft', i.length_ft, 'quantity', l.quantity,
+                              'item_id', i.id, 'family', i.family, 'label', n.label, 'length_ft', i.length_ft, 'quantity', l.quantity,
                               'menu_key', i.size || '|' || i.grade)
                               ORDER BY n.label, i.length_ft)
                        FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id, LATERAL (SELECT inv.item_name(i) AS label) n
@@ -597,12 +597,51 @@ async function jobView(database, number) {
   const lines = rows.sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family)
       || (a.family === 'lumber' ? compareMenuKeys(a.menu_key, b.menu_key) : 0))
     .map(({ menu_key, ...line }) => line);
-  const history = await database.read(`
+  // History, the swaps, and the plates a swap may pick as used (J319):
+  // every active one, the plate planned included, which the page leaves out.
+  const [history, swapped, plates] = await Promise.all([database.read(`
     SELECT l.action, l.at, u.name AS by, l.old_value, l.new_value
       FROM inv.activity_log l JOIN inv.users u ON u.id = l.actor_id
-     WHERE l.target_table = 'jobs' AND l.target_id = $1 ORDER BY l.id DESC`, [id]);
-  return { status: 200, body: { ok: true, job: shown, lines,
+     WHERE l.target_table = 'jobs' AND l.target_id = $1 ORDER BY l.id DESC`, [id]),
+    database.read(`
+    SELECT p.item_id::int AS planned_id, inv.item_name(pi) AS planned, u.item_id::int AS used_id, inv.item_name(ui) AS used,
+           p.quantity::int AS quantity
+      FROM inv.ledger p
+      JOIN inv.ledger u ON u.action_id = p.action_id AND u.job_id = p.job_id AND u.quantity < 0
+      JOIN inv.reasons r ON r.id = p.reason_id AND r.entry = 'swap'
+      JOIN inv.items pi ON pi.id = p.item_id JOIN inv.items ui ON ui.id = u.item_id
+     WHERE p.job_id = $1 AND p.kind = 'build' AND p.quantity > 0
+       AND NOT EXISTS (SELECT FROM inv.ledger v WHERE v.reverses_id = p.id)
+     ORDER BY p.id`, [id]),
+    !job.can_swap ? [] : database.read(`
+    SELECT i.id::int, inv.item_name(i) AS label FROM inv.items i
+     WHERE i.family = 'plates' AND i.active ORDER BY 2`)]);
+  return { status: 200, body: { ok: true, job: shown, lines, swaps: netSwaps(swapped), plates,
     history: history.map((h) => ({ action: h.action, at: h.at, by: h.by, change: describeChange(h.action, 'jobs', h.old_value, h.new_value) })) } };
+}
+
+// A job's swaps (J320) as each pair of plates nets out: a swap back
+// (used → planned, J321) lowers the swap it undoes, and one swapped all
+// the way back is gone. Each pair in the order it was first swapped.
+function netSwaps(swapped) {
+  const pairs = new Map();
+  for (const w of swapped) {
+    const [first, second] = [w.planned_id, w.used_id].sort((a, b) => a - b);
+    const key = `${first}|${second}`;
+    if (!pairs.has(key)) pairs.set(key, { ...w, quantity: 0 });
+    const pair = pairs.get(key);
+    pair.quantity += pair.planned_id === w.planned_id ? w.quantity : -w.quantity;
+  }
+  return [...pairs.values()].filter((w) => w.quantity !== 0).map((w) => (w.quantity > 0 ? w
+    : { planned_id: w.used_id, planned: w.used, used_id: w.planned_id, used: w.planned, quantity: -w.quantity }));
+}
+
+// Swaps `quantity` of plate `planned` for plate `used` on built job
+// `number`, as the job view showed it at `version` (stories 43–45, Q36),
+// timed by `timing`, the answer to "before or after the count?".
+async function swapPlate(database, person, { key, number, version, planned, used, quantity, timing = null } = {}) {
+  const job = await database.save('swap_plate', [person.id, key, number, version, planned, used, quantity, timing]);
+  return { status: 200, body: { ok: true, job } };
 }
 
 // Sets job `number`'s delivery date, as the job view showed it at
@@ -631,4 +670,4 @@ async function jobsBeforeCount(database, family) {
   return { status: 200, body: { ok: true, consumed_when: found.consumed_when, jobs } };
 }
 
-module.exports = { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, jobsBeforeCount };
+module.exports = { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, jobsBeforeCount };

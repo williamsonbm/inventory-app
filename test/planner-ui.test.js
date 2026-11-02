@@ -533,6 +533,16 @@ const SAVED = {
   ],
 };
 
+test('jobTabs: a built job\'s swaps on its Plates tab: a plate line says what was swapped from it, each plate used is its own row marked swap (#106, J320)', () => {
+  const job = { number: '33864R', lines: [{ item_id: 1, family: 'plates', label: 'MT20 3x4', length_ft: null, quantity: 930 }],
+    swaps: [{ planned_id: 1, planned: 'MT20 3x4', used_id: 2, used: 'MT20 4x6', quantity: 40 },
+      { planned_id: 2, planned: 'MT20 4x6', used_id: 3, used: 'MT20 5x8', quantity: 1200 }] };
+  const [plates] = jobTabs(job, FAMILIES, 'all').tabs.map((t) => t.tables);
+  assert.deepEqual(plates.map((t) => [t.heading, t.columns.map((c) => c.label), t.rows]), [["Material list — 1 plate line(s) on 33864R's sheet",
+    ['SKU', 'Qty', 'Swap'], [['MT20 3x4', '930', '40 swapped to MT20 4x6'], ['MT20 4x6', '40', 'swap; 1,200 swapped to MT20 5x8'], ['MT20 5x8', '1,200', 'swap']]]],
+    'the heading still counts the sheet\'s lines');
+});
+
 test('jobTabs: one tab per family on the job, in the families\' order, each with its line count (#102, story 40)', () => {
   const { tabs } = jobTabs(SAVED, FAMILIES, 'all');
   assert.deepEqual(tabs.map((t) => [t.family, t.label]), [

@@ -32,7 +32,8 @@
   pull list (#99), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68);
   Cancel job, Un-build and Un-ship on each row, one job at a time, after a confirmation (#101, J86, J87).
   The board sorts by any column, searches job number or name, filters by status and family; a job's row
-  opens its job view below it: a tab per family, History, and its delivery date to edit (#102).
+  opens its job view below it: a tab per family, History, and its delivery date to edit (#102). A built
+  job's Plates tab shows its swaps and takes a new one, Substitute… (#106, J319–J321).
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
   repo has no DOM harness. Reading the sheet, matching its lines, the refusals
@@ -40,9 +41,9 @@
   checked by hand on Preview (#96, Testing Decisions). What marking consumes,
   and marking itself, are tested over HTTP and in the database; so are what
   an undo gives back and the undo itself. The board's filter is
-  PlannerUI.boardJobs and the job view's tabs PlannerUI.jobTabs, both
-  tested in test/planner-ui.test.js; the view's data and the
-  delivery date save over HTTP and in the database.
+  PlannerUI.boardJobs and the job view's tabs PlannerUI.jobTabs (swaps included), both
+  tested in test/planner-ui.test.js; the view's data, the
+  delivery date save and the swap over HTTP and in the database.
 
   The batch screen (#103): the sheets the Planner sends through
   sessionStorage `jobs.sheets`, read once at load; checkAll, leftOut, going,
@@ -92,7 +93,7 @@
 <script src="/planner-ui.js"></script>
 <script>
 (async () => {
-  const { esc, flagsHtml, sortRows, sortIcon, wireSort, jobTabs, boardJobs, renderBreakdown } = PlannerUI;
+  const { esc, fmtInt, flagsHtml, sortRows, sortIcon, wireSort, jobTabs, boardJobs, renderBreakdown } = PlannerUI;
   const { say, send, getAll, askTiming, showTime, showDate, showDay } = AppHeader;
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
@@ -145,7 +146,8 @@
     ['changed', 'Last changed (Eastern)', (j) => j.changed_at],
   ];
   // The job open below its row: its view as last loaded, the tab shown, and
-  // a date typed but not saved (`draft`). The jobs selected, by number, kept
+  // a date typed but not saved (`draft`), and Substitute… while it is open
+  // (`swap`: the plates and pieces picked so far). The jobs selected, by number, kept
   // across searches and filters until marked.
   let opened = null;
   const picked = new Set();
@@ -208,7 +210,7 @@
 
   function viewHtml() {
     const { job, history } = opened.view;
-    const { tabs, open } = jobTabs({ number: job.number, lines: opened.view.lines }, families, family);
+    const { tabs, open } = jobTabs({ number: job.number, lines: opened.view.lines, swaps: opened.view.swaps }, families, family);
     const tab = tabs.some((t) => t.family === opened.tab) || opened.tab === 'history' ? opened.tab : open || 'history';
     const tabButton = (code, label) => '<button type="button" data-tab="' + code + '" aria-pressed="' + (code === tab) + '">' + esc(label) + '</button>';
     const body = renderBreakdown(tab === 'history'
@@ -220,7 +222,39 @@
       (job.can_set_date ? ' <input type="date" id="date" value="' + esc(opened.draft ?? job.delivery_date ?? '') + '" aria-label="New delivery date"> ' +
         '<button type="button" class="ghost" id="save-date">Save date</button>' : '') + '</p>' +
       '<div class="seg" role="group" aria-label="Job view">' + tabs.map((t) => tabButton(t.family, t.label)).join('') + tabButton('history', 'History') + '</div>' +
-      '<div style="margin-top:10px">' + body + '</div></div>';
+      '<div style="margin-top:10px">' + body + (tab === 'plates' && job.can_swap ? swapHtml() : '') + '</div></div>';
+  }
+
+  // Substitute… (J319, J321): the plate planned is a plate line or a plate
+  // swapped in (to swap back); the plate used, any active plate but that one.
+  function swapHtml() {
+    const s = opened.swap;
+    if (!s) return '<p><button type="button" class="ghost" id="swap-open">Substitute…</button></p>';
+    const { lines, swaps, plates } = opened.view;
+    const planned = new Map([...lines.filter((l) => l.family === 'plates').map((l) => [l.item_id, l.label]),
+      ...swaps.map((w) => [w.used_id, w.used])]);
+    const option = ([id, label], picked) => '<option value="' + id + '"' + (String(id) === picked ? ' selected' : '') + '>' + esc(label) + '</option>';
+    return '<p>Substitute <select id="swap-planned" aria-label="Plate planned">' + [...planned].map((p) => option(p, s.planned)).join('') +
+      '</select> with <select id="swap-used" aria-label="Plate used"><option value="">Pick a plate</option>' +
+      plates.filter((p) => String(p.id) !== s.planned).map((p) => option([p.id, p.label], s.used)).join('') +
+      '</select> <input type="number" id="swap-quantity" min="1" step="1" value="' + esc(s.quantity) + '" aria-label="Pieces swapped"> pieces ' +
+      '<button type="button" id="swap-save">Save swap</button> <button type="button" class="ghost" id="swap-cancel">Cancel</button></p>';
+  }
+
+  // One request, built once with its retry key, as for marking; a swap near
+  // a count asks "before or after the count?" first, as Built does.
+  async function saveSwap(request) {
+    say('');
+    try {
+      const { job } = await send('/api/jobs/swap', request);
+      opened.swap = null;
+      say('Job ' + job.number + ': ' + fmtInt(job.swap.quantity) + ' of ' + job.swap.planned + ' swapped to ' + job.swap.used + '.', 'ok');
+      loadBoard();
+    } catch (err) {
+      if (askTiming(err, (timing) => saveSwap({ ...request, timing }))) return;
+      say(err.message, 'bad', err.unconfirmed ? () => saveSwap(request) : null);
+      if (!err.unconfirmed) loadBoard();
+    }
   }
 
   async function toggleJob(number) {
@@ -253,11 +287,18 @@
   el('rows').addEventListener('change', (e) => {
     if (e.target.classList.contains('select')) pick(e.target);
     showSelected();
+    if (e.target.id === 'swap-used') opened.swap.used = e.target.value;
+    if (e.target.id === 'swap-planned') {
+      opened.swap.planned = e.target.value;
+      if (opened.swap.used === e.target.value) opened.swap.used = '';
+      paint();
+    }
   });
   el('rows').addEventListener('input', (e) => {
     // A part-typed date reads as blank; keep no draft of it, or a repaint
     // would turn it into a valid blank that clears the date.
     if (e.target.id === 'date') opened.draft = e.target.validity.badInput ? undefined : e.target.value;
+    if (e.target.id === 'swap-quantity') opened.swap.quantity = e.target.value;
   });
   el('head').addEventListener('change', (e) => {
     if (e.target.id !== 'select-all') return;
@@ -350,6 +391,17 @@
     if (e.target.id === 'save-date') {
       if (el('date').validity.badInput) say('Type the whole date. To remove the date, clear the box.', 'bad');
       else saveDate({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version, delivery_date: el('date').value });
+    }
+    if (e.target.id === 'swap-open') {
+      const first = opened.view.lines.find((l) => l.family === 'plates');
+      opened.swap = { planned: String(first.item_id), used: '', quantity: '' };
+      paint();
+    }
+    if (e.target.id === 'swap-cancel') { opened.swap = null; paint(); }
+    if (e.target.id === 'swap-save') {
+      const { planned, used, quantity } = opened.swap;
+      saveSwap({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version,
+        planned: Number(planned), used: used ? Number(used) : null, quantity: Number(quantity) });
     }
   });
 
