@@ -969,13 +969,16 @@
   // by lineFlags in src/inventory/planner-inventory.js): when it was last counted,
   // and a Retired or Not in the catalog chip with what fixes it. A button
   // carries only its line's key; planner.html looks the flag up and saves.
+  // Its id, from its action, family and line, is the same when the page
+  // draws the line again, so AppHeader.busy refuses the new button's click
+  // while the first save runs (PR #167 review, F1).
   // Lumber and LVL lines name no one item, so they link to Overview's
   // "+ Add item" instead (Q186), which starts with `fill`: the line's own name
   // fields, as Overview's add form names them (Q210).
   function flagsHtml(flag, key, family, fill) {
     if (!flag) return '';
     const button = (act, label, busy) =>
-      ' <button type="button" class="ghost flag-btn" data-flag-do="' + act + '" data-flag-key="' + esc(key) + '" data-busy="' + busy + '">' + label + '</button>';
+      ' <button type="button" class="ghost flag-btn" id="' + esc(['flag', act, family, encodeURIComponent(key)].join('-')) + '" data-flag-do="' + act + '" data-flag-key="' + esc(key) + '" data-busy="' + busy + '">' + label + '</button>';
     let h = '';
     if (flag.retired) h += ' <span class="chip warn">Retired</span>' + button('unretire', 'Un-retire', 'Saving…');
     if (flag.notInCatalog) {

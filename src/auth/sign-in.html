@@ -58,9 +58,12 @@
 (() => {
   const el = (id) => document.getElementById(id);
   // Deliberately not AppHeader.busy: app-header.js is not on the signed-out
-  // open list (src/app.js, OPEN), and opening it to load one helper widens
-  // what a stranger can fetch. The button reads as busy does (#166), and
-  // stays off when sign-in succeeds, until the next page loads.
+  // open list (src/app.js, OPEN), and its start-up code expects a signed-in
+  // page: here it throws on the missing #theme-btn, so AppHeader is never
+  // set. With a header added, its /api/me check would send a signed-out
+  // person to /sign-in, this page, again and again. The button reads as
+  // busy does (#166), and stays off when sign-in succeeds, until the next
+  // page loads.
   el('form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const text = el('submit').textContent;
