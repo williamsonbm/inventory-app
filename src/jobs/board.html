@@ -33,7 +33,8 @@
   Cancel job, Un-build and Un-ship on each row, one job at a time, after a confirmation (#101, J86, J87).
   The board sorts by any column, searches job number or name, filters by status and family; a job's row
   opens its job view below it: a tab per family, History, and its delivery date to edit (#102). A built
-  job's Plates tab shows its swaps and takes a new one, Substitute… (#106, J319–J321).
+  job's Plates tab shows its swaps and takes a new one, Substitute… (#106, J319–J321). A shipped job
+  takes a return from the job site on its Hangers and LVL tabs, Return… (#107, J330, J342, J343).
 
   Glue, NOT UNIT-TESTED: the drop area and the table need a browser, and this
   repo has no DOM harness. Reading the sheet, matching its lines, the refusals
@@ -43,7 +44,7 @@
   an undo gives back and the undo itself. The board's filter is
   PlannerUI.boardJobs and the job view's tabs PlannerUI.jobTabs (swaps included), both
   tested in test/planner-ui.test.js; the view's data, the
-  delivery date save and the swap over HTTP and in the database.
+  delivery date save and the swap over HTTP and in the database, the return in the database.
 
   The batch screen (#103): the sheets the Planner sends through
   sessionStorage `jobs.sheets`, read once at load; checkAll, leftOut, going,
@@ -147,7 +148,8 @@
   ];
   // The job open below its row: its view as last loaded, the tab shown, and
   // a date typed but not saved (`draft`), and Substitute… while it is open
-  // (`swap`: the plates and pieces picked so far). The jobs selected, by number, kept
+  // (`swap`: the plates and pieces picked so far), and Return… while it is open
+  // (`ret`: the item, pieces and length typed so far). The jobs selected, by number, kept
   // across searches and filters until marked.
   let opened = null;
   const picked = new Set();
@@ -202,16 +204,18 @@
 
   // One job's view (#102): its delivery date, to edit unless it is
   // cancelled (J103); a tab per family on the job (PlannerUI.jobTabs), and
-  // History, who did what and when (story 43).
+  // History, who did what and when (story 43). Substitute… is on the Plates
+  // tab; Return… on a tab with items to return, Hangers and LVL (J343).
   async function loadView(number) {
     const [body] = (await getAll(['/api/jobs/view?' + new URLSearchParams({ number })])) ?? [];
     if (body) opened = { tab: opened?.number === number ? opened.tab : null, number, view: body };
   }
 
   function viewHtml() {
-    const { job, history } = opened.view;
+    const { job, history, returnable } = opened.view;
     const { tabs, open } = jobTabs({ number: job.number, lines: opened.view.lines, swaps: opened.view.swaps }, families, family);
     const tab = tabs.some((t) => t.family === opened.tab) || opened.tab === 'history' ? opened.tab : open || 'history';
+    const returning = returnable.filter((i) => i.family === tab);
     const tabButton = (code, label) => '<button type="button" data-tab="' + code + '" aria-pressed="' + (code === tab) + '">' + esc(label) + '</button>';
     const body = renderBreakdown(tab === 'history'
       ? [{ heading: 'History — newest first', columns: [{ label: 'When (Eastern)' }, { label: 'Who' }, { label: 'Action' }, { label: 'Change' }],
@@ -222,8 +226,12 @@
       (job.can_set_date ? ' <input type="date" id="date" value="' + esc(opened.draft ?? job.delivery_date ?? '') + '" aria-label="New delivery date"> ' +
         '<button type="button" class="ghost" id="save-date">Save date</button>' : '') + '</p>' +
       '<div class="seg" role="group" aria-label="Job view">' + tabs.map((t) => tabButton(t.family, t.label)).join('') + tabButton('history', 'History') + '</div>' +
-      '<div style="margin-top:10px">' + body + (tab === 'plates' && job.can_swap ? swapHtml() : '') + '</div></div>';
+      '<div style="margin-top:10px">' + body + (tab === 'plates' && job.can_swap ? swapHtml() : '') +
+      (returning.length ? returnHtml(returning) : '') + '</div></div>';
   }
+
+  // One <option> of a form's select, selected when its id is the one `picked`.
+  const option = ([id, label], picked) => '<option value="' + id + '"' + (String(id) === picked ? ' selected' : '') + '>' + esc(label) + '</option>';
 
   // Substitute… (J319, J321): the plate planned is a plate line or a plate
   // swapped in (to swap back); the plate used, any active plate but that one.
@@ -233,7 +241,6 @@
     const { lines, swaps, plates } = opened.view;
     const planned = new Map([...lines.filter((l) => l.family === 'plates').map((l) => [l.item_id, l.label]),
       ...swaps.map((w) => [w.used_id, w.used])]);
-    const option = ([id, label], picked) => '<option value="' + id + '"' + (String(id) === picked ? ' selected' : '') + '>' + esc(label) + '</option>';
     return '<p>Substitute <select id="swap-planned" aria-label="Plate planned">' + [...planned].map((p) => option(p, s.planned)).join('') +
       '</select> with <select id="swap-used" aria-label="Plate used"><option value="">Pick a plate</option>' +
       plates.filter((p) => String(p.id) !== s.planned).map((p) => option([p.id, p.label], s.used)).join('') +
@@ -241,18 +248,36 @@
       '<button type="button" id="swap-save">Save swap</button> <button type="button" class="ghost" id="swap-cancel">Cancel</button></p>';
   }
 
-  // One request, built once with its retry key, as for marking; a swap near
-  // a count asks "before or after the count?" first, as Built does.
-  async function saveSwap(request) {
+  // Return… (J342, J343): `items`, the job's items of the tab's family that
+  // come back; an LVL is picked by product and depth and its actual length
+  // typed (Q11).
+  function returnHtml(items) {
+    const r = opened.ret;
+    if (!r) return '<p><button type="button" class="ghost" id="return-open">Return…</button></p>';
+    return '<p>Returned from the job site: <select id="return-item" aria-label="Item returned"><option value="">Pick an item</option>' +
+      items.map((i) => option([i.id, i.label], r.item)).join('') +
+      '</select> <input type="number" id="return-quantity" min="1" step="1" value="' + esc(r.quantity) + '" aria-label="Pieces returned"> pieces' +
+      (returnByLength() ? ' at <input type="number" id="return-length" min="1" step="1" value="' + esc(r.length) + '" aria-label="Actual length in feet">′' : '') +
+      ' <button type="button" id="return-save">Save return</button> <button type="button" class="ghost" id="return-cancel">Cancel</button></p>';
+  }
+
+  // Whether the item picked on Return… is an LVL, returned at a length.
+  const returnByLength = () => opened.view.returnable.find((i) => String(i.id) === opened.ret.item)?.by_length;
+
+  // Substitute… or Return…: one request to `route`, built once with its
+  // retry key, as for marking; near a count it asks "before or after the
+  // count?" first, as Built does. Saved, it closes the open form `form` and
+  // says the job's answer as `said` words it.
+  async function saveOnJob(route, form, said, request) {
     say('');
     try {
-      const { job } = await send('/api/jobs/swap', request);
-      opened.swap = null;
-      say('Job ' + job.number + ': ' + fmtInt(job.swap.quantity) + ' of ' + job.swap.planned + ' swapped to ' + job.swap.used + '.', 'ok');
+      const { job } = await send(route, request);
+      opened[form] = null;
+      say(said(job), 'ok');
       loadBoard();
     } catch (err) {
-      if (askTiming(err, (timing) => saveSwap({ ...request, timing }))) return;
-      say(err.message, 'bad', err.unconfirmed ? () => saveSwap(request) : null);
+      if (askTiming(err, (timing) => saveOnJob(route, form, said, { ...request, timing }))) return;
+      say(err.message, 'bad', err.unconfirmed ? () => saveOnJob(route, form, said, request) : null);
       if (!err.unconfirmed) loadBoard();
     }
   }
@@ -288,6 +313,7 @@
     if (e.target.classList.contains('select')) pick(e.target);
     showSelected();
     if (e.target.id === 'swap-used') opened.swap.used = e.target.value;
+    if (e.target.id === 'return-item') { opened.ret.item = e.target.value; paint(); }
     if (e.target.id === 'swap-planned') {
       opened.swap.planned = e.target.value;
       if (opened.swap.used === e.target.value) opened.swap.used = '';
@@ -299,6 +325,8 @@
     // would turn it into a valid blank that clears the date.
     if (e.target.id === 'date') opened.draft = e.target.validity.badInput ? undefined : e.target.value;
     if (e.target.id === 'swap-quantity') opened.swap.quantity = e.target.value;
+    if (e.target.id === 'return-quantity') opened.ret.quantity = e.target.value;
+    if (e.target.id === 'return-length') opened.ret.length = e.target.value;
   });
   el('head').addEventListener('change', (e) => {
     if (e.target.id !== 'select-all') return;
@@ -387,7 +415,7 @@
     const opening = e.target.closest('[data-open]');
     if (opening) toggleJob(opening.dataset.open);
     const tab = e.target.closest('[data-tab]');
-    if (tab) { opened.tab = tab.dataset.tab; paint(); }
+    if (tab) { opened.tab = tab.dataset.tab; opened.ret = null; paint(); }
     if (e.target.id === 'save-date') {
       if (el('date').validity.badInput) say('Type the whole date. To remove the date, clear the box.', 'bad');
       else saveDate({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version, delivery_date: el('date').value });
@@ -398,9 +426,19 @@
       paint();
     }
     if (e.target.id === 'swap-cancel') { opened.swap = null; paint(); }
+    if (e.target.id === 'return-open') { opened.ret = { item: '', quantity: '', length: '' }; paint(); }
+    if (e.target.id === 'return-cancel') { opened.ret = null; paint(); }
+    if (e.target.id === 'return-save') {
+      const { item, quantity, length } = opened.ret;
+      saveOnJob('/api/jobs/return', 'ret', ({ number, returned: r }) => 'Job ' + number + ': ' + fmtInt(r.quantity) + ' of ' + r.item +
+        ' returned from the job site' + (r.added ? ', added as Non-Stock' : '') + '.',
+      { key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version,
+        item: item ? Number(item) : null, quantity: Number(quantity), length_ft: returnByLength() ? Number(length) : null });
+    }
     if (e.target.id === 'swap-save') {
       const { planned, used, quantity } = opened.swap;
-      saveSwap({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version,
+      saveOnJob('/api/jobs/swap', 'swap', ({ number, swap: w }) => 'Job ' + number + ': ' + fmtInt(w.quantity) + ' of ' + w.planned + ' swapped to ' + w.used + '.',
+      { key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version,
         planned: Number(planned), used: used ? Number(used) : null, quantity: Number(quantity) });
     }
   });

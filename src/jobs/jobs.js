@@ -577,11 +577,12 @@ function listJobs(database) {
 // (as inv.set_delivery_date allows), its version for that; its current
 // sheet's lines, each an item's name without the length (J105), in the
 // Planner's order; and its History, newest first: who did what, when, and
-// the change in the Activity Log's words.
+// the change in the Activity Log's words, a Reverse of one of its returns
+// included (PR #156 review F1).
 async function jobView(database, number) {
   const [job] = await database.read(`
     SELECT j.id, j.number, j.version, j.delivery_date::text AS delivery_date, j.delivery_date_edited,
-           j.status <> 'cancelled' AS can_set_date, j.status = 'built' AS can_swap,
+           j.status <> 'cancelled' AS can_set_date, j.status = 'built' AS can_swap, j.status = 'shipped' AS can_return,
            coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
                               'item_id', i.id, 'family', i.family, 'label', n.label, 'length_ft', i.length_ft, 'quantity', l.quantity,
                               'menu_key', i.size || '|' || i.grade)
@@ -597,12 +598,18 @@ async function jobView(database, number) {
   const lines = rows.sort((a, b) => FAMILY_ORDER.indexOf(a.family) - FAMILY_ORDER.indexOf(b.family)
       || (a.family === 'lumber' ? compareMenuKeys(a.menu_key, b.menu_key) : 0))
     .map(({ menu_key, ...line }) => line);
-  // History, the swaps, and the plates a swap may pick as used (J319):
-  // every active one, the plate planned included, which the page leaves out.
-  const [history, swapped, plates] = await Promise.all([database.read(`
-    SELECT l.action, l.at, u.name AS by, l.old_value, l.new_value
+  // History, the swaps, the plates a swap may pick as used (J319): every
+  // active one, the plate planned included, which the page leaves out; and
+  // what a return may pick (J342): each active item on the job's sheet of a
+  // family that comes back and is live in Inventory, with its family's code,
+  // for its tab (J343); one with a length (LVL) once per product and depth, its
+  // length typed (Q11), as inv.refuse_off_job takes it.
+  const [history, swapped, plates, returnable] = await Promise.all([database.read(`
+    SELECT l.action, l.target_table, l.at, u.name AS by, l.old_value, l.new_value
       FROM inv.activity_log l JOIN inv.users u ON u.id = l.actor_id
-     WHERE l.target_table = 'jobs' AND l.target_id = $1 ORDER BY l.id DESC`, [id]),
+     WHERE (l.target_table = 'jobs' AND l.target_id = $1)
+        OR l.id IN (SELECT v.action_id FROM inv.ledger v WHERE v.job_id = $1)
+     ORDER BY l.id DESC`, [id]),
     database.read(`
     SELECT p.item_id::int AS planned_id, inv.item_name(pi) AS planned, u.item_id::int AS used_id, inv.item_name(ui) AS used,
            p.quantity::int AS quantity
@@ -615,9 +622,16 @@ async function jobView(database, number) {
      ORDER BY p.id`, [id]),
     !job.can_swap ? [] : database.read(`
     SELECT i.id::int, inv.item_name(i) AS label FROM inv.items i
-     WHERE i.family = 'plates' AND i.active ORDER BY 2`)]);
-  return { status: 200, body: { ok: true, job: shown, lines, swaps: netSwaps(swapped), plates,
-    history: history.map((h) => ({ action: h.action, at: h.at, by: h.by, change: describeChange(h.action, 'jobs', h.old_value, h.new_value) })) } };
+     WHERE i.family = 'plates' AND i.active ORDER BY 2`),
+    !job.can_return ? [] : database.read(`
+    SELECT pg_catalog.min(i.id)::int AS id, i.family, inv.item_name(i) AS label, pg_catalog.bool_or(i.length_ft IS NOT NULL) AS by_length
+      FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id JOIN inv.families f ON f.code = i.family
+     WHERE l.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = $1 ORDER BY s.revision DESC LIMIT 1)
+       AND f.returnable AND f.live AND i.active
+     GROUP BY i.family, inv.item_name(i), CASE WHEN i.length_ft IS NULL THEN i.id END
+     ORDER BY 3`, [id])]);
+  return { status: 200, body: { ok: true, job: shown, lines, swaps: netSwaps(swapped), plates, returnable,
+    history: history.map((h) => ({ action: h.action, at: h.at, by: h.by, change: describeChange(h.action, h.target_table, h.old_value, h.new_value) })) } };
 }
 
 // A job's swaps (J320) as each pair of plates nets out: a swap back
@@ -641,6 +655,15 @@ function netSwaps(swapped) {
 // timed by `timing`, the answer to "before or after the count?".
 async function swapPlate(database, person, { key, number, version, planned, used, quantity, timing = null } = {}) {
   const job = await database.save('swap_plate', [person.id, key, number, version, planned, used, quantity, timing]);
+  return { status: 200, body: { ok: true, job } };
+}
+
+// Records `quantity` of item `item` returned from the job site on shipped
+// job `number`, as the job view showed it at `version` (story 46, Q7); LVL
+// at `length_ft`, its actual length (Q11); timed by `timing`, the answer to
+// "before or after the count?".
+async function recordReturn(database, person, { key, number, version, item, quantity, length_ft = null, timing = null } = {}) {
+  const job = await database.save('record_return', [person.id, key, number, version, item, quantity, length_ft, timing]);
   return { status: 200, body: { ok: true, job } };
 }
 
@@ -670,4 +693,4 @@ async function jobsBeforeCount(database, family) {
   return { status: 200, body: { ok: true, consumed_when: found.consumed_when, jobs } };
 }
 
-module.exports = { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, jobsBeforeCount };
+module.exports = { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, recordReturn, jobsBeforeCount };

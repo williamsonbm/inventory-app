@@ -2,7 +2,7 @@
 // at a time. Filters by person, by date range, by action and by family.
 //
 // A row's family (story 56) is its item's, or its PO lines', or the items its
-// ledger rows hold (a receipt, correction, trim or reversal); lumber lengths
+// ledger rows hold (a receipt, correction, trim, return or reversal); lumber lengths
 // and grade redirects are Lumber's, LVL depth thresholds LVL's. A row with no
 // family (a person, a supplier, a reason, the catalog import) shows only under
 // All (Q66). The family list rides along for the page's family bar.
@@ -52,7 +52,8 @@ async function readActivity(database, { person, action, family, from, to, before
                THEN EXISTS (SELECT FROM inv.families f WHERE f.code = $7 AND f.name = l.new_value ->> 'name')
              WHEN l.target_table = 'counts'
                THEN EXISTS (SELECT FROM inv.counts c WHERE c.id = l.target_id AND c.family = $7)
-             WHEN l.target_table = 'jobs'
+             -- A return is its item's family's, not every family on the job's sheet: its ledger row's, below.
+             WHEN l.target_table = 'jobs' AND l.action <> 'record return'
                THEN EXISTS (SELECT FROM inv.job_sheets js JOIN inv.job_lines jl ON jl.sheet_id = js.id
                               JOIN inv.items i ON i.id = jl.item_id
                              WHERE js.job_id = l.target_id AND i.family = $7)
@@ -150,7 +151,7 @@ const timed = (row) => (row.timed
   ? `; timed ${row.timed.before ? 'before' : 'after'} the count of ${officeTime.format(new Date(row.timed.counted_at))}` : '');
 
 // The entry a reversal undoes, by the action that wrote it.
-const ENTRY_NAMES = { receive: 'the receipt', correct: 'the correction', trim: 'the trim' };
+const ENTRY_NAMES = { receive: 'the receipt', correct: 'the correction', trim: 'the trim', 'record return': 'the return' };
 
 // What a receipt brought, line by line, with the PO line each went on and
 // how it came, then its Bill of Lading and any pack size it put on file
@@ -260,6 +261,10 @@ const CHANGED = {
   'set delivery date': (was, now) => `delivery date: ${was.delivery_date ?? 'none'} → ${now.delivery_date ?? 'none'}`,
   // A swap on a built job's plate line (#106, J320).
   'swap plate': (_, now) => `${now.swap.quantity} of ${now.swap.planned} swapped to ${now.swap.used}${timed(now)}`,
+  // A return from the job site on a shipped job (#107); a new LVL length is
+  // added as Non-Stock (Q21).
+  'record return': (_, now) => `${now.returned.quantity} of ${now.returned.item} returned from the job site${
+    now.returned.added ? ', added as Non-Stock' : ''}${timed(now)}`,
   // A revised sheet (#120): its revision, and its name and date when they changed.
   'commit job': (was, now) => [`revision ${was.revision} → ${now.revision}`,
     ...(was.name !== now.name ? [`name: ${was.name ?? 'none'} → ${now.name ?? 'none'}`] : []),
