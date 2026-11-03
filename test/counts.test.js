@@ -30,6 +30,30 @@ async function monthBefore(db, at) {
     (await owner.query("SELECT pg_catalog.to_char(inv.month_before($1), 'YYYY-MM') AS month", [at])).rows[0].month);
 }
 
+// The server process behind `client`, as pg_stat_activity names it.
+async function backendPid(client) {
+  return (await client.query('SELECT pg_catalog.pg_backend_pid() AS pid')).rows[0].pid;
+}
+
+// Resolves once the session `pid` is waiting on a lock, read as the owner,
+// who sees every session. A fixed wait instead lets a slow statement arrive
+// after the lock is gone, and the test passes without the wait it names.
+// `racing`, that session's statement, settled to its result or its error:
+// if it settles first, the test fails with what it settled to.
+async function waitingOnLock(db, pid, racing) {
+  let settled;
+  racing.then((outcome) => { settled = outcome; });
+  return as(db, null, async (owner) => {
+    for (const deadline = Date.now() + 10_000; Date.now() < deadline;) {
+      if (settled !== undefined) assert.fail(`session ${pid} finished before it waited on a lock: ${settled.message ?? settled}`);
+      const { rows } = await owner.query('SELECT wait_event_type FROM pg_catalog.pg_stat_activity WHERE pid = $1', [pid]);
+      if (rows[0]?.wait_event_type === 'Lock') return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert.fail(`session ${pid} never waited on a lock`);
+  });
+}
+
 test('a count closes the month before the one it was taken in, in the office\'s time zone (S10)', async () => {
   const db = await freshDatabase();
   assert.equal(await monthBefore(db, '2026-07-03 08:00:00-04'), '2026-06', 'July 3 closes June');
@@ -226,10 +250,9 @@ test('two submits of one item at the same moment: the second waits for the first
     await first.query('BEGIN');
     await submitIn(first, one);
     await second.query('BEGIN');
+    const pid = await backendPid(second);
     const racing = submitIn(second, two).then(() => 'submitted', (e) => e);
-    // The second submit is waiting on the first's lock: still unsettled.
-    const early = await Promise.race([racing, new Promise((r) => setTimeout(() => r('waiting'), 300))]);
-    assert.equal(early, 'waiting', 'the second submit waits while the first is open');
+    await waitingOnLock(db, pid, racing);  // the second submit waits while the first is open
     await first.query('COMMIT');
     const outcome = await racing;
     await second.query('ROLLBACK');
@@ -526,10 +549,12 @@ test('two people approving two August monthly counts at the same moment: the sec
   await as(db, APP, (a) => as(db, APP, async (b) => {
     await a.query('BEGIN');
     await approve(a, first);
-    const racing = approve(b, second);  // waits on the index until the first one commits
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    const pid = await backendPid(b);
+    const racing = approve(b, second).then(() => 'approved', (e) => e);
+    await waitingOnLock(db, pid, racing);  // on the index, until the first one commits
     await a.query('COMMIT');
-    const err = await racing.then(() => assert.fail('the second approval should be refused'), (e) => e);
+    const err = await racing;
+    assert.notEqual(err, 'approved', 'the second approval should be refused');
     assert.deepEqual([err.code, err.message], ['IV422', 'Hangers already has an approved monthly count closing August 2026.']);
   }));
 });
