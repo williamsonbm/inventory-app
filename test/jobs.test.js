@@ -2091,6 +2091,8 @@ test('the swap route saves a swap on a built job; the job view offers Substitute
     { planned_id: planned.id, planned: 'MT20 3x4', used_id: other.id, used: 'MT20 5x8', quantity: 10 },
   ], '40 swapped to MT20 4x6, 15 of them back; 10 to MT20 5x8');
   assert.deepEqual(after.history.slice(0, 3).map((h) => h.action), ['swap plate', 'swap plate', 'swap plate']);
+  const filed = async (family) => (await (await get(ctx.base, `/api/activity?action=swap+plate&family=${family}`, ctx.cookie)).json()).entries.length;
+  assert.deepEqual([await filed('plates'), await filed('hangers')], [3, 0], 'a swap is Plates\', not every family on the job\'s sheet (#157)');
 
   assert.equal((await swap(used, planned, 25, 5)).status, 200);
   assert.deepEqual((await view()).swaps.map((w) => [w.used, w.quantity]), [['MT20 5x8', 10]], 'a swap swapped all the way back is gone');

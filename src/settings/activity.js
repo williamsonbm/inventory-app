@@ -52,8 +52,8 @@ async function readActivity(database, { person, action, family, from, to, before
                THEN EXISTS (SELECT FROM inv.families f WHERE f.code = $7 AND f.name = l.new_value ->> 'name')
              WHEN l.target_table = 'counts'
                THEN EXISTS (SELECT FROM inv.counts c WHERE c.id = l.target_id AND c.family = $7)
-             -- A return is its item's family's, not every family on the job's sheet: its ledger row's, below.
-             WHEN l.target_table = 'jobs' AND l.action <> 'record return'
+             -- A return or a swap is its items' family's, not every family on the job's sheet: its ledger rows', below (#157).
+             WHEN l.target_table = 'jobs' AND l.action NOT IN ('record return', 'swap plate')
                THEN EXISTS (SELECT FROM inv.job_sheets js JOIN inv.job_lines jl ON jl.sheet_id = js.id
                               JOIN inv.items i ON i.id = jl.item_id
                              WHERE js.job_id = l.target_id AND i.family = $7)
