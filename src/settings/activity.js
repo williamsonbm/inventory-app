@@ -2,7 +2,7 @@
 // at a time. Filters by person, by date range, by action and by family.
 //
 // A row's family (story 56) is its item's, or its PO lines', or the items its
-// ledger rows hold (a receipt, correction, trim, return or reversal); lumber lengths
+// ledger rows hold (a receipt, correction, trim, return, plate swap or reversal); lumber lengths
 // and grade redirects are Lumber's, LVL depth thresholds LVL's. A row with no
 // family (a person, a supplier, a reason, the catalog import) shows only under
 // All (Q66). The family list rides along for the page's family bar.
