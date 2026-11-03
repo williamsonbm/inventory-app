@@ -757,9 +757,9 @@
   el('show-retired').addEventListener('change', paint);
 
   // The name fields of a family, as inputs, filled from `item` when given.
-  // A field with fixed choices (lumber sizes) is picked from them, never typed.
+  // A field with fixed choices (lumber sizes, LVL depths) is picked from them, never typed.
   // The longest each typed name field may be, as the database refuses (migration 004).
-  const MAX_LENGTH = { sku: 30, product: 60, size: 10, grade: 20 };
+  const MAX_LENGTH = { sku: 30, product: 60, grade: 20 };
   function identityInputs(fam, item) {
     const f = families.find((x) => x.code === fam);
     const value = (field) => item?.[field] ?? '';
