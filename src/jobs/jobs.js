@@ -303,8 +303,10 @@ function sheetChanges(current, rows, consumed = () => undefined) {
 // lists a changed sheet's `changes` and the `refusal` the commit gives
 // (S30, J155). No other job's line asks for a fix: the commit then answers
 // "unchanged" or "already shipped" ….
-async function checkSheet(database, { file } = {}) {
-  const { refusal, sheet, rows, plan } = await matchSheet(database, file);
+// `catalog`, when given, is the catalog as readCatalogKeys read it, for a
+// caller that checks many sheets (#151).
+async function checkSheet(database, { file } = {}, catalog) {
+  const { refusal, sheet, rows, plan } = await matchSheet(database, file, catalog);
   if (refusal) return refusal;
   const { job_number: number, job_name: name, delivery_date } = sheet.meta;
   const [found] = await database.read(`
@@ -346,6 +348,33 @@ async function checkSheet(database, { file } = {}) {
     // LVL's linear feet per depth, as the Planner shows them (Q59).
     lvl_by_depth: planLvl([{ name: 'sheet', text: file.text }]).jobs[0].byDepth.map(({ label, lf }) => ({ label, lf })),
     warnings: sheet.warnings, ...revision } };
+}
+
+// Many sheets checked in one request, the catalog read once (#151): each
+// sheet's answer as its own check gives it, and for a sheet that reads, its
+// `left_out`: why a batch commit leaves it out, in the words a batch commit
+// with it refuses, or null. A job on two sheets is the page's to settle: it
+// keeps the first, and a Remove changes which is first.
+async function checkSheets(database, { files } = {}) {
+  if (!Array.isArray(files) || files.length < 1 || files.length > 50) {
+    return { status: 400, body: { ok: false, error: 'Pick 1 to 50 sheets to check.' } };
+  }
+  const catalog = await readCatalogKeys(database);
+  const sheets = [];
+  for (const file of files) {
+    const { body } = await checkSheet(database, { file }, catalog);
+    sheets.push(body.ok ? { ...body, left_out: leftOut(body) } : body);
+  }
+  return { status: 200, body: { ok: true, sheets } };
+}
+// The words are inv.commit_jobs's refusals (migrations/020-commit-many-and-
+// already-handled.sql); a test pins the two together (PR #165 review, finding 3).
+function leftOut({ job, cancelled, refusal }) {
+  if (refusal) return refusal;
+  if (cancelled) return `Job ${job.number} was ${cancelled.handled}: commit its sheet on its own.`;
+  if (!job.status) return null;
+  return job.unchanged ? `Job ${job.number} already has this sheet; nothing to commit.`
+    : `Job ${job.number} is already in the app, and this is a revised sheet: commit it on its own.`;
 }
 
 // What a refused commit's flagged lines need, as one sentence.
@@ -693,4 +722,4 @@ async function jobsBeforeCount(database, family) {
   return { status: 200, body: { ok: true, consumed_when: found.consumed_when, jobs } };
 }
 
-module.exports = { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, recordReturn, jobsBeforeCount };
+module.exports = { checkSheet, checkSheets, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, recordReturn, jobsBeforeCount };
