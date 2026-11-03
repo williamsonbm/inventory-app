@@ -1,12 +1,12 @@
 // =============================================================
-// test/app-header.test.js — the date helper and the changed-form check in
-// the shared page header.
+// test/app-header.test.js — the date helper, the changed-form check and the
+// busy button in the shared page header.
 // Run with: node --test test/app-header.test.js
 // app-header.js is browser code with no module.exports, and the rest of it
 // (theme switch, sign-out, family bar) needs a DOM and is checked by hand.
-// This loads it in a Node vm with stub DOM objects and calls showDay and
-// changed only. changed reads plain properties, so plain objects stand in
-// for a form's boxes.
+// This loads it in a Node vm with stub DOM objects and calls showDay,
+// changed and busy only. changed and busy read plain properties, so plain
+// objects stand in for a form's boxes and a button.
 // =============================================================
 
 const { test } = require('node:test');
@@ -86,4 +86,68 @@ test('changed: a pick list starts on its marked option, or on its first if none 
 test('changed: a button is no box', () => {
   const { changed } = loadAppHeader();
   assert.equal(changed(form(box('Save', '', { tagName: 'BUTTON' }))), false);
+});
+
+// A button as busy reads and sets it. `save` resolves when the test says so.
+const button = (textContent, busyText) => ({ disabled: false, textContent, dataset: busyText ? { busy: busyText } : {} });
+const held = () => {
+  let done;
+  const save = () => new Promise((resolve) => { done = resolve; });
+  return { save, done: () => done() };
+};
+
+test('busy: the button is off and says what runs until the save ends, then is back as it was', async () => {
+  const { busy } = loadAppHeader();
+  const b = button('Commit 2 jobs', 'Committing…');
+  const s = held();
+  const running = busy(b, s.save);
+  assert.deepEqual([b.disabled, b.textContent], [true, 'Committing…']);
+  s.done();
+  await running;
+  assert.deepEqual([b.disabled, b.textContent], [false, 'Commit 2 jobs']);
+});
+
+test('busy: a button with no busy text of its own says "Saving…"', async () => {
+  const { busy } = loadAppHeader();
+  const b = button('Save date');
+  const s = held();
+  const running = busy(b, s.save);
+  assert.equal(b.textContent, 'Saving…');
+  s.done();
+  await running;
+});
+
+test('busy: a second click while the save runs sends nothing (#152)', async () => {
+  const { busy } = loadAppHeader();
+  const b = button('Commit 2 jobs', 'Committing…');
+  const s = held();
+  let saves = 0;
+  const save = () => { saves++; return s.save(); };
+  const first = busy(b, save);
+  await busy(b, save);
+  assert.equal(saves, 1, 'the second click started a second save');
+  s.done();
+  await first;
+});
+
+test('busy: a button drawn again with the same id while the save runs sends nothing (PR #163 review, F2)', async () => {
+  const { busy } = loadAppHeader();
+  let open;
+  const reply = new Promise((resolve) => { open = resolve; });
+  let saves = 0;
+  const save = () => { saves++; return reply; };
+  const first = busy({ ...button('Save date'), id: 'save-date' }, save);
+  const second = busy({ ...button('Save date'), id: 'save-date' }, save);
+  assert.equal(saves, 1, 'the redrawn button started a second save');
+  open();
+  await Promise.all([first, second]);
+  await busy({ ...button('Save date'), id: 'save-date' }, async () => { saves++; });
+  assert.equal(saves, 2, 'after the save ends, the button saves again');
+});
+
+test('busy: a save that throws still puts the button back', async () => {
+  const { busy } = loadAppHeader();
+  const b = button('Save date');
+  await assert.rejects(busy(b, async () => { throw new Error('no reply'); }), /no reply/);
+  assert.deepEqual([b.disabled, b.textContent], [false, 'Save date']);
 });
