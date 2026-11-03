@@ -96,7 +96,7 @@
     </table></div>
     <div class="row" style="margin-top:10px">
       <button type="button" class="ghost" id="receipt-add">+ Add item</button>
-      <button id="receipt-save">Save receipt</button>
+      <button id="receipt-save" data-busy="Receiving…">Save receipt</button>
       <button type="button" class="ghost" id="receipt-cancel">Cancel</button>
     </div>
     <p class="sub">Fill in only what arrived; a line left empty receives nothing. Pieces received fills in from packs × pack size + loose. To have the two checked, type the total from the Bill of Lading over it: if they do not add up, nothing saves. Split a line to enter one item that came in packs of different sizes. A pack size typed here is kept on this line; it becomes the item's size on file only if the item has none of that kind.</p>
@@ -436,12 +436,11 @@
     if (bad) return bad.reportValidity();
     let route, body;
     try { [route, body] = request(); } catch (err) { return say(err.message, 'bad'); }
-    el('save').disabled = true;
-    save(route, body, (po) => {
+    AppHeader.busy(el('save'), () => save(route, body, (po) => {
       const word = editing ? ' was changed.' : ' was entered. Its lines show as Incoming on the Overview.';
       showForm(null);
       return 'PO ' + po.number + ' from ' + po.supplier + word;
-    }).finally(() => { el('save').disabled = false; });
+    }));
   });
 
   // Newest PO first: one shaded header row per PO (number, supplier, date,
@@ -752,8 +751,7 @@
     e.preventDefault();
     let body;
     try { body = receiptRequest(); } catch (err) { return say(err.message, 'bad'); }
-    el('receipt-save').disabled = true;
-    saveReceipt(body).finally(() => { el('receipt-save').disabled = false; });
+    AppHeader.busy(el('receipt-save'), () => saveReceipt(body));
   });
 
   load();

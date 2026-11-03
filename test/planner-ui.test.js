@@ -499,6 +499,16 @@ test('flagsHtml: not in the catalog adds in one click where the plan says how, e
   assert.ok(lvl.includes('href="/inventory?add=lvl&amp;size=9-1%2F2"'), 'LVL links to Overview, adding the line\'s depth (Q210)');
 });
 
+test('flagsHtml: each button reads busy while it saves, and a redrawn one keeps its id (#166, PR #167 review)', () => {
+  const html = flagsHtml({ retired: [{ id: 3, version: 2 }], notInCatalog: true, addToCatalog: {} }, 'HUS 26', 'hangers');
+  assert.ok(html.includes('data-flag-do="unretire"') && html.includes('data-busy="Saving…">Un-retire<'), 'Un-retire reads Saving…');
+  assert.ok(html.includes('data-busy="Adding…">Add to catalog<'), 'Add to catalog reads Adding…');
+  const ids = [...html.matchAll(/ id="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(ids, ['flag-unretire-hangers-HUS%2026', 'flag-add-hangers-HUS%2026'], 'one id per button, from its action, family and line, no spaces');
+  assert.equal(flagsHtml({ notInCatalog: true, addToCatalog: {} }, 'HUS 26', 'hangers').match(/ id="([^"]+)"/)[1], ids[1],
+    'the same line drawn again gets the same id, so busy refuses its click during the save');
+});
+
 test('flagsHtml: a lumber line the plan cannot place says so, with the reason, escaped (#99, J58)', () => {
   const html = flagsHtml({ notPlanned: 'Exceeds longest <16′>' }, 'k', 'lumber');
   assert.ok(html.includes('>Cannot be planned<'), 'the chip shows');

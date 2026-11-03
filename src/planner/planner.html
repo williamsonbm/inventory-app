@@ -111,7 +111,7 @@
       const button = e.target.closest('[data-flag-do]');
       if (!button) return;
       e.stopPropagation();
-      fixLine(family, button.dataset.flagDo, flagsShown[family][button.dataset.flagKey]);
+      AppHeader.busy(button, () => fixLine(family, button.dataset.flagDo, flagsShown[family][button.dataset.flagKey]));
     }, true);
     sec.querySelector('.print-one').addEventListener('click', () => printOnly(family));
   }
@@ -125,7 +125,7 @@
     if (!flag) return;
     const label = AppHeader.itemLabel;
     const n = act === 'unretire' ? flag.retired.length : 1;
-    saveAll(family, PlannerUI.flagFixes(act, flag), act === 'unretire'
+    return saveAll(family, PlannerUI.flagFixes(act, flag), act === 'unretire'
       ? (item) => label(item) + (n > 1 ? ' and ' + (n - 1) + ' more are' : ' is') + ' in use again.'
       : (item) => label(item) + ' was added to the catalog as Special Order, with no threshold.');
   }

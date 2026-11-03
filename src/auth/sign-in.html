@@ -57,9 +57,17 @@
 <script>
 (() => {
   const el = (id) => document.getElementById(id);
+  // Deliberately not AppHeader.busy: app-header.js is not on the signed-out
+  // open list (src/app.js, OPEN), and its start-up code expects a signed-in
+  // page: here it throws on the missing #theme-btn, so AppHeader is never
+  // set. With a header added, its /api/me check would send a signed-out
+  // person to /sign-in, this page, again and again. The button reads as
+  // busy does (#166), and stays off when sign-in succeeds, until the next
+  // page loads.
   el('form').addEventListener('submit', async (e) => {
     e.preventDefault();
-    el('submit').disabled = true;
+    const text = el('submit').textContent;
+    Object.assign(el('submit'), { disabled: true, textContent: 'Signing in…' });
     el('error').textContent = '';
     try {
       const res = await fetch('/api/sign-in', {
@@ -78,7 +86,7 @@
     } catch (err) {
       el('error').textContent = err instanceof SyntaxError || err instanceof TypeError
         ? 'The app is not answering. Try again in a minute.' : err.message;
-      el('submit').disabled = false;
+      Object.assign(el('submit'), { disabled: false, textContent: text });
     }
   });
 })();

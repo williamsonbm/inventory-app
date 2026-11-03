@@ -145,6 +145,14 @@ test('busy: a button drawn again with the same id while the save runs sends noth
   assert.equal(saves, 2, 'after the save ends, the button saves again');
 });
 
+// Receive's Save changes is Save PO again once the edited PO saves (#166).
+test('busy: a save that names the button anew keeps the new name', async () => {
+  const { busy } = loadAppHeader();
+  const b = button('Save changes');
+  await busy(b, async () => { b.textContent = 'Save PO'; });
+  assert.deepEqual([b.disabled, b.textContent], [false, 'Save PO']);
+});
+
 test('busy: a save that throws still puts the button back', async () => {
   const { busy } = loadAppHeader();
   const b = button('Save date');
