@@ -95,7 +95,7 @@
 <script>
 (async () => {
   const { esc, fmtInt, flagsHtml, sortRows, sortIcon, wireSort, jobTabs, boardJobs, renderBreakdown } = PlannerUI;
-  const { say, send, getAll, askTiming, showTime, showDate, showDay } = AppHeader;
+  const { say, send, getAll, askTiming, busy, showTime, showDate, showDay } = AppHeader;
   const el = (id) => document.getElementById(id);
   if (!await AppHeader.me) return;
 
@@ -354,9 +354,9 @@
       body.jobs.map((j) => '<li><b>Job ' + esc(j.number) + '</b>' + (j.name ? ' · ' + esc(j.name) : '') + ': ' +
         (j.lines.length ? j.lines.map(lineText).join(', ') : 'nothing left to consume') + '</li>').join('') + '</ul><p>' +
       '<button type="button" id="confirm-mark">Mark ' + to + '</button> <button type="button" class="ghost" id="cancel-mark">Cancel</button></p>';
-    el('confirm-mark').addEventListener('click', () => mark({
+    el('confirm-mark').addEventListener('click', (e) => busy(e.target, () => mark({
       key: crypto.randomUUID(), to, jobs: numbers.map((n) => ({ number: n, version: jobs.get(n).version })),
-    }));
+    })));
     el('cancel-mark').addEventListener('click', () => { el('confirm').innerHTML = ''; });
   }
 
@@ -390,7 +390,7 @@
       u.back + ': ' + (body.lines.length ? body.lines.map((l) => esc(l.quantity) + ' × ' + esc(l.item)).join(', ') : 'nothing') + '.</p><p>' +
       (u.note ? '<b>' + u.note + '</b>' : 'The job goes back to ' + esc(body.to) + '.') + '</p><p>' +
       '<button type="button" id="confirm-undo">' + u.label + '</button> <button type="button" class="ghost" id="keep-job">' + u.no + '</button></p>';
-    el('confirm-undo').addEventListener('click', () => undo({ key: crypto.randomUUID(), action, number, version: jobs.get(number).version }));
+    el('confirm-undo').addEventListener('click', (e) => busy(e.target, () => undo({ key: crypto.randomUUID(), action, number, version: jobs.get(number).version })));
     el('keep-job').addEventListener('click', () => { el('confirm').innerHTML = ''; });
   }
 
@@ -418,7 +418,7 @@
     if (tab) { opened.tab = tab.dataset.tab; opened.ret = null; paint(); }
     if (e.target.id === 'save-date') {
       if (el('date').validity.badInput) say('Type the whole date. To remove the date, clear the box.', 'bad');
-      else saveDate({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version, delivery_date: el('date').value });
+      else busy(e.target, () => saveDate({ key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version, delivery_date: el('date').value }));
     }
     if (e.target.id === 'swap-open') {
       const first = opened.view.lines.find((l) => l.family === 'plates');
@@ -430,16 +430,16 @@
     if (e.target.id === 'return-cancel') { opened.ret = null; paint(); }
     if (e.target.id === 'return-save') {
       const { item, quantity, length } = opened.ret;
-      saveOnJob('/api/jobs/return', 'ret', ({ number, returned: r }) => 'Job ' + number + ': ' + fmtInt(r.quantity) + ' of ' + r.item +
+      busy(e.target, () => saveOnJob('/api/jobs/return', 'ret', ({ number, returned: r }) => 'Job ' + number + ': ' + fmtInt(r.quantity) + ' of ' + r.item +
         ' returned from the job site' + (r.added ? ', added as Non-Stock' : '') + '.',
       { key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version,
-        item: item ? Number(item) : null, quantity: Number(quantity), length_ft: returnByLength() ? Number(length) : null });
+        item: item ? Number(item) : null, quantity: Number(quantity), length_ft: returnByLength() ? Number(length) : null }));
     }
     if (e.target.id === 'swap-save') {
       const { planned, used, quantity } = opened.swap;
-      saveOnJob('/api/jobs/swap', 'swap', ({ number, swap: w }) => 'Job ' + number + ': ' + fmtInt(w.quantity) + ' of ' + w.planned + ' swapped to ' + w.used + '.',
+      busy(e.target, () => saveOnJob('/api/jobs/swap', 'swap', ({ number, swap: w }) => 'Job ' + number + ': ' + fmtInt(w.quantity) + ' of ' + w.planned + ' swapped to ' + w.used + '.',
       { key: crypto.randomUUID(), number: opened.number, version: opened.view.job.version,
-        planned: Number(planned), used: used ? Number(used) : null, quantity: Number(quantity) });
+        planned: Number(planned), used: used ? Number(used) : null, quantity: Number(quantity) }));
     }
   });
 
@@ -524,7 +524,7 @@
       (refusal ? '<p class="note bad">' + esc(refusal) + '</p>' : '') +
       (revising || body.changes?.length ? changesHtml(body.changes, body.name_was ?? null, job.name) : '') +
       (revising ? dateChoiceHtml(body.date_choice, job.delivery_date) : '') + '<p>' +
-      (refusal ? '' : '<button type="button" id="commit-job"' + (flagged ? ' disabled' : '') + '>' + (revising ? 'Save revision' : 'Commit job') + '</button> ') +
+      (refusal ? '' : '<button type="button" id="commit-job"' + (revising ? '' : ' data-busy="Committing…"') + (flagged ? ' disabled' : '') + '>' + (revising ? 'Save revision' : 'Commit job') + '</button> ') +
       (job.status ? '' : '<button type="button" class="ghost" id="deduct-job"' + (flagged ? ' disabled' : '') + '>Deduct directly (already shipped)</button> ') +
       '<button type="button" class="ghost" id="clear-job">Clear</button>' +
       (flagged ? ' <span class="sub">Fix the flagged ' + (flagged === 1 ? 'line' : 'lines') + ' first.</span>' : '') + '</p>');
@@ -614,7 +614,7 @@
     // The server commits 1 to 50 sheets in one save (inv.commit_jobs).
     const blocked = flagged || n > 50;
     el('sheet-view').innerHTML = '<h2>' + checked.length + ' sheets</h2><p>' +
-      (n ? '<button type="button" id="commit-many"' + (blocked ? ' disabled' : '') + '>Commit ' + n + (n === 1 ? ' job' : ' jobs') + '</button> '
+      (n ? '<button type="button" id="commit-many" data-busy="Committing…"' + (blocked ? ' disabled' : '') + '>Commit ' + n + (n === 1 ? ' job' : ' jobs') + '</button> '
         : '<span class="sub">No sheet here has a new job to commit.</span> ') +
       '<button type="button" class="ghost" id="clear-job">Clear</button>' +
       (n && flagged ? ' <span class="sub">Fix or remove the flagged sheets first.</span>' : '') +
@@ -653,10 +653,10 @@
   el('sheet-view').addEventListener('click', (e) => {
     if (e.target.id === 'commit-job') {
       const keep = document.querySelector('input[name="keep-date"]:checked');
-      commit({ key: crypto.randomUUID(), file: sheets[0], version, keep_date: keep ? keep.value === 'true' : undefined });
+      busy(e.target, () => commit({ key: crypto.randomUUID(), file: sheets[0], version, keep_date: keep ? keep.value === 'true' : undefined }));
     }
-    if (e.target.id === 'deduct-job') commit({ key: crypto.randomUUID(), file: sheets[0] }, '/api/jobs/deduct');
-    if (e.target.id === 'commit-many') commitMany({ key: crypto.randomUUID(), files: going().map((c) => c.file) });
+    if (e.target.id === 'deduct-job') busy(e.target, () => commit({ key: crypto.randomUUID(), file: sheets[0] }, '/api/jobs/deduct'));
+    if (e.target.id === 'commit-many') busy(e.target, () => commitMany({ key: crypto.randomUUID(), files: going().map((c) => c.file) }));
     if (e.target.id === 'clear-job') { sheets = []; recheck(); }
     if (e.target.dataset.remove) {
       checked.splice(Number(e.target.dataset.remove), 1);

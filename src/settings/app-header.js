@@ -291,5 +291,20 @@ window.AppHeader = (() => {
     };
   }
 
-  return { me, send, getAll, say, askTiming, itemLabel, unitShort, inOrderUnit, showTime, showDate, showDay, monthName, countKind, today, familyBar, changed, typingIn };
+  // Turns `button` off while `save()` runs, labelled with its data-busy text
+  // or "Saving…", so a second click sends nothing (#152), then puts it back
+  // as it was. A button already off starts nothing. A page drawn again
+  // meanwhile drops the old button.
+  async function busy(button, save) {
+    if (button.disabled) return;
+    const text = button.textContent;
+    Object.assign(button, { disabled: true, textContent: button.dataset.busy || 'Saving…' });
+    try {
+      await save();
+    } finally {
+      Object.assign(button, { disabled: false, textContent: text });
+    }
+  }
+
+  return { me, send, getAll, say, askTiming, busy, itemLabel, unitShort, inOrderUnit, showTime, showDate, showDay, monthName, countKind, today, familyBar, changed, typingIn };
 })();
