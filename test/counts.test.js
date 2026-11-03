@@ -38,9 +38,14 @@ async function backendPid(client) {
 // Resolves once the session `pid` is waiting on a lock, read as the owner,
 // who sees every session. A fixed wait instead lets a slow statement arrive
 // after the lock is gone, and the test passes without the wait it names.
-async function waitingOnLock(db, pid) {
+// `racing`, that session's statement, settled to its result or its error:
+// if it settles first, the test fails with what it settled to.
+async function waitingOnLock(db, pid, racing) {
+  let settled;
+  racing.then((outcome) => { settled = outcome; });
   return as(db, null, async (owner) => {
     for (const deadline = Date.now() + 10_000; Date.now() < deadline;) {
+      if (settled !== undefined) assert.fail(`session ${pid} finished before it waited on a lock: ${settled.message ?? settled}`);
       const { rows } = await owner.query('SELECT wait_event_type FROM pg_catalog.pg_stat_activity WHERE pid = $1', [pid]);
       if (rows[0]?.wait_event_type === 'Lock') return;
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -247,7 +252,7 @@ test('two submits of one item at the same moment: the second waits for the first
     await second.query('BEGIN');
     const pid = await backendPid(second);
     const racing = submitIn(second, two).then(() => 'submitted', (e) => e);
-    await waitingOnLock(db, pid);  // the second submit waits while the first is open
+    await waitingOnLock(db, pid, racing);  // the second submit waits while the first is open
     await first.query('COMMIT');
     const outcome = await racing;
     await second.query('ROLLBACK');
@@ -546,9 +551,10 @@ test('two people approving two August monthly counts at the same moment: the sec
     await approve(a, first);
     const pid = await backendPid(b);
     const racing = approve(b, second).then(() => 'approved', (e) => e);
-    await waitingOnLock(db, pid);  // on the index, until the first one commits
+    await waitingOnLock(db, pid, racing);  // on the index, until the first one commits
     await a.query('COMMIT');
     const err = await racing;
+    assert.notEqual(err, 'approved', 'the second approval should be refused');
     assert.deepEqual([err.code, err.message], ['IV422', 'Hangers already has an approved monthly count closing August 2026.']);
   }));
 });
