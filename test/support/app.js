@@ -32,7 +32,9 @@ afterEach(async () => {
 // name (for the owner's own setup and for moving the lock time), and fetch
 // helpers that send JSON. `databaseUrl` is for a database that does not
 // answer: both pools use it, so a plan through it would not use the
-// read-only Planner login.
+// read-only Planner login. The app closes when the test that started it
+// ends, and also after each subtest (t.test), so a subtest cannot use its
+// parent's app.
 async function startApp({ databaseUrl } = {}) {
   const db = databaseUrl ? null : await freshDatabase();
   const database = openDatabase(databaseUrl || urlFor(db, 'inv_app'));
