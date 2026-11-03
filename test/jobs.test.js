@@ -1801,6 +1801,57 @@ test('a batch is a list of 1 to 50 sheets (#103)', async () => {
   }
 });
 
+// ── #151: many sheets checked in one request ──────────────────────────────
+
+const checkMany = (ctx, files) => post(ctx.base, '/api/jobs/check-many', { files }, ctx.cookie);
+
+test('many sheets check in one request: each answers as its own check does, with the reason a batch commit leaves it out (#151)', async () => {
+  const ctx = await appWithCatalog();
+  assert.equal((await commitFile(ctx)).status, 200);
+  assert.equal((await commitMany(ctx, [sheetFor('50003'), sheetFor('50004')])).status, 200);
+  await mark(ctx, 'shipped', ['50003']);
+  await undo(ctx, 'cancel_job', '50004');
+  const files = [
+    sheetFor('50001'),
+    sheetFor('50002', '3,Hanger,HGUS26,,,,$1.00,$3.00'),
+    sheetFor('33864R'),
+    sheetFor('33864R', '1,Hanger,LUS28,,,,$1.00,$1.00'),
+    sheetFor('50003'),
+    sheetFor('50004'),
+    { name: 'stock.csv', text: 'sku,on_hand\nLUS28,4\n' },
+  ];
+  const res = await checkMany(ctx, files);
+  assert.equal(res.status, 200, await res.clone().text());
+  const { sheets } = await res.json();
+  assert.equal(sheets.length, files.length);
+  for (const [i, file] of files.entries()) {
+    const own = await (await checkFile(ctx, file.text)).json();
+    const { left_out, ...answer } = sheets[i];
+    assert.deepEqual(answer, own, file.name + ': the same answer as its own check');
+    if (!own.ok) { assert.equal(left_out, undefined); continue; }
+    // A sheet a batch commit refuses gives the refusal's own words.
+    const alone = await commitMany(ctx, [file]);
+    if (alone.status === 422 && !own.lines.some((l) => l.flag)) assert.equal(left_out, (await alone.json()).error, file.name);
+  }
+  assert.deepEqual(sheets.map((s) => s.left_out), [
+    null, null,
+    'Job 33864R already has this sheet; nothing to commit.',
+    'Job 33864R is already in the app, and this is a revised sheet: commit it on its own.',
+    `Job 50003 was already shipped by Ann Lee on ${today()}.`,
+    `Job 50004 was cancelled by Ann Lee on ${today()}: commit its sheet on its own.`,
+    undefined,
+  ]);
+});
+
+test('a check of many is a list of 1 to 50 sheets (#151)', async () => {
+  const ctx = await appWithCatalog();
+  for (const files of [undefined, [], Array.from({ length: 51 }, (_, n) => sheetFor('6' + n))]) {
+    const res = await checkMany(ctx, files);
+    assert.deepEqual([res.status, (await res.json()).error], [400, 'Pick 1 to 50 sheets to check.'], String(files?.length));
+  }
+  assert.equal((await checkMany(ctx, Array.from({ length: 50 }, (_, n) => sheetFor('6' + n)))).status, 200);
+});
+
 test('a batch with one job on two sheets saves none, and names the job (PR #149 review F1)', async () => {
   const ctx = await appWithCatalog();
   const first = sheetFor('70001');

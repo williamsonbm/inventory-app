@@ -23,7 +23,7 @@ const {
   listCatalog, listPos, listCounts, readCountReview, saveCatalogChange, CATALOG_CHANGES, listSettings, SETTINGS_LISTS, readLumberOptions, readLumberSizes, readFamilies,
 } = require('./inventory/catalog.js');
 const { planFromInventory } = require('./inventory/planner-inventory.js');
-const { checkSheet, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, recordReturn, jobsBeforeCount } = require('./jobs/jobs.js');
+const { checkSheet, checkSheets, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, recordReturn, jobsBeforeCount } = require('./jobs/jobs.js');
 const { PLAN_ROUTES } = require('./planner/server.js');
 const { GRADE_STRENGTH_ORDER } = require('./lumber/lumberMenu.js');
 
@@ -241,6 +241,11 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
   }));
   app.post('/api/jobs/check', catchAsync(async (req, res) => {
     const { status, body } = await checkSheet(database, req.body);
+    res.status(status).json(body);
+  }));
+  // Many sheets in one check, for the batch screen (#151).
+  app.post('/api/jobs/check-many', catchAsync(async (req, res) => {
+    const { status, body } = await checkSheets(database, req.body);
     res.status(status).json(body);
   }));
   app.post('/api/jobs/commit', catchAsync(async (req, res) => {

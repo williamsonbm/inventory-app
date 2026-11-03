@@ -49,8 +49,8 @@
   delivery date save and the swap over HTTP and in the database, the return in the database.
 
   The batch screen (#103): the sheets the Planner sends through
-  sessionStorage `jobs.sheets`, read once at load; checkAll, leftOut, going,
-  showSheets and commitMany. Glue, NOT UNIT-TESTED (J300): the save it sends
+  sessionStorage `jobs.sheets`, read once at load; checkAll (one check-many
+  request per 50 sheets, #151), leftOut, going, showSheets and commitMany. Glue, NOT UNIT-TESTED (J300): the save it sends
   is tested over HTTP in test/jobs.test.js (one save, a refused sheet saves
   none, a job on two sheets, 1 to 50 sheets). The screen is checked by a
   jsdom script kept outside the repo (J300) and by hand on Preview.
@@ -582,11 +582,15 @@
     say('Checking ' + sheets.length + ' sheets…');
     showLines([], '');
     const answers = [];
-    for (const file of sheets) {
+    // One request per 50 sheets, the most the server checks at once (#151).
+    for (let at = 0; at < sheets.length; at += 50) {
+      const files = sheets.slice(at, at + 50);
       try {
-        answers.push({ file, body: await send('/api/jobs/check', { file }) });
+        const { sheets: bodies } = await send('/api/jobs/check-many', { files });
+        bodies.forEach((body, i) => answers.push(body.ok ? { file: files[i], body } : { file: files[i], error: body.error }));
       } catch (err) {
-        answers.push({ file, error: err.unconfirmed ? 'The sheet could not be checked. Remove it and drop it again.' : err.message });
+        const error = err.unconfirmed ? 'The sheet could not be checked. Remove it and drop it again.' : err.message;
+        for (const file of files) answers.push({ file, error });
       }
       if (run !== checking) return;
     }
@@ -595,18 +599,15 @@
     showSheets();
   }
   // Why the checked sheet at `i` is left out of the batch, or null when it
-  // goes in. A job on two sheets goes in once, from the first: the server
-  // refuses a batch with the same job twice.
+  // goes in: the server's reason (#151). A job on two sheets goes in once,
+  // from the first: the server refuses a batch with the same job twice.
   const sameJob = (a, b) => a.trim().toUpperCase() === b.trim().toUpperCase();
-  function leftOut({ body: { job, cancelled, refusal } }, i) {
-    if (refusal) return refusal;
+  function leftOut({ body: { job, refusal, left_out: why } }, i) {
+    if (refusal) return why;
     if (checked.slice(0, i).some((c) => c.body && sameJob(c.body.job.number, job.number))) {
       return 'Job ' + job.number + ' is also on a sheet above: only the one above is committed.';
     }
-    if (cancelled) return 'Job ' + job.number + ' was ' + cancelled.handled + ': commit its sheet on its own.';
-    if (!job.status) return null;
-    return job.unchanged ? 'Job ' + job.number + ' already has this sheet; nothing to commit.'
-      : 'Job ' + job.number + ' is already in the app, and this is a revised sheet: commit it on its own.';
+    return why;
   }
   const going = () => checked.filter((c, i) => !c.error && !leftOut(c, i));
   function showSheets() {
