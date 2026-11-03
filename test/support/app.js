@@ -8,7 +8,7 @@
 // Planner, as the Planner's. Nothing outside the app is replaced.
 // =============================================================
 
-const { after } = require('node:test');
+const { afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { createApp } = require('../../src/app.js');
@@ -19,8 +19,10 @@ const { urlFor, freshDatabase, as } = require('./database.js');
 const SESSION_SECRET = 'a test signing secret, at least 32 characters long';
 const running = [];
 
-after(async () => {
-  for (const { server, databases } of running) {
+// Closed when each test ends, not when its file ends: each pool keeps a
+// connection open, and a file's worth of them ran CI's Postgres out (#159).
+afterEach(async () => {
+  for (const { server, databases } of running.splice(0)) {
     await new Promise((r) => server.close(r));
     for (const database of databases) await database.end();
   }
@@ -30,7 +32,9 @@ after(async () => {
 // name (for the owner's own setup and for moving the lock time), and fetch
 // helpers that send JSON. `databaseUrl` is for a database that does not
 // answer: both pools use it, so a plan through it would not use the
-// read-only Planner login.
+// read-only Planner login. The app closes when the test that started it
+// ends, and also after each subtest (t.test), so a subtest cannot use its
+// parent's app.
 async function startApp({ databaseUrl } = {}) {
   const db = databaseUrl ? null : await freshDatabase();
   const database = openDatabase(databaseUrl || urlFor(db, 'inv_app'));
