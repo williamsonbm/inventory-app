@@ -293,15 +293,18 @@ window.AppHeader = (() => {
 
   // Turns `button` off while `save()` runs, labelled with its data-busy text
   // or "Saving…", so a second click sends nothing (#152), then puts it back
-  // as it was. A button already off starts nothing. A page drawn again
-  // meanwhile drops the old button.
+  // as it was. A button already off starts nothing. Nor does a button with
+  // the same id that the page drew again during the save (PR #163 review, F2).
+  const saving = new Set();
   async function busy(button, save) {
-    if (button.disabled) return;
+    if (button.disabled || saving.has(button.id)) return;
     const text = button.textContent;
     Object.assign(button, { disabled: true, textContent: button.dataset.busy || 'Saving…' });
+    if (button.id) saving.add(button.id);
     try {
       await save();
     } finally {
+      saving.delete(button.id);
       Object.assign(button, { disabled: false, textContent: text });
     }
   }

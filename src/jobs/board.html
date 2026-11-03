@@ -274,11 +274,11 @@
       const { job } = await send(route, request);
       opened[form] = null;
       say(said(job), 'ok');
-      loadBoard();
+      await loadBoard();
     } catch (err) {
       if (askTiming(err, (timing) => saveOnJob(route, form, said, { ...request, timing }))) return;
       say(err.message, 'bad', err.unconfirmed ? () => saveOnJob(route, form, said, request) : null);
-      if (!err.unconfirmed) loadBoard();
+      if (!err.unconfirmed) await loadBoard();
     }
   }
 
@@ -295,10 +295,10 @@
     try {
       const { job } = await send('/api/jobs/delivery-date', request);
       say('Job ' + job.number + ' delivery date saved.', 'ok');
-      loadBoard();
+      await loadBoard();
     } catch (err) {
       say(err.message, 'bad', err.unconfirmed ? () => saveDate(request) : null);
-      if (!err.unconfirmed) loadBoard();
+      if (!err.unconfirmed) await loadBoard();
     }
   }
 
@@ -563,7 +563,7 @@
       say(err.message, 'bad', err.unconfirmed ? () => fixAll(requests) : null);
       return;
     }
-    recheck();
+    await recheck();
   }
 
   // Two or more sheets (#103): each with its job and lines (J27) and a
@@ -647,7 +647,7 @@
   // Checks the sheets again: none clears the screen, one shows its own.
   function recheck() {
     checking++;
-    if (!sheets.length) { say(''); showLines([], ''); } else if (sheets.length === 1) check(); else checkAll();
+    if (!sheets.length) { say(''); showLines([], ''); } else return sheets.length === 1 ? check() : checkAll();
   }
 
   el('sheet-view').addEventListener('click', (e) => {
@@ -664,7 +664,7 @@
       if (sheets.length > 1) showSheets(); else recheck();
     }
     const button = e.target.closest('[data-flag-do]');
-    if (button) fixAll(PlannerUI.flagFixes(button.dataset.flagDo, shownFlags[button.dataset.flagKey]));
+    if (button) busy(button, () => fixAll(PlannerUI.flagFixes(button.dataset.flagDo, shownFlags[button.dataset.flagKey])));
   });
 
   async function take(list) {

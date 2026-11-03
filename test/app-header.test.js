@@ -130,6 +130,21 @@ test('busy: a second click while the save runs sends nothing (#152)', async () =
   await first;
 });
 
+test('busy: a button drawn again with the same id while the save runs sends nothing (PR #163 review, F2)', async () => {
+  const { busy } = loadAppHeader();
+  let open;
+  const reply = new Promise((resolve) => { open = resolve; });
+  let saves = 0;
+  const save = () => { saves++; return reply; };
+  const first = busy({ ...button('Save date'), id: 'save-date' }, save);
+  const second = busy({ ...button('Save date'), id: 'save-date' }, save);
+  assert.equal(saves, 1, 'the redrawn button started a second save');
+  open();
+  await Promise.all([first, second]);
+  await busy({ ...button('Save date'), id: 'save-date' }, async () => { saves++; });
+  assert.equal(saves, 2, 'after the save ends, the button saves again');
+});
+
 test('busy: a save that throws still puts the button back', async () => {
   const { busy } = loadAppHeader();
   const b = button('Save date');
