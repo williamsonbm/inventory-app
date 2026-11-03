@@ -303,6 +303,8 @@ function sheetChanges(current, rows, consumed = () => undefined) {
 // lists a changed sheet's `changes` and the `refusal` the commit gives
 // (S30, J155). No other job's line asks for a fix: the commit then answers
 // "unchanged" or "already shipped" ….
+// `catalog`, when given, is the catalog as readCatalogKeys read it, for a
+// caller that checks many sheets (#151).
 async function checkSheet(database, { file } = {}, catalog) {
   const { refusal, sheet, rows, plan } = await matchSheet(database, file, catalog);
   if (refusal) return refusal;
@@ -365,6 +367,8 @@ async function checkSheets(database, { files } = {}) {
   }
   return { status: 200, body: { ok: true, sheets } };
 }
+// The words are inv.commit_jobs's refusals (migrations/020-commit-many-and-
+// already-handled.sql); a test pins the two together (PR #165 review, finding 3).
 function leftOut({ job, cancelled, refusal }) {
   if (refusal) return refusal;
   if (cancelled) return `Job ${job.number} was ${cancelled.handled}: commit its sheet on its own.`;

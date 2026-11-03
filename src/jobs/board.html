@@ -583,16 +583,19 @@
     showLines([], '');
     const answers = [];
     // One request per 50 sheets, the most the server checks at once (#151).
+    // A failed request shows one message, not a note on each sheet; "Try
+    // again" checks them all again (PR #165 review, finding 1).
     for (let at = 0; at < sheets.length; at += 50) {
       const files = sheets.slice(at, at + 50);
+      let bodies;
       try {
-        const { sheets: bodies } = await send('/api/jobs/check-many', { files });
-        bodies.forEach((body, i) => answers.push(body.ok ? { file: files[i], body } : { file: files[i], error: body.error }));
+        ({ sheets: bodies } = await send('/api/jobs/check-many', { files }));
       } catch (err) {
-        const error = err.unconfirmed ? 'The sheet could not be checked. Remove it and drop it again.' : err.message;
-        for (const file of files) answers.push({ file, error });
+        if (run === checking) say(err.unconfirmed ? 'The sheets could not be checked.' : err.message, 'bad', err.unconfirmed ? recheck : null);
+        return;
       }
       if (run !== checking) return;
+      bodies.forEach((body, i) => answers.push(body.ok ? { file: files[i], body } : { file: files[i], error: body.error }));
     }
     checked = answers;
     say('');
