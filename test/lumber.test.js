@@ -417,6 +417,21 @@ test('planLumber tags an on-hand-only row with its saved redirect, so it is not 
   assert.deepEqual(plan.warnings, []);
 });
 
+test('planLumber leaves a carried on-hand-only row untagged by its saved redirect', () => {
+  // #86 is about "Not carried" only (Q30). 2x6 #2 is carried, listed only in
+  // the on-hand file, with 240 LF on hand: it stays a plain row.
+  const stock = parseLumberStockCsv(`size,grade,length,on_hand
+2x6,#2,12,20
+`);
+  const plan = planLumber([{ name: 'a.csv', text: JOB_A.replace(/^.*2x6.*$/gm, '') }], stock, { redirects: { '2x6|#2': 'DSS' } });
+  const row = plan.bySizeGrade.find((g) => g.key === '2x6|#2');
+  assert.equal(row.inMenu, true);
+  assert.equal(row.usedLf, 0);
+  assert.equal(row.stockLf, 240);
+  assert.equal(row.redirect, null);
+  assert.equal(row.fullyRedirected, false);
+});
+
 test('planLumber does not tag a redirect target with its own onward redirect when it has no lines of its own', () => {
   // #86's on-hand-only rule applies to a row with no job line at all. DSS here
   // only receives #2's demand and buys it; DSS -> MSR2400 never applies to it.
