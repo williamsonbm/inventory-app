@@ -75,8 +75,9 @@
   need a browser, and this repo has no DOM harness. Every route it calls is tested in
   test/inventory.test.js, the counts' rules in test/counts.test.js, and the
   one-click offer in test/new-item.test.js. The layout, the buttons, the
-  Length sort and the print pages are checked by hand (#81, Testing
-  Decisions).
+  Length sort, the print pages and the stop for a box that is not a number
+  (#176: jsdom cannot type such text, so a smoke fakes it) are checked by
+  hand (#81, Testing Decisions).
 -->
 <header class="appbar">
   <div class="appbar-primary">
