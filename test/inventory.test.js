@@ -277,6 +277,34 @@ test('the Activity Log shows one family\'s changes', async () => {
   assert.ok((await targets('')).some(([action]) => action === 'add supplier'), 'blank is All, which shows a row with no family');
 });
 
+test("a change to an LVL depth's settings is saved for everyone and shows in the Activity Log under LVL", async () => {
+  const ctx = await withAdmin();
+  const settings = async () => (await read(ctx, '/api/lvl/settings')).settings;
+  const nineHalf = (await settings()).find((s) => s.depth === '9-1/2');
+  const added = await change(ctx, '/api/lvl/purchasable-lengths',
+    { depth: '9-1/2', version: nineHalf.version, lengths: [...nineHalf.purchasable_lengths, 24] });
+  assert.equal(added.status, 200, added.body.error);
+  const kept = await change(ctx, '/api/lvl/shortest-remainder-kept',
+    { depth: '9-1/2', version: added.body.settings.version, ft: 8 });
+  assert.equal(kept.status, 200, kept.body.error);
+  // The panel's list: every LVL depth in screen order, each in the shape its change answers with.
+  const listed = await settings();
+  assert.deepEqual(listed.map((s) => s.depth), LVL_DEPTHS);
+  assert.deepEqual(listed[0], { depth: '9-1/2', purchasable_lengths: [24, 48], shortest_remainder_kept_ft: 8, version: 3 });
+  assert.deepEqual(listed[0], kept.body.settings);
+
+  const stale = await change(ctx, '/api/lvl/shortest-remainder-kept', { depth: '9-1/2', version: 1, ft: 6 });
+  assert.equal(stale.status, 409);
+  const odd = await change(ctx, '/api/lvl/shortest-remainder-kept', { depth: '9-1/2', version: 3, ft: 7 });
+  assert.deepEqual([odd.status, odd.body.error], [400, 'The shortest remainder kept is an even number of feet, 2 or more.']);
+
+  const entries = (await read(ctx, '/api/activity?family=lvl')).entries.map(({ who, action, target, change: c }) => [who, action, target, c]);
+  assert.deepEqual(entries, [
+    [ctx.ann.name, 'set LVL shortest remainder kept', 'LVL 9-1/2″', 'shortest remainder kept: 10′ → 8′'],
+    [ctx.ann.name, 'set LVL purchasable lengths', 'LVL 9-1/2″', 'purchasable lengths: 48′ → 24′, 48′'],
+  ]);
+});
+
 test('the Activity Log says what the catalog import and a removal did', async () => {
   const { describeChange } = require('../src/settings/activity.js');
   const report = { added: { items: 378, pack_sizes: 209, lvl_depth_thresholds: 7 },

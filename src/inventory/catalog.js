@@ -95,6 +95,14 @@ const CATALOG_CHANGES = {
     fn: 'set_lvl_depth_threshold', args: (b) => [b.depth, b.version, b.threshold_lf], as: 'threshold',
   },
   '/api/lumber/lengths': { fn: 'set_lumber_lengths', args: (b) => [b.size, b.grade, b.version, b.lengths], as: 'lengths' },
+  // Planner → LVL → the stock-lengths panel (#181): a depth's whole list of
+  // purchasable lengths, and its shortest remainder kept.
+  '/api/lvl/purchasable-lengths': {
+    fn: 'set_lvl_purchasable_lengths', args: (b) => [b.depth, b.version, b.lengths], as: 'settings',
+  },
+  '/api/lvl/shortest-remainder-kept': {
+    fn: 'set_lvl_shortest_remainder_kept', args: (b) => [b.depth, b.version, b.ft], as: 'settings',
+  },
   '/api/lumber/remove': { fn: 'remove_lumber_group', args: (b) => [b.size, b.grade, b.version], as: 'removed' },
   // Inventory → Receive. A list of lines is sent as JSON text: pg would send
   // a JavaScript array as a Postgres array, which a jsonb argument refuses.
@@ -205,6 +213,13 @@ const SETTINGS_LISTS = {
             FROM (SELECT DISTINCT size AS depth FROM inv.items WHERE family = 'lvl') d
             LEFT JOIN inv.lvl_depth_thresholds t ON t.depth = d.depth
            ORDER BY pg_catalog.array_position(inv.lvl_depths(), d.depth)`,
+  },
+  // Every LVL depth's purchasable lengths and shortest remainder kept (#181),
+  // in screen order.
+  '/api/lvl/settings': {
+    as: 'settings',
+    sql: `SELECT depth, purchasable_lengths, shortest_remainder_kept_ft, version FROM inv.lvl_depth_settings
+           ORDER BY pg_catalog.array_position(inv.lvl_depths(), depth)`,
   },
   // Everyone reads them; only an admin changes them (/api/working-day/set,
   // /api/count-approval/set).

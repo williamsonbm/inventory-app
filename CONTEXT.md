@@ -53,7 +53,9 @@ _Not_: snapshot — the saved file is not the act that produced it.
 
 **Purchasable length**:
 A stock length the supplier will actually sell for a given product. Set per product, because each
-product is priced and ordered separately.
+product is priced and ordered separately; except LVL, whose purchasable lengths are set per depth,
+not per product (#178): 48′ for 9-1/2″ through 20″ to start, and none for 24″, which is bought at
+the sheet's lengths.
 _Avoid_: valid length
 _Not_: available length — collides with *available*.
 
