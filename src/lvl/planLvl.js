@@ -2,10 +2,11 @@
 // planLvl.js — "Across these jobs, how much LVL (by the linear foot) do we
 // need, and what does the yard already cover?"
 // =============================================================
-// Standalone, DB-free LVL linear-footage planner. Unlike the EWP cut planner,
-// this is NOT a length-optimization problem — there is no bin-packing here and
-// no cut optimizer involved. (The EWP optimizer, optimizeCuts, is excluded from
-// this port; it lives in the sibling materials-planner.)
+// Standalone, DB-free LVL linear-footage planner for the Planner page. It packs
+// no boards: since #125 a job's LVL is cut from purchasable lengths, and the
+// boards one job pulls are planned by planLvlCuts (src/lvl/planLvlCuts.js).
+// (The EWP optimizer, optimizeCuts, is excluded from this port; it lives in
+// the sibling materials-planner.)
 //
 // Core behaviors:
 //   * Uses parseLvlSheet (src/lvl/parseLvlSheet.js), NOT parseJobCsv — that
