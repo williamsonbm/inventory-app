@@ -400,6 +400,32 @@ test('planLumber redirect leaves on-hand stock grade-locked', () => {
   assert.equal(toRow.piecesToBuy, 3);
 });
 
+test('planLumber tags an on-hand-only row with its saved redirect, so it is not "Not carried"', () => {
+  // #86: 2x12 #1 is listed only in the on-hand file (no job line), and a
+  // redirect to MSR2400 is saved. With no demand to move, nothing moved —
+  // but the row still carries the redirect, at 0 LF.
+  const stock = parseLumberStockCsv(`size,grade,length,on_hand
+2x12,#1,10,0
+2x12,#1,12,0
+`);
+  const plan = planLumber([{ name: 'a.csv', text: JOB_A }], stock, { redirects: { '2x12|#1': 'MSR2400' } });
+  const row = plan.bySizeGrade.find((g) => g.key === '2x12|#1');
+  assert.equal(row.inMenu, false);
+  assert.deepEqual(row.redirect, { toLabel: '2x12 MSR2400', lf: 0 });
+  assert.equal(row.fullyRedirected, true);
+  assert.equal(row.usedLf, 0);
+  assert.deepEqual(plan.warnings, []);
+});
+
+test('planLumber does not tag a redirect target with its own onward redirect when it has no lines of its own', () => {
+  // #86's on-hand-only rule applies to a row with no job line at all. DSS here
+  // only receives #2's demand and buys it; DSS -> MSR2400 never applies to it.
+  const plan = planLumber([{ name: 'a.csv', text: JOB_A }], null, { redirects: { '2x6|#2': 'DSS', '2x6|DSS': 'MSR2400' } });
+  const dss = plan.bySizeGrade.find((g) => g.key === '2x6|DSS');
+  assert.equal(dss.usedLf, 36);
+  assert.equal(dss.redirect, null);
+});
+
 test('planLumber redirect does not chain through a second hop', () => {
   // 2x6 #2 (3 @ 12ft) and native 2x6 DSS (2 @ 10ft) on the same job, with BOTH
   // #2->DSS and DSS->MSR2400 active. Chaining would put all 56 LF on MSR2400;

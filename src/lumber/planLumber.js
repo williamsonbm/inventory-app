@@ -370,7 +370,12 @@ function planLumber(jobFiles, parsedStock = null, opts = {}) {
     // `toGrade` stays internal (byKey's own g.redirect keeps it, needed to
     // build redirectedInByKey's key above) — nothing outside this file reads
     // it off a row, only toLabel/lf, so the public object doesn't carry it.
-    const redirect = g && g.redirect ? { toLabel: g.redirect.toLabel, lf: round2(g.redirect.lf) } : null;
+    // A row listed only in the on-hand file (no group) has no job line to
+    // move, but its saved redirect still applies: it carries it at 0 LF (#86).
+    const onHandOnlyTo = g ? undefined : redirects.get(key);
+    const redirect = g && g.redirect ? { toLabel: g.redirect.toLabel, lf: round2(g.redirect.lf) }
+      : onHandOnlyTo ? { toLabel: lumberLabel(size, onHandOnlyTo), lf: 0 }
+      : null;
     // True when a row has NO real purchasing demand of its own left — its
     // whole native demand moved elsewhere, so it shows its OWN breakdown
     // (below) instead of the (empty) purchasing one. A grade can be

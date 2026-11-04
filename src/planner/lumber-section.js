@@ -276,10 +276,11 @@
     // Every fact this banner needs already lives on the rows just rendered
     // below (a row's own label, its redirect's toLabel/lf) — derived here
     // instead of a separate list from the server, so it can't disagree with
-    // what those rows show.
+    // what those rows show. A row with no demand in these jobs moved
+    // nothing, so it shows no LF (#86).
     const activeRedirectRows = p.bySizeGrade.filter((row) => row.redirect);
     if (activeRedirectRows.length) {
-      html += `<div class="note ok"><b>Redirected:</b> ${activeRedirectRows.map((row) => `${esc(row.label)} → ${esc(row.redirect.toLabel)} (${fmt(row.redirect.lf)} LF moved)`).join('; ')}</div>`;
+      html += `<div class="note ok"><b>Redirected:</b> ${activeRedirectRows.map((row) => `${esc(row.label)} → ${esc(row.redirect.toLabel)}${row.redirect.lf ? ` (${fmt(row.redirect.lf)} LF moved)` : ''}`).join('; ')}</div>`;
     }
 
     if (p.rerouted && p.rerouted.length) {
