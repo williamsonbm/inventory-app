@@ -407,4 +407,4 @@ function addMixedDraw(drawsByKey, draw) {
   }
 }
 
-module.exports = { cutMapLumber };
+module.exports = { cutMapLumber, TOL_FT, approxGte, nextStockedUp };
