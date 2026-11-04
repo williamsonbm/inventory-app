@@ -204,7 +204,7 @@ const SETTINGS_LISTS = {
     sql: `SELECT d.depth, t.threshold_lf, t.version
             FROM (SELECT DISTINCT size AS depth FROM inv.items WHERE family = 'lvl') d
             LEFT JOIN inv.lvl_depth_thresholds t ON t.depth = d.depth
-           ORDER BY pg_catalog.array_position(ARRAY['9-1/2', '11-7/8', '14', '16', '18', '20', '22', '24'], d.depth), d.depth`,
+           ORDER BY pg_catalog.array_position(inv.lvl_depths(), d.depth)`,
   },
   // Everyone reads them; only an admin changes them (/api/working-day/set,
   // /api/count-approval/set).

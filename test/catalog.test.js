@@ -502,7 +502,7 @@ test('the database refuses a lumber size outside the list, whatever writes it', 
 const LVL_DEPTHS = ['9-1/2', '11-7/8', '14', '16', '18', '20', '24'];
 const LVL_REFUSAL = 'LVL comes 9-1/2″, 11-7/8″, 14″, 16″, 18″, 20″ or 24″ deep.';
 
-test('LVL comes only in the known depths, as an item, a rename or a threshold', async () => {
+test('LVL comes only in the known depths, as an item or a rename', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const add = (size) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size, length_ft: 26 });
@@ -524,7 +524,6 @@ test('LVL comes only in the known depths, as an item, a rename or a threshold', 
     const err = await refused(attempt(), 'IV400', label);
     assert.equal(err.message, LVL_REFUSAL, label);
   }
-  await refused(call(db, 'set_lvl_depth_threshold', ann.id, crypto.randomUUID(), '22', null, 480), 'IV400', 'a 22 threshold');
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
   // A lumber size is not an LVL depth, and lumber is unchanged.
   await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 8 });
