@@ -104,9 +104,11 @@
   }
 
   // Every size and grade the database lists, a group with no lengths
-  // included, so a group switched off can be switched on again.
+  // included, so a group switched off can be switched on again; and every
+  // saved redirect, also from a group the database does not list, so the
+  // redirect can be seen and cleared (#95).
   function paintMenu() {
-    const keys = Object.keys(versions.lengths).sort();
+    const keys = [...new Set([...Object.keys(versions.lengths), ...Object.keys(activeRedirects)])].sort();
     el('menu-mount').innerHTML = keys.map((key) => {
       const label = key.replace('|', ' ');
       const set = new Set((menu[key] || []).map(Number));
