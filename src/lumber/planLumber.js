@@ -370,7 +370,14 @@ function planLumber(jobFiles, parsedStock = null, opts = {}) {
     // `toGrade` stays internal (byKey's own g.redirect keeps it, needed to
     // build redirectedInByKey's key above) — nothing outside this file reads
     // it off a row, only toLabel/lf, so the public object doesn't carry it.
-    const redirect = g && g.redirect ? { toLabel: g.redirect.toLabel, lf: round2(g.redirect.lf) } : null;
+    const inMenu = isCarried(menu, key);
+    // A not-carried row listed only in the on-hand file (no group) has no job
+    // line to move, but its saved redirect still applies: it carries it at
+    // 0 LF, so the page drops "Not carried" (#86). A carried one stays plain.
+    const onHandOnlyToGrade = g || inMenu ? undefined : redirects.get(key);
+    const redirect = g && g.redirect ? { toLabel: g.redirect.toLabel, lf: round2(g.redirect.lf) }
+      : onHandOnlyToGrade ? { toLabel: lumberLabel(size, onHandOnlyToGrade), lf: 0 }
+      : null;
     // True when a row has NO real purchasing demand of its own left — its
     // whole native demand moved elsewhere, so it shows its OWN breakdown
     // (below) instead of the (empty) purchasing one. A grade can be
@@ -397,7 +404,6 @@ function planLumber(jobFiles, parsedStock = null, opts = {}) {
       .sort((a, b) => b.stock_length_ft - a.stock_length_ft);
     const piecesToBuy = groupDraws.reduce((s, d) => s + d.pieces, 0);
     const piecesOnHand = piecesOnHandByKey.get(key) || 0;
-    const inMenu = isCarried(menu, key);
 
     // The raw DEMAND, one row per distinct required cut length (qty summed across
     // all jobs), longest first — so the buyer can compare the actual lengths these
