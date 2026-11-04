@@ -480,7 +480,7 @@ test('lumber comes only in 2x4, 2x6, 2x8, 2x10 and 2x12, as an item or a buying 
   assert.equal(odd.grade, 'Sel Str', 'a grade nothing spells yet stays as typed');
   const odd2 = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x6', grade: 'sel str', length_ft: 10 });
   assert.equal(odd2.grade, 'Sel Str', 'an item already spells it');
-  // An LVL depth is not a lumber size, and stays free.
+  // An LVL depth is not a lumber size.
   await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8', length_ft: 26 });
 });
 
@@ -493,6 +493,49 @@ test('the database refuses a lumber size outside the list, whatever writes it', 
       '23514', 'a 2x5 buying option');
     await refused(owner.query("INSERT INTO inv.lumber_grade_redirects (size, from_grade, to_grade) VALUES ('2x5', '#2', 'DSS')"),
       '23514', 'a 2x5 redirect');
+  });
+});
+
+// The LVL depths the company carries (#91, owner Q22, 2026-11-03: no 22).
+// Frozen here, not read from inv.lvl_depths, so a change to the list fails
+// this test.
+const LVL_DEPTHS = ['9-1/2', '11-7/8', '14', '16', '18', '20', '24'];
+const LVL_REFUSAL = 'LVL comes 9-1/2″, 11-7/8″, 14″, 16″, 18″, 20″ or 24″ deep.';
+
+test('LVL comes only in the known depths, as an item or a rename', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const add = (size) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size, length_ft: 26 });
+  const depths = await as(db, APP, async (app) => (await app.query('SELECT inv.lvl_depths() AS d')).rows[0].d);
+  assert.deepEqual(depths, LVL_DEPTHS, 'the list, in screen order');
+  const items = [];
+  for (const size of LVL_DEPTHS) items.push(await add(size));
+
+  const before = (await logRows(db)).length;
+  const cases = [
+    ['a depth typed with an inch mark (#91)', () => add('11-7/8"')],
+    ['a depth typed with the screen\'s inch mark', () => add('11-7/8″')],
+    ['22, which the company no longer carries (Q22)', () => add('22')],
+    ['a lumber size as a depth', () => add('2x4')],
+    ['a rename to 11-7/8"',
+      () => call(db, 'rename_item', ann.id, crypto.randomUUID(), items[1].id, 1, { product: '2.1 RigidLam LVL 1-3/4', size: '11-7/8"', length_ft: 26 })],
+  ];
+  for (const [label, attempt] of cases) {
+    const err = await refused(attempt(), 'IV400', label);
+    assert.equal(err.message, LVL_REFUSAL, label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  // A lumber size is not an LVL depth, and lumber is unchanged.
+  await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lumber', { size: '2x4', grade: '#2', length_ft: 8 });
+});
+
+test('the database refuses an LVL depth outside the list, whatever writes it', async () => {
+  const db = await freshDatabase();
+  await as(db, null, async (owner) => {
+    await refused(owner.query("INSERT INTO inv.items (family, product, size, length_ft) VALUES ('lvl', '2.1 RigidLam LVL 1-3/4', '11-7/8\"', 26)"),
+      '23514', 'an 11-7/8" item');
+    await refused(owner.query("INSERT INTO inv.lvl_depth_thresholds (depth, threshold_lf) VALUES ('22', 480)"),
+      '23514', 'a 22 threshold');
   });
 });
 
@@ -603,7 +646,6 @@ test('every text a person types has a length limit, refused with a plain message
     ['add_user', ['bob@example.com', x(71), HASH], 'A name has at most 70 characters.'],
     ['add_item', ['hangers', { sku: x(31) }], 'A SKU has at most 30 characters.'],
     ['add_item', ['lvl', { product: x(61), size: '14', length_ft: 48 }], 'An LVL product has at most 60 characters.'],
-    ['add_item', ['lvl', { product: '2.1 RigidLam LVL 1-3/4', size: x(11), length_ft: 48 }], 'An LVL depth has at most 10 characters.'],
     ['add_item', ['lumber', { size: '2x4', grade: x(21), length_ft: 8 }], 'A grade has at most 20 characters.'],
     ['edit_item', [hanger.id, 1, { note: x(201) }], 'A note has at most 200 characters.'],
     ['add_supplier', [x(61)], 'A supplier name has at most 60 characters.'],

@@ -289,14 +289,14 @@
   // ── The sheet (stories 61–64, S74) ───────────────────────────────────────
   // Items in the order the yard keeps them: lumber by size (the catalog's
   // size order), grade (weakest first, as the Overview) and length; LVL by
-  // product, depth and length; the rest by SKU.
+  // product, depth (the catalog's depth order) and length; the rest by SKU.
   const depth = (d) => { const m = /^(\d+)(?:-(\d+)\/(\d+))?/.exec(d || ''); return m ? Number(m[1]) + (m[2] ? m[2] / m[3] : 0) : 0; };
   const rank = (list, v) => { const n = (list || []).indexOf(v); return n < 0 ? Infinity : n; };
   function sheetOrder(a, b) {
     const f = family(a.family);
-    return rank(f.choices?.size, a.size) - rank(f.choices?.size, b.size)
+    return String(a.product ?? '').localeCompare(String(b.product ?? ''))
+      || rank(f.choices?.size, a.size) - rank(f.choices?.size, b.size)
       || rank(gradeOrder, a.grade) - rank(gradeOrder, b.grade)
-      || String(a.product ?? '').localeCompare(String(b.product ?? ''))
       || depth(a.size) - depth(b.size)
       || (a.length_ft ?? 0) - (b.length_ft ?? 0)
       || itemLabel(a).localeCompare(itemLabel(b), 'en', { numeric: true });

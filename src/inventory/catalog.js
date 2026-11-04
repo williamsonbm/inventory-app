@@ -32,7 +32,8 @@ const FAMILY_ORDER = ['lumber', 'plates', 'hangers', 'lvl'];
 function readFamilies(database) {
   return database.read(`
     SELECT code, name, identity, pack_kinds, live, order_unit, trimmable,
-           CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes()) END AS choices
+           CASE code WHEN 'lumber' THEN pg_catalog.jsonb_build_object('size', inv.lumber_sizes())
+                     WHEN 'lvl' THEN pg_catalog.jsonb_build_object('size', inv.lvl_depths()) END AS choices
       FROM inv.families
      WHERE identity IS NOT NULL
      ORDER BY pg_catalog.array_position($1::text[], code)`, [FAMILY_ORDER]);
@@ -45,8 +46,9 @@ function readFamilies(database) {
 // family takes POs yet, order_unit what its PO lines are ordered in, and
 // trimmable whether its items offer Trim (stories 47–48). A family with no identity fields (EWP until step 5) cannot hold
 // items, so it is left out. choices gives a name field's only values, which
-// the page offers as a list: lumber sizes (inv.lumber_sizes). The version
-// rides along so a save can say which version it read (S41).
+// the page offers as a list: lumber sizes (inv.lumber_sizes) and LVL depths
+// (inv.lvl_depths, #91). The version rides along so a save can say which
+// version it read (S41).
 async function listCatalog(database) {
   const [families, items, lvlDepths] = await Promise.all([
     readFamilies(database),
@@ -202,7 +204,7 @@ const SETTINGS_LISTS = {
     sql: `SELECT d.depth, t.threshold_lf, t.version
             FROM (SELECT DISTINCT size AS depth FROM inv.items WHERE family = 'lvl') d
             LEFT JOIN inv.lvl_depth_thresholds t ON t.depth = d.depth
-           ORDER BY pg_catalog.array_position(ARRAY['9-1/2', '11-7/8', '14', '16', '18', '20', '22', '24'], d.depth), d.depth`,
+           ORDER BY pg_catalog.array_position(inv.lvl_depths(), d.depth)`,
   },
   // Everyone reads them; only an admin changes them (/api/working-day/set,
   // /api/count-approval/set).

@@ -22,6 +22,8 @@ async function change(ctx, route, body) {
 
 // The sizes lumber comes in (owner, 2026-10-02), frozen here.
 const LUMBER_SIZES = ['2x4', '2x6', '2x8', '2x10', '2x12'];
+// The depths LVL comes in (#91, owner Q22, 2026-11-03), frozen here.
+const LVL_DEPTHS = ['9-1/2', '11-7/8', '14', '16', '18', '20', '24'];
 
 async function read(ctx, route) {
   const res = await get(ctx.base, route, ctx.cookie);
@@ -49,14 +51,15 @@ test('the Overview lists the catalog, and its cells add, edit and retire items',
   // EWP stays out of Inventory until step 5, so the family bar leaves it out.
   // The Planner's order, so the two family bars match (owner, 2026-10-02).
   // pack_kinds: what Settings → Pack sizes offers for each family's items.
-  // choices: "+ Add item" and Rename offer only these sizes for lumber.
+  // choices: "+ Add item" and Rename offer only these sizes for lumber, and
+  // only these depths for LVL (#91).
   // Every family starts not live (#81, "Live in Inventory").
   const common = { live: false, order_unit: 'pieces', choices: null, trimmable: false };
   assert.deepEqual(families, [
     { code: 'lumber', name: 'Lumber', identity: ['size', 'grade', 'length_ft'], pack_kinds: ['pack'], ...common, order_unit: 'linear feet', choices: { size: LUMBER_SIZES } },
     { code: 'plates', name: 'Plates', identity: ['sku'], pack_kinds: ['pack', 'box', 'pallet'], ...common },
     { code: 'hangers', name: 'Hangers', identity: ['sku'], pack_kinds: ['carton'], ...common },
-    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'], pack_kinds: ['pack'], ...common, trimmable: true },
+    { code: 'lvl', name: 'LVL', identity: ['product', 'size', 'length_ft'], pack_kinds: ['pack'], ...common, trimmable: true, choices: { size: LVL_DEPTHS } },
   ]);
   const odd = await change(ctx, '/api/items/add', { family: 'lumber', identity: { size: '2x5', grade: '#2', length_ft: 8 } });
   assert.equal(odd.status, 400);
