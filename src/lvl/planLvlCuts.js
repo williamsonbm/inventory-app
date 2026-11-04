@@ -60,8 +60,8 @@ function planLvlCuts({ lines, available, purchasable, shortestKept }) {
       board.pieces.push(piece);
       board.remainderFt -= piece;
     }
-    // A missing setting would quietly make every remainder scrap.
-    if (boards.length && shortestKept[depth] === undefined) {
+    // A missing or non-number setting would quietly misjudge every remainder.
+    if (boards.length && !Number.isFinite(shortestKept[depth])) {
       throw new Error(`No shortest remainder kept for LVL depth ${depth}`);
     }
     for (const b of boards) {

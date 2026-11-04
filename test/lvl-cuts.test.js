@@ -186,3 +186,12 @@ test('a piece a hair past the board (inside the 1/16″ tolerance) leaves a rema
   const out = plan({ lines: [{ depth: '9-12', lengthFt: 48.004, quantity: 1 }] });
   assert.deepEqual(out.depths[0].boards.map((b) => [b.lengthFt, b.remainderFt, b.keptFt]), [[48, 0, null]]);
 });
+
+test('a shortest remainder kept that is null or not a number throws an error that names the depth', () => {
+  for (const kept of [null, NaN]) {
+    assert.throws(
+      () => plan({ lines: [{ depth: '9-12', lengthFt: 46, quantity: 1 }], shortestKept: { '9-12': kept } }),
+      /9-12/,
+    );
+  }
+});
