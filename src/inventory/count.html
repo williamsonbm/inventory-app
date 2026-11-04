@@ -49,6 +49,16 @@
   draft nobody will finish, after a warning (owner, Q149). An item the catalog
   lacks is added in one click from the box under the sheet (story 4).
 
+  Lumber and LVL (#172): a button per size (lumber) or depth (LVL) shows
+  that one's rows; the others stay in the form, hidden, so what is typed in
+  them is kept and saved. The button last used, by a click or by adding an
+  item, opens again on this computer (Q36), and the Length heading sorts
+  each item's lengths short→long or long→short, remembered (Q37). The form
+  is novalidate: the browser cannot point at a bad number in a hidden row,
+  so the server names it, for Submit as for Save draft. Their print is a
+  page per size or depth, laid out as the owner's workbook, Qty and totals
+  blank (Q35, Q38–Q40); other families print the sheet.
+
   Group C (stories 69–76, 80): a count waiting for approval opens Review.
   Each entry made during the count asks "Was this item counted after this
   entry?" (Q33); each counted item shows Matched or Unmatched against the
@@ -60,11 +70,12 @@
   in the page (story 73, no browser dialog). The preview is advice: the
   database works the app's number out again at approval and decides.
 
-  Glue, NOT UNIT-TESTED: the forms, the sheet and its print need a browser,
-  and this repo has no DOM harness. Every route it calls is tested in
+  Glue, NOT UNIT-TESTED: the forms, the sheet, its buttons and the print
+  need a browser, and this repo has no DOM harness. Every route it calls is tested in
   test/inventory.test.js, the counts' rules in test/counts.test.js, and the
-  one-click offer in test/new-item.test.js. The layout and the print are
-  checked by hand (#81, Testing Decisions).
+  one-click offer in test/new-item.test.js. The layout, the buttons, the
+  Length sort and the print pages are checked by hand (#81, Testing
+  Decisions).
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -109,7 +120,7 @@
     <p class="note no-print" id="sheet-closed" hidden role="alert"></p>
     <p class="sub" id="sheet-started"></p>
     <div id="sheet-tabs" class="pills" style="margin:8px 0" hidden></div>
-    <form id="sheet-form">
+    <form id="sheet-form" novalidate>
       <div class="tw"><table class="one-line">
         <thead><tr><th style="width:34%">Item</th><th data-length hidden><button type="button" class="ghost" id="sheet-length" title="Sort by length"></button></th><th>Packs</th><th>Pack size</th><th>Kind</th><th>Loose</th><th>Pieces</th><th data-lf>LF</th><th class="no-print"></th></tr></thead>
         <tbody id="sheet-lines"></tbody>
@@ -653,7 +664,8 @@
       const after = rows.filter((tr) => sheetOrder(itemById(Number(tr.dataset.itemId)), item) < 0).at(-1);
       const row = sheetRow(item, null, false);
       if (after) after.after(row); else el('sheet-lines').prepend(row);
-      sheetTab = item.size;  // its own button, so the new row shows
+      sheetTab = item.size;  // its own button, so the new row shows, stored as a click is
+      store(TAB_KEY + open.family, item.size);
       paintTabs();
       paintPrint();
       el('missing').value = '';
