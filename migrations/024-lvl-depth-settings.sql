@@ -77,7 +77,7 @@ BEGIN
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
   PERFORM inv.check_lvl_depth(p_depth);
   IF p_lengths IS NULL OR EXISTS (SELECT FROM pg_catalog.unnest(p_lengths) n
-                                   WHERE n IS NULL OR n <> pg_catalog.trunc(n) OR n <= 0) THEN
+                                   WHERE n IS NULL OR n <> pg_catalog.trunc(n) OR n NOT BETWEEN 1 AND 2147483647) THEN
     RAISE EXCEPTION 'A purchasable length is a whole number of feet above 0.' USING ERRCODE = 'IV400';
   END IF;
   was := inv.lvl_depth_settings_at_version(p_depth, p_version);
@@ -105,7 +105,7 @@ BEGIN
                         pg_catalog.jsonb_build_object('depth', p_depth, 'version', p_version, 'ft', p_ft));
   IF a.log_id IS NULL THEN RETURN a.earlier; END IF;
   PERFORM inv.check_lvl_depth(p_depth);
-  IF p_ft IS NULL OR p_ft <> pg_catalog.trunc(p_ft) OR p_ft < 2 OR p_ft % 2 <> 0 THEN
+  IF p_ft IS NULL OR p_ft <> pg_catalog.trunc(p_ft) OR p_ft NOT BETWEEN 2 AND 2147483647 OR p_ft % 2 <> 0 THEN
     RAISE EXCEPTION 'The shortest remainder kept is an even number of feet, 2 or more.' USING ERRCODE = 'IV400';
   END IF;
   was := inv.lvl_depth_settings_at_version(p_depth, p_version);

@@ -281,7 +281,10 @@ test("a change to an LVL depth's settings is saved for everyone and shows in the
   const ctx = await withAdmin();
   const settings = async () => (await read(ctx, '/api/lvl/settings')).settings;
   const nineHalf = (await settings()).find((s) => s.depth === '9-1/2');
-  const added = await change(ctx, '/api/lvl/purchasable-lengths',
+  // An office person who is not an admin changes them too (#181).
+  await change(ctx, '/api/users/add', { email: 'bob@example.com', name: 'Bob Ray', password: 'bob temporary 1' });
+  const bob = { ...ctx, cookie: await signInAndChoose(ctx.base, 'bob@example.com', 'bob temporary 1', 'bob own password') };
+  const added = await change(bob, '/api/lvl/purchasable-lengths',
     { depth: '9-1/2', version: nineHalf.version, lengths: [...nineHalf.purchasable_lengths, 24] });
   assert.equal(added.status, 200, added.body.error);
   const kept = await change(ctx, '/api/lvl/shortest-remainder-kept',
@@ -301,7 +304,7 @@ test("a change to an LVL depth's settings is saved for everyone and shows in the
   const entries = (await read(ctx, '/api/activity?family=lvl')).entries.map(({ who, action, target, change: c }) => [who, action, target, c]);
   assert.deepEqual(entries, [
     [ctx.ann.name, 'set LVL shortest remainder kept', 'LVL 9-1/2″', 'shortest remainder kept: 10′ → 8′'],
-    [ctx.ann.name, 'set LVL purchasable lengths', 'LVL 9-1/2″', 'purchasable lengths: 48′ → 24′, 48′'],
+    ['Bob Ray', 'set LVL purchasable lengths', 'LVL 9-1/2″', 'purchasable lengths: 48′ → 24′, 48′'],
   ]);
 });
 

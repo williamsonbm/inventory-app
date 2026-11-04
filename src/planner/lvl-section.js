@@ -7,7 +7,7 @@
 
    Registers window.PlannerSections.lvl.
 
-   The "Stock lengths we buy" panel here holds each LVL depth's purchasable
+   The "LVL stock lengths we buy" panel here holds each LVL depth's purchasable
    lengths and shortest remainder kept (#181), shared by every computer and
    logged, as lumber's panel is: read from /api/lvl/settings, each change
    saved at once. Nothing plans with them yet (#182).
@@ -219,7 +219,7 @@
   function mount({ tools }) {
     tools.innerHTML = `
       <details class="sec" id="lvl-lengths-sec">
-        <summary>Stock lengths we buy (shared)</summary>
+        <summary>LVL stock lengths we buy (shared)</summary>
         <p class="sub" style="margin:8px 0 0">The lengths the yard buys each LVL depth in, in whole feet, and the shortest remainder it keeps (an even length, 2′ or more); a shorter one is scrap. Each change is saved at once for every computer, and the Activity Log shows who made it. Nothing plans with these yet.</p>
         <div id="lvl-lengths-message" role="status"></div>
         <div class="menu-wrap" id="lvl-lengths-mount"></div>

@@ -245,6 +245,7 @@ test('an LVL purchasable length is whole feet above 0, a shortest remainder kept
     ['a negative length', () => setLengths([-48]), LENGTH],
     ['a length that is not whole feet', () => setLengths([47.5]), LENGTH],
     ['a blank length', () => setLengths([48, null]), LENGTH],
+    ['a length too large to hold', () => setLengths([3000000000]), LENGTH],
     ['no list at all', () => setLengths(null), LENGTH],
     ['lengths for a depth not carried', () => setLengths([48], '22'), DEPTH],
     ['an odd shortest remainder kept', () => setKept(9), KEPT],
@@ -252,6 +253,7 @@ test('an LVL purchasable length is whole feet above 0, a shortest remainder kept
     ['a negative shortest remainder kept', () => setKept(-2), KEPT],
     ['a shortest remainder kept that is not whole feet', () => setKept(10.5), KEPT],
     ['a blank shortest remainder kept', () => setKept(null), KEPT],
+    ['a shortest remainder kept too large to hold', () => setKept(3000000000), KEPT],
     ['a shortest remainder kept for a depth not carried', () => setKept(10, '22'), DEPTH],
   ];
   for (const [label, attempt, message] of cases) {
