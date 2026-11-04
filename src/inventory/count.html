@@ -55,7 +55,8 @@
   item, opens again on this computer (Q36), and the Length heading sorts
   each item's lengths short→long or long→short, remembered (Q37). The form
   is novalidate: the browser cannot point at a bad number in a hidden row,
-  so the server names it, for Submit as for Save draft. Their print is a
+  so the server names it, for Submit as for Save draft. Text that is not a
+  number at all reads as blank, so the page finds it first (#176). Their print is a
   page per size or depth, laid out as the owner's workbook, Qty and totals
   blank (Q35, Q38–Q40); other families print the sheet.
 
@@ -720,14 +721,34 @@
       }
     }
   }
-  el('sheet-save').addEventListener('click', () => {
-    el('sheet-save').disabled = true;
-    saveSheet('/api/counts/save', sheetRequest()).finally(() => { el('sheet-save').disabled = false; });
-  });
+  // A box with text the browser cannot read as a number (`12-`) reads as
+  // blank, so it would go as not counted with no word (#176). The form is
+  // novalidate, so the page finds it: it opens the row's button, puts the
+  // cursor in the box, names the item and sends nothing.
+  const BOXES = { packs: 'packs', pack: 'the pack size', loose: 'loose pieces' };
+  function badBox() {
+    for (const tr of el('sheet-lines').children) {
+      const f = Object.keys(BOXES).find((k) => cell(tr, k).validity.badInput);
+      if (f) return { tr, f };
+    }
+    return null;
+  }
+  function sendSheet(route, button) {
+    const bad = badBox();
+    if (bad) {
+      const item = itemById(Number(bad.tr.dataset.itemId));
+      if (bad.tr.hidden) { sheetTab = item.size; paintTabs(); }
+      say(itemLabel(item) + ': ' + BOXES[bad.f] + ' must be a number. Type it again.', 'bad');
+      cell(bad.tr, bad.f).focus();
+      return;
+    }
+    el(button).disabled = true;
+    saveSheet(route, sheetRequest()).finally(() => { el(button).disabled = false; });
+  }
+  el('sheet-save').addEventListener('click', () => sendSheet('/api/counts/save', 'sheet-save'));
   el('sheet-form').addEventListener('submit', (e) => {
     e.preventDefault();
-    el('sheet-submit').disabled = true;
-    saveSheet('/api/counts/submit', sheetRequest()).finally(() => { el('sheet-submit').disabled = false; });
+    sendSheet('/api/counts/submit', 'sheet-submit');
   });
 
   // ── Discard a draft (owner, Q149) ─────────────────────────────────────────
