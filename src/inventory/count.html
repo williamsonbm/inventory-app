@@ -16,6 +16,21 @@
   })();
 </script>
 <link rel="stylesheet" href="/planner.css">
+<style>
+  /* A lumber or LVL sheet prints its pages instead of itself (#172). */
+  .print-pages{display:none}
+  @media print{
+    .paged{display:none!important}
+    .print-pages{display:block}
+    .print-page + .print-page{break-before:page}
+    .print-page h2{margin:0}
+    .print-sheet{width:100%;border-collapse:collapse;font-size:13px}
+    .print-sheet th,.print-sheet td{border-bottom:1px solid #999;padding:5px 8px;text-align:left}
+    .print-sheet tbody tr:nth-child(even){background:#eee;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    .print-sheet tr.item-end td{border-bottom:2px solid #000}
+    .print-sheet td.box{border:2px solid #000}
+  }
+</style>
 </head>
 <body>
 <!--
@@ -34,6 +49,16 @@
   draft nobody will finish, after a warning (owner, Q149). An item the catalog
   lacks is added in one click from the box under the sheet (story 4).
 
+  Lumber and LVL (#172): a button per size (lumber) or depth (LVL) shows
+  that one's rows; the others stay in the form, hidden, so what is typed in
+  them is kept and saved. The button last used, by a click or by adding an
+  item, opens again on this computer (Q36), and the Length heading sorts
+  each item's lengths short→long or long→short, remembered (Q37). The form
+  is novalidate: the browser cannot point at a bad number in a hidden row,
+  so the server names it, for Submit as for Save draft. Their print is a
+  page per size or depth, laid out as the owner's workbook, Qty and totals
+  blank (Q35, Q38–Q40); other families print the sheet.
+
   Group C (stories 69–76, 80): a count waiting for approval opens Review.
   Each entry made during the count asks "Was this item counted after this
   entry?" (Q33); each counted item shows Matched or Unmatched against the
@@ -45,11 +70,12 @@
   in the page (story 73, no browser dialog). The preview is advice: the
   database works the app's number out again at approval and decides.
 
-  Glue, NOT UNIT-TESTED: the forms, the sheet and its print need a browser,
-  and this repo has no DOM harness. Every route it calls is tested in
+  Glue, NOT UNIT-TESTED: the forms, the sheet, its buttons and the print
+  need a browser, and this repo has no DOM harness. Every route it calls is tested in
   test/inventory.test.js, the counts' rules in test/counts.test.js, and the
-  one-click offer in test/new-item.test.js. The layout and the print are
-  checked by hand (#81, Testing Decisions).
+  one-click offer in test/new-item.test.js. The layout, the buttons, the
+  Length sort and the print pages are checked by hand (#81, Testing
+  Decisions).
 -->
 <header class="appbar">
   <div class="appbar-primary">
@@ -93,9 +119,10 @@
     </div>
     <p class="note no-print" id="sheet-closed" hidden role="alert"></p>
     <p class="sub" id="sheet-started"></p>
-    <form id="sheet-form">
+    <div id="sheet-tabs" class="pills" style="margin:8px 0" hidden></div>
+    <form id="sheet-form" novalidate>
       <div class="tw"><table class="one-line">
-        <thead><tr><th style="width:34%">Item</th><th>Packs</th><th>Pack size</th><th>Kind</th><th>Loose</th><th>Pieces</th><th data-lf>LF</th><th class="no-print"></th></tr></thead>
+        <thead><tr><th style="width:34%">Item</th><th data-length hidden><button type="button" class="ghost" id="sheet-length" title="Sort by length"></button></th><th>Packs</th><th>Pack size</th><th>Kind</th><th>Loose</th><th>Pieces</th><th data-lf>LF</th><th class="no-print"></th></tr></thead>
         <tbody id="sheet-lines"></tbody>
       </table></div>
       <div class="row no-print" style="margin-top:10px;align-items:flex-end">
@@ -116,6 +143,8 @@
       <p class="sub no-print">Fill in what you find: packs × pack size, plus loose pieces. A row left blank is not counted; type 0 for an empty rack. Use + to add a line for an item sitting in packs of another size. Save draft keeps your work and changes nothing; Submit sends the count for approval.</p>
     </form>
   </section>
+
+  <div class="print-pages" id="print-pages"></div>
 
   <section id="review" class="no-print" hidden>
     <h2 style="margin:8px 0" id="review-title"></h2>
@@ -154,7 +183,7 @@
 <script>
 (async () => {
   const { esc, fmtInt } = PlannerUI;
-  const { send, getAll, say, itemLabel, unitShort, showTime, showDay, monthName, countKind } = AppHeader;
+  const { send, getAll, say, itemLabel, unitShort, showTime, showDate, showDay, monthName, countKind } = AppHeader;
   const el = (id) => document.getElementById(id);
   const me = await AppHeader.me;
   if (!me) return;
@@ -292,15 +321,32 @@
   // product, depth (the catalog's depth order) and length; the rest by SKU.
   const depth = (d) => { const m = /^(\d+)(?:-(\d+)\/(\d+))?/.exec(d || ''); return m ? Number(m[1]) + (m[2] ? m[2] / m[3] : 0) : 0; };
   const rank = (list, v) => { const n = (list || []).indexOf(v); return n < 0 ? Infinity : n; };
+  const sizeOrder = (f, a, b) => rank(f.choices?.size, a) - rank(f.choices?.size, b) || depth(a) - depth(b);
   function sheetOrder(a, b) {
     const f = family(a.family);
     return String(a.product ?? '').localeCompare(String(b.product ?? ''))
-      || rank(f.choices?.size, a.size) - rank(f.choices?.size, b.size)
+      || sizeOrder(f, a.size, b.size)
       || rank(gradeOrder, a.grade) - rank(gradeOrder, b.grade)
-      || depth(a.size) - depth(b.size)
-      || (a.length_ft ?? 0) - (b.length_ft ?? 0)
+      || ((a.length_ft ?? 0) - (b.length_ft ?? 0)) * (lengthDown ? -1 : 1)
       || itemLabel(a).localeCompare(itemLabel(b), 'en', { numeric: true });
   }
+
+  // Lumber and LVL count one size or depth at a time, as on the Overview
+  // (#172): a button per size or depth on the sheet, and a row names its
+  // item without it. The button last used on this computer opens again
+  // (Q36); the Length heading sorts each item's lengths short to long or
+  // long to short, remembered too (Q37). Rows of another size stay in the
+  // form, hidden, so their numbers are kept and saved.
+  const TABS = {
+    lumber: { unit: '', name: (i) => i.grade },
+    lvl: { unit: '″', name: (i) => i.product },
+  };
+  const TAB_KEY = 'count.tab.';  // + family
+  const LENGTH_KEY = 'count.length';
+  const stored = (key) => { try { return localStorage.getItem(key); } catch { return null; /* storage blocked */ } };
+  const store = (key, v) => { try { localStorage.setItem(key, v); } catch { /* storage blocked */ } };
+  let lengthDown = stored(LENGTH_KEY) === 'down';
+  let sheetTab = null;  // the size or depth the sheet shows, or null
 
   const cell = (tr, f) => tr.querySelector('[data-f="' + f + '"]');
 
@@ -314,7 +360,9 @@
     const kinds = family(item.family).pack_kinds;
     const kind = line?.pack_kind || kinds.find((k) => sizeOnFile(item.id, k)) || kinds[0];
     const box = (f, w, min, v) => '<td><input data-f="' + f + '" type="number" min="' + min + '" step="1" style="width:' + w + '" value="' + (v ?? '') + '"></td>';
-    tr.innerHTML = '<td class="name">' + (extra ? '' : esc(itemLabel(item)) + (item.active ? '' : ' <span class="sub">(retired)</span>')) + '</td>' +
+    const t = TABS[item.family];
+    tr.innerHTML = '<td class="name">' + (extra ? '' : esc(t ? t.name(item) : itemLabel(item)) + (item.active ? '' : ' <span class="sub">(retired)</span>')) + '</td>' +
+      (t ? '<td>' + (extra ? '' : item.length_ft + '′') + '</td>' : '') +
       box('packs', '5em', 0, line?.packs) + box('pack', '6em', 1, line ? line.pack_size : extra ? null : sizeOnFile(item.id, kind)) +
       '<td><select data-f="kind">' + kinds.map((k) => '<option' + (k === kind ? ' selected' : '') + '>' + esc(k) + '</option>').join('') + '</select></td>' +
       box('loose', '5em', 0, line?.loose) +
@@ -350,12 +398,17 @@
     el('sheet-started').textContent = 'Started ' + showTime(count.counted_at) + ' by ' + count.counted_by +
       '. The count is true as of then; anything received or corrected after it counts on top.';
     document.querySelector('th[data-lf]').hidden = f.code !== 'lumber';
+    document.querySelector('th[data-length]').hidden = !TABS[f.code];
+    sheetTab = null;
     const counted = new Set(count.lines.map((l) => l.item_id));
     const onSheet = items.filter((i) => i.family === f.code && (i.active || counted.has(i.id))).sort(sheetOrder);
     el('sheet-lines').replaceChildren(...onSheet.flatMap((item) => {
       const lines = count.lines.filter((l) => l.item_id === item.id);
       return lines.length ? lines.map((l, n) => sheetRow(item, l, n > 0)) : [sheetRow(item, null, false)];
     }));
+    el('sheet-length').textContent = 'Length ' + (lengthDown ? '▼' : '▲');
+    paintTabs();
+    paintPrint();
     el('missing').value = '';
     paintMissing();
     paintStart();
@@ -373,8 +426,75 @@
   }
   el('sheet-closes').addEventListener('input', paintClosed);
 
+  // The items on the sheet, in its order, and their sizes or depths in the
+  // catalog's order: the buttons, and the print's pages.
+  const sheetItems = () => [...new Set([...el('sheet-lines').children].map((tr) => itemById(Number(tr.dataset.itemId))))];
+  const sheetSizes = (onSheet) => [...new Set(onSheet.map((i) => i.size))].sort((a, b) => sizeOrder(family(open.family), a, b));
+
+  // The buttons: one per size or depth. Rows of the others are hidden.
+  function paintTabs() {
+    const t = TABS[open.family];
+    const rows = [...el('sheet-lines').children];
+    el('sheet-tabs').hidden = !t;
+    if (!t) return;
+    const values = sheetSizes(sheetItems());
+    if (!values.includes(sheetTab)) {
+      const saved = stored(TAB_KEY + open.family);
+      sheetTab = values.includes(saved) ? saved : values[0] ?? null;
+    }
+    el('sheet-tabs').innerHTML = values.map((v) =>
+      '<button type="button" data-tab="' + esc(v) + '" aria-pressed="' + (v === sheetTab) + '">' + esc(v + t.unit) + '</button>').join('');
+    for (const tr of rows) tr.hidden = itemById(Number(tr.dataset.itemId)).size !== sheetTab;
+  }
+  el('sheet-tabs').addEventListener('click', (e) => {
+    const v = e.target.closest('[data-tab]')?.dataset.tab;
+    if (v === undefined) return;
+    sheetTab = v;
+    store(TAB_KEY + open.family, v);
+    paintTabs();
+  });
+  // Sorted in place: a row keeps what is typed in it, and an item's further
+  // rows stay after its first.
+  el('sheet-length').addEventListener('click', () => {
+    lengthDown = !lengthDown;
+    store(LENGTH_KEY, lengthDown ? 'down' : 'up');
+    const rows = [...el('sheet-lines').children];
+    const at = new Map(rows.map((tr, n) => [tr, n]));
+    const item = (tr) => itemById(Number(tr.dataset.itemId));
+    el('sheet-lines').append(...rows.sort((a, b) => sheetOrder(item(a), item(b)) || at.get(a) - at.get(b)));
+    el('sheet-length').textContent = 'Length ' + (lengthDown ? '▼' : '▲');
+    paintPrint();
+  });
+
+  // The print of a lumber or LVL sheet, laid out as the yard's own count
+  // workbook (owner, Q35, Q38–Q40): a page per size or depth, every one,
+  // in the sheet's order; a row per item with Qty left blank to write in
+  // (Q39), Total LF beside it, and Total LF by item on each item's last
+  // row. The other families print the sheet itself.
+  function paintPrint() {
+    const t = open && TABS[open.family];
+    el('sheet').classList.toggle('paged', !!t);
+    if (!t) { el('print-pages').innerHTML = ''; return; }
+    const onSheet = sheetItems();
+    const kind = countKind(open.kind);
+    const day = showDate(open.counted_at);
+    el('print-pages').innerHTML = sheetSizes(onSheet).map((size) => {
+      const rows = onSheet.filter((i) => i.size === size);
+      const body = rows.map((i, n) => {
+        const last = n === rows.length - 1 || t.name(rows[n + 1]) !== t.name(i);
+        return '<tr' + (last ? ' class="item-end"' : '') + '><td>' + i.length_ft + '′</td><td></td><td>' + esc(t.name(i)) +
+          '</td><td></td><td' + (last ? ' class="box"' : '') + '></td></tr>';
+      }).join('');
+      return '<section class="print-page"><div class="row"><h2>' + esc(open.family_name + ' ' + size + t.unit) + '</h2>' +
+        '<span>' + esc(kind[0].toUpperCase() + kind.slice(1)) + ' · ' + esc(day) + '</span></div>' +
+        '<table class="print-sheet"><thead><tr><th>Length</th><th>Qty</th><th>Item</th><th>Total LF</th><th>Total LF by item</th></tr></thead>' +
+        '<tbody>' + body + '</tbody></table></section>';
+    }).join('');
+  }
+
   function closeSheet() {
     open = null;
+    paintPrint();
     el('sheet').hidden = true;
     paintStart();
     paintCounts();
@@ -544,6 +664,10 @@
       const after = rows.filter((tr) => sheetOrder(itemById(Number(tr.dataset.itemId)), item) < 0).at(-1);
       const row = sheetRow(item, null, false);
       if (after) after.after(row); else el('sheet-lines').prepend(row);
+      sheetTab = item.size;  // its own button, so the new row shows, stored as a click is
+      store(TAB_KEY + open.family, item.size);
+      paintTabs();
+      paintPrint();
       el('missing').value = '';
       paintMissing();
       cell(row, 'loose').focus();
