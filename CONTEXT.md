@@ -153,6 +153,13 @@ or count line keeps its own copy of the size it used, so correcting a pack size 
 already saved. A plate with no pallet size listed has an unknown one.
 _Avoid_: pack factor, unit
 
+**Remainder** (LVL):
+What is left of an LVL board after a job's pieces are cut from it, as the plan expects. At Built,
+a remainder at or above its depth's shortest remainder kept (a setting, 10′ to start) goes back on
+hand as a board of its length, rounded down to an even foot as the yard counts; a shorter one is
+scrap. Un-build takes it back out. The yard may cut otherwise; the monthly count corrects it (#125).
+_Avoid_: drop, offcut, remnant — the web app's words, each with its own rule.
+
 **LVL threshold**:
 The reorder threshold for one LVL depth, in linear feet. An LVL item has no threshold of its own.
 _Avoid_: LVL item threshold
