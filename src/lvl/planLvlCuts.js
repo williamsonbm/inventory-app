@@ -39,18 +39,18 @@ function planLvlCuts({ lines, available, purchasable, shortestKept }) {
     const onHand = available.filter((a) => a.depth === depth)
       .map((a) => ({ lengthFt: a.lengthFt, unopened: a.quantity }))
       .sort((a, b) => a.lengthFt - b.lengthFt);
-    const buyable = purchasable[depth] || [];
+    const purchasableLengths = purchasable[depth] || [];
     const boards = [];
     for (const piece of pieces) {
       let board = boards.find((b) => approxGte(b.remainderFt, piece));
       if (!board) {
         const shelf = onHand.find((r) => r.unopened > 0 && approxGte(r.lengthFt, piece));
-        const lengthFt = shelf ? shelf.lengthFt : nextStockedUp(piece, buyable);
+        const lengthFt = shelf ? shelf.lengthFt : nextStockedUp(piece, purchasableLengths);
         if (lengthFt === undefined) {
           const last = atLength[atLength.length - 1];
           if (last && last.depth === depth && last.lengthFt === piece) last.quantity += 1;
-          else atLength.push({ depth, lengthFt: piece, quantity: 1,
-            reason: buyable.length ? 'longer than every purchasable length' : 'no purchasable length' });
+          else atLength.push({ depth, lengthFt: piece, quantity: 1, reason: purchasableLengths.length
+            ? 'longer than every purchasable length' : 'no purchasable length' });
           continue;
         }
         if (shelf) shelf.unopened -= 1;
@@ -60,8 +60,12 @@ function planLvlCuts({ lines, available, purchasable, shortestKept }) {
       board.pieces.push(piece);
       board.remainderFt -= piece;
     }
+    // A missing setting would quietly make every remainder scrap.
+    if (boards.length && shortestKept[depth] === undefined) {
+      throw new Error(`No shortest remainder kept for LVL depth ${depth}`);
+    }
     for (const b of boards) {
-      b.remainderFt = Math.round(b.remainderFt * SIXTEENTHS_PER_FT) / SIXTEENTHS_PER_FT;
+      b.remainderFt = Math.max(0, Math.round(b.remainderFt * SIXTEENTHS_PER_FT) / SIXTEENTHS_PER_FT);
       const evenFt = Math.floor((b.remainderFt + TOL_FT) / 2) * 2;
       b.keptFt = evenFt >= shortestKept[depth] ? evenFt : null;
     }

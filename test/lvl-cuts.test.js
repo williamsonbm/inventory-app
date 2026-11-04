@@ -174,3 +174,15 @@ test('a depth with no purchasable length still cuts from a board on hand that fi
     atLength: [{ depth: '24', lengthFt: 12, quantity: 1, reason: 'no purchasable length' }],
   });
 });
+
+test('a depth with boards but no shortest remainder kept throws an error that names the depth', () => {
+  assert.throws(
+    () => plan({ lines: [{ depth: '9-12', lengthFt: 10, quantity: 2 }], shortestKept: {} }),
+    /9-12/,
+  );
+});
+
+test('a piece a hair past the board (inside the 1/16″ tolerance) leaves a remainder of 0, not below 0', () => {
+  const out = plan({ lines: [{ depth: '9-12', lengthFt: 48.004, quantity: 1 }] });
+  assert.deepEqual(out.depths[0].boards.map((b) => [b.lengthFt, b.remainderFt, b.keptFt]), [[48, 0, null]]);
+});
