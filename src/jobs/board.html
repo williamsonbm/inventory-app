@@ -398,8 +398,8 @@
     el('confirm').innerHTML = '<h2>' + u.title + ' job ' + esc(body.number) + (body.name ? ' · ' + esc(body.name) : '') + '?</h2><p>' +
       u.back + ': ' + (body.lines.length ? pieces(body.lines) : 'nothing') + '.</p><p>' +
       (body.remainders.length ? 'Goes out again: ' + pieces(body.remainders) + '.</p><p>' : '') +
-      body.remainders.filter((l) => l.on_hand - l.quantity < 0)
-        .map((l) => '<b>' + esc(l.item) + ': on hand goes to ' + esc(String(l.on_hand - l.quantity).replace('-', '−')) + '.</b></p><p>').join('') +
+      body.remainders.filter((l) => l.on_hand_after < 0)
+        .map((l) => '<b>' + esc(l.item) + ': on hand goes to ' + esc(String(l.on_hand_after).replace('-', '−')) + '.</b></p><p>').join('') +
       (u.note ? '<b>' + u.note + '</b>' : 'The job goes back to ' + esc(body.to) + '.') + '</p><p>' +
       '<button type="button" id="confirm-undo">' + u.label + '</button> <button type="button" class="ghost" id="keep-job">' + u.no + '</button></p>';
     el('confirm-undo').addEventListener('click', (e) => busy(e.target, () => undo({ key: crypto.randomUUID(), action, number, version: jobs.get(number).version })));

@@ -766,7 +766,10 @@ async function undoJob(database, person, { key, action, number, version } = {}) 
 // lists the unconsumed lines of live families, which return to available
 // (S25); Un-build and Un-ship the consumed pieces they return to on hand,
 // and the LVL remainders they take back out (#185 Q41), each with its on
-// hand now, so the confirmation warns when another job used it (Q45).
+// hand after the undo, so the confirmation warns when another job used it
+// (Q45). That counts every entry the undo reverses for the item, so a
+// board the job pulled and also put back nets out (second PR #192 review,
+// finding 8).
 async function toGiveBack(database, action, number) {
   if (!Object.hasOwn(UNDO, action)) return notUndo;
   const [job] = await database.read(`
@@ -776,12 +779,13 @@ async function toGiveBack(database, action, number) {
      CROSS JOIN LATERAL (
        SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', c.quantity)
                 ORDER BY pg_catalog.array_position($3::text[], f.code), inv.item_label(i)) FILTER (WHERE NOT c.remainder) AS lines,
-              pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', -c.quantity, 'on_hand', fig.on_hand)
+              pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', -c.quantity, 'on_hand_after', fig.on_hand + c.change)
                 ORDER BY i.length_ft DESC, inv.item_label(i)) FILTER (WHERE c.remainder) AS remainders
-         FROM (SELECT g.item_id, g.kind = 'remainder' AS remainder, -pg_catalog.sum(g.quantity)::integer AS quantity
+         FROM (SELECT g.item_id, g.kind = 'remainder' AS remainder, -pg_catalog.sum(g.quantity)::integer AS quantity,
+                      -pg_catalog.sum(pg_catalog.sum(g.quantity)) OVER (PARTITION BY g.item_id)::integer AS change
                  FROM inv.job_to_give_back(j, $1) g GROUP BY 1, 2
                UNION ALL
-               SELECT c.item_id, false, c.quantity FROM inv.job_to_consume(j, 'shipped') c WHERE $1 = 'cancel job' AND c.live) c
+               SELECT c.item_id, false, c.quantity, NULL FROM inv.job_to_consume(j, 'shipped') c WHERE $1 = 'cancel job' AND c.live) c
          JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family
          LEFT JOIN inv.item_figures fig ON fig.item_id = c.item_id AND c.remainder) b
      WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($2))`, [UNDO[action].logged, number ?? '', FAMILY_ORDER]);

@@ -41,17 +41,25 @@ CREATE UNIQUE INDEX ledger_remainder_once ON inv.ledger (action_id, item_id) WHE
 -- the length its remainder goes back on hand at, rounded down to an even
 -- foot as the yard counts (story 22); null, scrap, otherwise (story 23).
 -- Within 1/16″ of an even foot counts as it, judged in sixteenths, so
--- exactly 1/16″ short does too (PR #192 review, finding 4). Before the job
--- consumes its LVL, a remainder is kept at or above today's shortest
--- remainder kept for its depth (Q42). After, as Built (or Shipped from
--- committed) put it back (Q46): the remainders still on hand for the job
--- give the shortest length kept at each depth, as the setting was then.
+-- exactly 1/16″ short does too (PR #192 review, finding 4): 192 is
+-- sixteenths in 1 ft, 384 in 2 ft (src/lvl/planLvlCuts.js,
+-- SIXTEENTHS_PER_FT). Before the job consumes its LVL, a remainder is kept
+-- at or above today's shortest remainder kept for its depth (Q42). After,
+-- as Built (or Shipped from committed) put it back (Q46): the job's
+-- remainder rows not reversed give the shortest length kept at each depth,
+-- as the setting was then. Another job may have used one since; the row
+-- still counts.
 -- Its boards and pieces stay as saved. What Built puts back on hand
 -- (inv.job_remainders) and what the check and the pull list print
 -- (src/jobs/jobs.js, FAMILIES) read it, so they agree;
 -- src/lvl/planLvlCuts.js judges a plan not yet saved the same way.
--- SECURITY DEFINER, as inv.job_committed (011): the Planner's "Already
--- handled" reads saved plans and has no read of the ledger.
+-- Deliberately SECURITY DEFINER, as inv.job_committed (011): the Planner's
+-- "Already handled" reads saved plans. The alternative, a grant of SELECT
+-- on inv.ledger to inv_planner, lets the Planner read every entry, with
+-- its person, reason and quantity. The cost: the function trusts the
+-- status and id in the p_job row, so inv_planner can learn whether a job
+-- has a remainder row at or below a length at a depth (second PR #192
+-- review). For a built job, "Already handled" shows nearly as much.
 CREATE FUNCTION inv.lvl_plan_today(p_plan jsonb, p_job inv.jobs) RETURNS jsonb
 LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
@@ -277,8 +285,9 @@ $$;
 
 -- 021's inv.job_settled, with a job's remainder rows, and their reversals,
 -- left out of what it consumed (PR #192 review, finding 1). A remainder is
--- a board put back, not one the job gave back: with it counted, a revised
--- sheet on the built job that takes its own remainder consumed it twice.
+-- a board put back, not one the job gave back. Deliberately not 021's
+-- sum of every row of the job: with it, a revised sheet on the built job
+-- that takes its own remainder consumed it twice.
 -- inv.job_to_consume needs no change: it counts LVL only while the job is
 -- committed, when each of its remainder rows has its reversal, so they sum
 -- to 0. 021's comment stands for the rest.

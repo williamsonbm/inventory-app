@@ -2957,7 +2957,7 @@ test('the Built confirmation lists the remainders going back on hand, also at a 
   assert.equal(back.status, 200, await back.clone().text());
   assert.deepEqual(await back.json(), { ok: true, number: '33591R', name: 'Sample Job A', to: 'committed',
     lines: [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 48′', quantity: 1 }],
-    remainders: [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1, on_hand: 1 }] });
+    remainders: [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1, on_hand_after: 0 }] });
 });
 
 test('Shipped from committed, which consumes the LVL then, puts the remainders back on hand; Un-ship, to built (J85), keeps them and Un-build takes them out (#185, stories 22, 25)', async () => {
@@ -3004,7 +3004,7 @@ test('a job that pulls an on-hand 28′ and leaves a 28′ remainder: Shipped af
   const back = await (await get(ctx.base, '/api/jobs/to-give-back?action=unbuild&number=33591R', ctx.cookie)).json();
   assert.deepEqual([back.lines, back.remainders], [
     [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1 }, { item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 48′', quantity: 1 }],
-    [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1, on_hand: 1 }],
+    [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1, on_hand_after: 1 }],
   ]);
   await mark(ctx, 'shipped', ['33591R']);
   assert.deepEqual([await onHandOf(ctx.db, at48), await onHandOf(ctx.db, at28)], [0, 1], 'Shipped takes no LVL');
@@ -3045,7 +3045,7 @@ test('a revised sheet on a built job that takes the job\'s own on-hand 28′ rem
   assert.equal(await onHandOf(ctx.db, ctx.items['9-1/2 28']), 0, 'the remainder put back at Built, then taken once by the revision');
 });
 
-test('Un-build after another job used the remainder goes ahead, and its confirmation gives the remainder\'s on hand, so it can warn of on hand below zero (PR #192 review, finding 2, #185 Q45)', async () => {
+test('Un-build after another job used the remainder goes ahead, and its confirmation gives the remainder\'s on hand after Un-build, so it can warn of on hand below zero (PR #192 review, finding 2, #185 Q45)', async () => {
   const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28], ['9-1/2', 10]]);
   await ctx.onHand(ctx.items['9-1/2 48'], 1);
   await ctx.commitLvl();
@@ -3053,9 +3053,29 @@ test('Un-build after another job used the remainder goes ahead, and its confirma
   await ctx.commitLvl(lvlSheet().replace('33591R', '33592R'));
   await mark(ctx, 'built', ['33592R']);
   const back = await (await get(ctx.base, '/api/jobs/to-give-back?action=unbuild&number=33591R', ctx.cookie)).json();
-  assert.deepEqual(back.remainders, [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1, on_hand: 0 }]);
+  assert.deepEqual(back.remainders, [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1, on_hand_after: -1 }]);
   await undo(ctx, 'unbuild_job', '33591R');
   assert.equal(await onHandOf(ctx.db, ctx.items['9-1/2 28']), -1, 'on hand may go below zero (Q30)');
+});
+
+test('the Un-build confirmation counts the boards Un-build gives back of the remainder\'s item: on hand after is 0, not −1, when the job also pulled that 28′ (second PR #192 review, finding 8)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28], ['9-1/2', 10]]);
+  const at28 = ctx.items['9-1/2 28'];
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.onHand(at28, 1);
+  await ctx.commitLvl(lvlSheet().replace('1BM1-2,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,2,10-00-00,,,,',
+    '1BM1-1,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,26-00-00,,,,\n1BM1-2,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,20-00-00,,,,'));
+  await mark(ctx, 'built', ['33591R']);
+  await ctx.commitLvl(lvlSheet().replace('33591R', '33592R'));
+  await mark(ctx, 'built', ['33592R']);
+  assert.equal(await onHandOf(ctx.db, at28), 0, '33592R took the 28′ that 33591R put back');
+  const back = await (await get(ctx.base, '/api/jobs/to-give-back?action=unbuild&number=33591R', ctx.cookie)).json();
+  assert.deepEqual([back.lines, back.remainders], [
+    [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1 }, { item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 48′', quantity: 1 }],
+    [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1, on_hand_after: 0 }],
+  ]);
+  await undo(ctx, 'unbuild_job', '33591R');
+  assert.equal(await onHandOf(ctx.db, at28), 0);
 });
 
 test('a built job\'s pull list shows the remainders Built put back, whatever the setting now; after Un-build it follows today\'s setting again (PR #192 review, finding 3, #185 Q46)', async () => {
@@ -3067,6 +3087,15 @@ test('a built job\'s pull list shows the remainders Built put back, whatever the
   assert.match(await pullListText(ctx, '33591R'), /9-1\/2″ 48′ on hand 2 × 10′ 28′ back on hand /);
   await undo(ctx, 'unbuild_job', '33591R');
   assert.match(await pullListText(ctx, '33591R'), /9-1\/2″ 48′ on hand 2 × 10′ 28′ scrap /);
+});
+
+test('a job shipped from committed shows the remainders Shipped put back, whatever the setting now (second PR #192 review, finding 9, #185 Q46)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28], ['9-1/2', 10]]);
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  await mark(ctx, 'shipped', ['33591R']);
+  await call(ctx.db, 'set_lvl_shortest_remainder_kept', ctx.ann.id, crypto.randomUUID(), '9-1/2', 1, 30);
+  assert.match(await pullListText(ctx, '33591R'), /9-1\/2″ 48′ on hand 2 × 10′ 28′ back on hand /);
 });
 
 test('two boards whose remainders are one item put back one row of 2; Un-build takes both out (PR #192 review, finding 7)', async () => {
@@ -3094,8 +3123,8 @@ test('the check and Built round a remainder to its even foot as a plan not yet s
   const ctx = await withAdmin();
   const ft = (feet, inches = 0) => feet + inches / 12;
   for (const piece of [ft(20, 1 / 16), ft(20), ft(20, 1 / 8), ft(20, 4), ft(36, 2), ft(38, 2)]) {
-    const { depths: [{ boards: [board] }] } = planLvlCuts({ lines: [{ depth: '9-12', lengthFt: piece, quantity: 1 }],
-      available: [], purchasable: { '9-12': [48] }, shortestKept: { '9-12': 10 } });
+    const { depths: [{ boards: [board] }] } = planLvlCuts({ lines: [{ depth: '9-1/2', lengthFt: piece, quantity: 1 }],
+      available: [], purchasable: { '9-1/2': [48] }, shortestKept: { '9-1/2': 10 } });
     const [{ kept }] = await as(ctx.db, APP, async (app) => (await app.query(
       "SELECT inv.lvl_plan_today(pg_catalog.jsonb_build_array(pg_catalog.jsonb_build_object('depth', '9-1/2', 'remainder_ft', $1::float8)), NULL) -> 0 -> 'kept_ft' AS kept",
       [board.remainderFt])).rows);
