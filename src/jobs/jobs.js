@@ -22,6 +22,7 @@ const { compareMenuKeys } = require('../lumber/lumberMenu.js');
 const { normalizeLumber } = require('../lumber/normalizeLumber.js');
 const { parseLvlSheet } = require('../lvl/parseLvlSheet.js');
 const { planLvl } = require('../lvl/planLvl.js');
+const { planLvlCuts } = require('../lvl/planLvlCuts.js');
 const { extractDepth } = require('../ewp/extractDepth.js');
 const { isCsvFile } = require('../planner/server.js');
 const { esc, fmtInt, fmtNum, ftLabel: feet, cutInstruction } = require('../planner/planner-ui.js');
@@ -38,17 +39,83 @@ const skuLines = (parse, key, canon = (s) => s) => (text) => {
     lines: read.lines.map((l) => ({ key: key(l.sku), sku: canon(l.sku), quantity: l.qty })) };
 };
 
-// LVL lines are one item per depth and length: "4 × 20′" of 11-7/8 is
-// four 20′ boards (Q59). A line whose depth cannot be read matches no item
-// and stays its own line. A sheet with no LVL keeps no note about it.
-function lvlLines(text) {
+// The LVL boards job `number` may plan, per depth and length
+// (inv.lvl_available): on hand − committed by other jobs.
+async function lvlAvailable(database, number) {
+  const rows = await database.read('SELECT size, length_ft, quantity FROM inv.lvl_available($1)', [String(number ?? '')]);
+  return rows.map((r) => ({ depth: extractDepth(r.size, 'LVL'), lengthFt: r.length_ft, quantity: r.quantity }));
+}
+
+// Each LVL depth's purchasable lengths and shortest remainder kept (#181),
+// keyed as extractDepth keys a sheet's depth.
+async function lvlSettings(database) {
+  const rows = await database.read('SELECT depth, purchasable_lengths, shortest_remainder_kept_ft FROM inv.lvl_depth_settings');
+  const purchasable = {};
+  const shortestKept = {};
+  const names = {};
+  for (const r of rows) {
+    const depth = extractDepth(r.depth, 'LVL');
+    purchasable[depth] = r.purchasable_lengths;
+    shortestKept[depth] = r.shortest_remainder_kept_ft;
+    names[depth] = r.depth;
+  }
+  return { purchasable, shortestKept, names };
+}
+
+// LVL's lines are the boards of the job's LVL plan (#182, #178 story 1):
+// planned with the boards available and the LVL settings, one line per
+// depth and board length, so "2 × 10′" of 9-1/2 is one 48′ board when only
+// 48′ is on hand. A piece no board holds is its own line at its length. A
+// line whose depth cannot be read matches no item and stays its own line.
+// A sheet with no LVL keeps no note about it.
+async function lvlLines(text, database, taken) {
   const read = parseLvlSheet(text);
   if (!read.ok) return { error: read.reason };
-  return { warnings: read.items.length ? read.warnings : [],
-    lines: read.items.map((it) => {
-      const depth = extractDepth(it.size, 'LVL');
-      return { key: depth ? `${depth} ${it.decimalFeet}` : `unread ${it.size} ${it.decimalFeet}`, sku: `${it.size} · ${feet(it.decimalFeet)}`, quantity: it.qty, length_ft: it.decimalFeet };
-    }) };
+  if (!read.items.length) return { warnings: [], lines: [] };
+  const pieces = read.items.map((it) => ({ ...it, depth: extractDepth(it.size, 'LVL') }));
+  const label = (depth) => pieces.find((p) => p.depth === depth).size;
+  const line = (key, sku, quantity, lengthFt) => ({ key, sku: `${sku} · ${feet(lengthFt)}`, quantity, length_ft: lengthFt });
+  const lines = pieces.filter((p) => !p.depth).map((p) => line(`unread ${p.size} ${p.decimalFeet}`, p.size, p.qty, p.decimalFeet));
+  const readDepth = pieces.filter((p) => p.depth);
+  if (!readDepth.length) return { warnings: read.warnings, lines };
+  // One read after the other: each holds a pool connection (readCatalogKeys).
+  const onShelf = await lvlAvailable(database, read.meta.jobNumber);
+  const { names, ...settings } = await lvlSettings(database);
+  const available = onShelf.map((a) => ({ ...a, quantity: Math.max(0, a.quantity - (taken.get(`${a.depth} ${a.lengthFt}`) ?? 0)) }));
+  const plan = planLvlCuts({ lines: readDepth.map((p) => ({ depth: p.depth, lengthFt: p.decimalFeet, quantity: p.qty })), available, ...settings });
+  // The plan as inv.commit_sheet saves it, one entry per board; matchSheet
+  // adds each board's item.
+  const boards = [];
+  const add = (depth, lengthFt, entry) => {
+    const key = `${depth} ${lengthFt}`;
+    boards.push({ key, depth: names[depth], length_ft: lengthFt, ...entry });
+    const seen = lines.find((l) => l.key === key);
+    if (seen) seen.quantity += 1;
+    else lines.push({ ...line(key, label(depth), 1, lengthFt), ...(entry.reason && { at_length: entry.reason }) });
+  };
+  for (const { depth, boards: cut } of plan.depths) {
+    for (const b of cut) {
+      add(depth, b.lengthFt, { source: b.source, pieces_ft: b.pieces, remainder_ft: b.remainderFt, kept_ft: b.keptFt });
+    }
+  }
+  for (const a of plan.atLength) {
+    const reason = a.reason === 'no purchasable length'
+      ? `We buy no set length of ${names[a.depth]}″ LVL, so it is bought at its length.`
+      : `Longer than every length we buy of ${names[a.depth]}″ LVL (${settings.purchasable[a.depth].map(feet).join(', ')}), so it is bought at its length.`;
+    for (let n = 0; n < a.quantity; n += 1) {
+      add(a.depth, a.lengthFt, { source: 'at length', pieces_ft: [a.lengthFt], remainder_ft: 0, kept_ft: null, reason });
+    }
+  }
+  // The sheet's own LVL pieces, per depth and length, so the same sheet
+  // finds its saved plan (J138) whatever order its rows come in.
+  const demand = new Map();
+  for (const p of readDepth) {
+    const k = `${p.depth} ${p.decimalFeet}`;
+    demand.set(k, { depth: names[p.depth], length_ft: p.decimalFeet, quantity: (demand.get(k)?.quantity ?? 0) + p.qty });
+  }
+  return { warnings: read.warnings, lines,
+    lvl: { demand: [...demand.values()].sort((a, b) => a.depth.localeCompare(b.depth) || a.length_ft - b.length_ft), boards,
+      labels: Object.fromEntries(readDepth.map((p) => [names[p.depth], label(p.depth)])) } };
 }
 
 // The step that fixes a reason the plan gives for a line it cannot place;
@@ -111,22 +178,24 @@ const FAMILIES = {
 
 // The file's job and its lines, one per family and key with quantities
 // summed. Returns { error } for a file that is not a job's material sheet.
-async function readSheet(text, database) {
+async function readSheet(text, database, taken) {
   let meta;
   const lines = new Map();
   const warnings = [];
   const unplaced = [];
   let lumber = null;
+  let lvl = null;
   for (const [family, { read }] of Object.entries(FAMILIES)) {
-    const sheet = await read(text, database);
+    const sheet = await read(text, database, taken);
     if (sheet.error) return { error: sheet.error };
     meta ??= sheet.meta;
     warnings.push(...sheet.warnings);
     unplaced.push(...(sheet.unplaced ?? []).map((u) => ({ family, ...u })));
     lumber ??= sheet.lumber;
-    for (const { key, sku, quantity, length_ft } of sheet.lines) {
+    lvl ??= sheet.lvl;
+    for (const { key, sku, quantity, length_ft, at_length } of sheet.lines) {
       // Runs of blanks as one, as the catalog stores a SKU (inv.new_item).
-      const seen = lines.get(`${family} ${key}`) ?? { family, key, sku: sku.trim().replace(/\s+/g, ' '), quantity: 0, length_ft };
+      const seen = lines.get(`${family} ${key}`) ?? { family, key, sku: sku.trim().replace(/\s+/g, ' '), quantity: 0, length_ft, at_length };
       seen.quantity += quantity;
       lines.set(`${family} ${key}`, seen);
     }
@@ -137,7 +206,7 @@ async function readSheet(text, database) {
   if (y && new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10) !== meta.delivery_date) {
     return { error: `The sheet's delivery date, ${+m}/${+d}/${y}, is not a date.` };
   }
-  return { meta, lines: [...lines.values()], unplaced, lumber, warnings };
+  return { meta, lines: [...lines.values()], unplaced, lumber, lvl, warnings };
 }
 
 // The family's items under their line keys, and for a family bought by
@@ -164,10 +233,10 @@ function catalogKeys(family, items) {
 function matchLines(lines, behindByFamily) {
   const rows = [];
   const several = [];
-  for (const { family, key, sku, quantity, length_ft } of lines) {
+  for (const { family, key, sku, quantity, length_ft, at_length } of lines) {
     const behind = behindByFamily[family].get(key) ?? [];
     const active = behind.filter((i) => i.active);
-    const line = { family, sku, quantity, ...(length_ft && { lf: Math.round(quantity * length_ft * 100) / 100 }) };
+    const line = { family, sku, quantity, ...(length_ft && { lf: Math.round(quantity * length_ft * 100) / 100 }), ...(at_length && { at_length }) };
     if (active.length > 1) several.push(`${sku} (${active.map((i) => i.sku).join(', ')})`);
     else if (active.length === 1) rows.push({ ...line, key, flag: null, item_id: active[0].id });
     else rows.push({ ...line, key, flag: catalogFlag(family, behind, FAMILIES[family].byLength ? null : sku), item_id: behind.length === 1 ? behind[0].id : null });
@@ -186,6 +255,32 @@ async function currentPlan(database, number, demand = null) {
       JOIN inv.lumber_cut_plans p ON p.sheet_id = s.id
      WHERE pg_catalog.upper(j.number) = pg_catalog.upper($1)`, [String(number), JSON.stringify(demand)]);
   return job;
+}
+
+// The LVL plan saved with job `number`'s current sheet when it was worked
+// out from LVL pieces `demand` (#182, J138), else undefined.
+async function currentLvlPlan(database, number, demand) {
+  const [found] = await database.read(`
+    SELECT p.plan
+      FROM inv.jobs j
+      JOIN LATERAL (SELECT * FROM inv.job_sheets WHERE job_id = j.id ORDER BY revision DESC LIMIT 1) s ON true
+      JOIN inv.lvl_cut_plans p ON p.sheet_id = s.id
+     WHERE pg_catalog.upper(j.number) = pg_catalog.upper($1) AND p.demand = $2::jsonb`, [String(number), JSON.stringify(demand)]);
+  return found?.plan;
+}
+
+// A saved LVL plan's boards as lines, one per item, named as the sheet
+// names its depth (`labels`).
+function lvlPlanRows(plan, labels) {
+  const rows = new Map();
+  for (const { item_id, depth, length_ft, reason } of plan) {
+    const row = rows.get(item_id) ?? { family: 'lvl', sku: `${labels[depth]} · ${feet(length_ft)}`, quantity: 0, lf: 0, flag: null, item_id,
+      ...(reason && { at_length: reason }) };
+    row.quantity += 1;
+    row.lf += length_ft;
+    rows.set(item_id, row);
+  }
+  return [...rows.values()];
 }
 
 // A saved cut plan's boards as lines, one per item.
@@ -213,16 +308,20 @@ async function readCatalogKeys(database) {
 }
 
 // The dropped file read and matched to the catalog: { refusal } for a file
-// that cannot be committed whatever is fixed, else { sheet, rows, plan }.
-// rows end with the lumber lines the plan cannot place, flagged and with no
-// item. A job already in the app keeps the cut plan saved with it while
-// the sheet's lumber lines are the same, never planned again (S32, J138):
-// its lumber lines are that plan's boards, so the same sheet is found
-// unchanged after the buying options change (S20, S22). `behindByFamily`,
-// the catalog as readCatalogKeys reads it, when the caller has read it.
-async function matchSheet(database, file, behindByFamily) {
+// that cannot be committed whatever is fixed, else { sheet, rows, plan,
+// drawn }: sheet.lvl is its LVL plan as inv.commit_sheet saves it, and
+// drawn the keys of the on-hand LVL boards a new LVL plan takes (for
+// inDeliveryOrder). rows end with the lumber lines the plan cannot place,
+// flagged and with no item. A job already in the app keeps the cut plan and
+// the LVL plan saved with it while the sheet's lumber or LVL lines are the
+// same, never planned again (S32, J138, #182): those lines are that plan's
+// boards, so the same sheet is found unchanged after the buying options, on
+// hand or the LVL settings change (S20, S22). `behindByFamily`, the
+// catalog as readCatalogKeys reads it, when the caller has read it;
+// `taken`, the on-hand LVL boards the sheets before it in a batch took.
+async function matchSheet(database, file, behindByFamily, taken = new Map()) {
   if (!isCsvFile(file)) return { refusal: { status: 400, body: { ok: false, error: 'The sheet must carry a name and its text.' } } };
-  const sheet = await readSheet(file.text, database);
+  const sheet = await readSheet(file.text, database, taken);
   if (sheet.error) return { refusal: { status: 400, body: { ok: false, error: sheet.error } } };
   const number = sheet.meta.job_number;
   if (!sheet.lines.length && !sheet.unplaced.length) {
@@ -231,7 +330,9 @@ async function matchSheet(database, file, behindByFamily) {
   behindByFamily ??= await readCatalogKeys(database);
   const found = sheet.lumber && await currentPlan(database, number, sheet.lumber.demand);
   const saved = found?.same_lines ? found : null;
-  const { rows, several } = matchLines(saved ? sheet.lines.filter((l) => l.family !== 'lumber') : sheet.lines, behindByFamily);
+  const savedLvl = sheet.lvl && await currentLvlPlan(database, number, sheet.lvl.demand);
+  const { rows, several } = matchLines(sheet.lines.filter((l) => !(saved && l.family === 'lumber') && !(savedLvl && l.family === 'lvl')),
+    behindByFamily);
   if (several.length) {
     return { refusal: { status: 422, body: { ok: false,
       error: `Job ${number} cannot be committed: ${several.join('; ')} each match more than one catalog item. Retire the one not used.` } } };
@@ -239,10 +340,31 @@ async function matchSheet(database, file, behindByFamily) {
   if (saved) {
     const lvl = rows.findIndex((r) => r.family === 'lvl');
     rows.splice(lvl < 0 ? rows.length : lvl, 0, ...planRows(saved.plan));
-    return { sheet, rows, plan: saved.plan };
+  } else {
+    for (const { reason, ...line } of sheet.unplaced) rows.push({ ...line, flag: { notPlanned: reason }, item_id: null });
   }
-  for (const { reason, ...line } of sheet.unplaced) rows.push({ ...line, flag: { notPlanned: reason }, item_id: null });
-  return { sheet, rows, plan: sheet.lumber && cutPlan(sheet.lumber, rows) };
+  if (savedLvl) rows.push(...lvlPlanRows(savedLvl, sheet.lvl.labels));
+  return { sheet: withLvlPlan(sheet, rows, savedLvl), rows, plan: saved ? saved.plan : sheet.lumber && cutPlan(sheet.lumber, rows),
+    drawn: savedLvl ? [] : (sheet.lvl?.boards ?? []).filter((b) => b.source === 'on hand').map((b) => b.key) };
+}
+
+// Sheets planned together plan their LVL earliest delivery first (owner,
+// L19), as hanger-web-app commits EWP in ship-date order: `plan(file,
+// taken)` for each of `files` in that order, ties and undated sheets in the
+// order dropped, last. `taken` holds the on-hand LVL boards the sheets
+// before it planned, by depth and length; `plan` answers { drawn, ... }, the
+// keys of the boards it takes, or drawn: [] for a sheet a batch leaves out.
+// Answers each sheet's result in the order dropped.
+async function inDeliveryOrder(files, plan) {
+  const date = (f) => (isCsvFile(f) && parsePlateSummary(f.text).meta?.delivery_date) || '9999-12-31';
+  const order = files.map((f, i) => [date(f), i]).sort((a, b) => a[0].localeCompare(b[0]) || a[1] - b[1]);
+  const taken = new Map();
+  const results = [];
+  for (const [, i] of order) {
+    results[i] = await plan(files[i], taken);
+    for (const key of results[i].drawn ?? []) taken.set(key, (taken.get(key) ?? 0) + 1);
+  }
+  return results;
 }
 
 // The cut plan as inv.commit_job saves it, each draw with its board's item.
@@ -254,14 +376,24 @@ function cutPlan({ groups }, rows) {
   })) }));
 }
 
+// The sheet with its LVL plan as inv.commit_sheet saves it: `saved`, the
+// plan saved with the job's sheet, or the new one, each board with its item.
+function withLvlPlan(sheet, rows, saved) {
+  if (!sheet.lvl) return sheet;
+  if (saved) return { ...sheet, lvl: { demand: sheet.lvl.demand, plan: saved } };
+  const items = new Map(rows.filter((r) => r.family === 'lvl').map((r) => [r.key, r.item_id]));
+  return { ...sheet, lvl: { demand: sheet.lvl.demand, plan: sheet.lvl.boards.map(({ key, ...b }) => ({ item_id: items.get(key), ...b })) } };
+}
+
 // The sheet as inv.commit_job takes it, with what a revised sheet's change
 // screen sends: the version it saw and the date choice (undefined, and so
 // left out, for any other sheet).
 function jobPayload(sheet, rows, plan, { version, keep_date } = {}) {
   return {
     number: sheet.meta.job_number, name: sheet.meta.job_name, delivery_date: sheet.meta.delivery_date,
-    lines: rows.filter((r) => r.family !== 'lumber').map(({ item_id, quantity }) => ({ item_id, quantity })),
+    lines: rows.filter((r) => r.family !== 'lumber' && r.family !== 'lvl').map(({ item_id, quantity }) => ({ item_id, quantity })),
     ...(plan && { lumber: { demand: sheet.lumber.demand, plan } }),
+    ...(sheet.lvl && { lvl: sheet.lvl }),
     version, keep_date,
   };
 }
@@ -305,8 +437,8 @@ function sheetChanges(current, rows, consumed = () => undefined) {
 // "unchanged" or "already shipped" ….
 // `catalog`, when given, is the catalog as readCatalogKeys read it, for a
 // caller that checks many sheets (#151).
-async function checkSheet(database, { file } = {}, catalog) {
-  const { refusal, sheet, rows, plan } = await matchSheet(database, file, catalog);
+async function checkSheet(database, { file } = {}, catalog, taken) {
+  const { refusal, sheet, rows, plan, drawn } = await matchSheet(database, file, catalog, taken);
   if (refusal) return refusal;
   const { job_number: number, job_name: name, delivery_date } = sheet.meta;
   const [found] = await database.read(`
@@ -347,7 +479,7 @@ async function checkSheet(database, { file } = {}, catalog) {
     lines: rows.map(({ item_id, key, flag, ...line }) => ({ ...line, flag: !status || revising ? flag : null })),
     // LVL's linear feet per depth, as the Planner shows them (Q59).
     lvl_by_depth: planLvl([{ name: 'sheet', text: file.text }]).jobs[0].byDepth.map(({ label, lf }) => ({ label, lf })),
-    warnings: sheet.warnings, ...revision } };
+    warnings: sheet.warnings, ...revision }, drawn };
 }
 
 // Many sheets checked in one request, the catalog read once (#151): each
@@ -360,12 +492,12 @@ async function checkSheets(database, { files } = {}) {
     return { status: 400, body: { ok: false, error: 'Pick 1 to 50 sheets to check.' } };
   }
   const catalog = await readCatalogKeys(database);
-  const sheets = [];
-  for (const file of files) {
-    const { body } = await checkSheet(database, { file }, catalog);
-    sheets.push(body.ok ? { ...body, left_out: leftOut(body) } : body);
-  }
-  return { status: 200, body: { ok: true, sheets } };
+  const checked = await inDeliveryOrder(files, async (file, taken) => {
+    const { body, drawn } = await checkSheet(database, { file }, catalog, taken);
+    const sheet = body.ok ? { ...body, left_out: leftOut(body) } : body;
+    return { sheet, drawn: sheet.left_out === null ? drawn : [] };
+  });
+  return { status: 200, body: { ok: true, sheets: checked.map((c) => c.sheet) } };
 }
 // The words are inv.commit_jobs's refusals (migrations/020-commit-many-and-
 // already-handled.sql); a test pins the two together (PR #165 review, finding 3).
@@ -433,8 +565,7 @@ async function commitSheets(database, person, { key, files } = {}) {
   // A job number once per batch, compared as the database compares it
   // (inv.tidy, upper): a second sheet would read as a revision of the first.
   const seen = new Map();
-  for (const file of files) {
-    const { refusal, sheet, rows, plan } = await matchSheet(database, file, catalog);
+  for (const { refusal, sheet, rows, plan } of await inDeliveryOrder(files, (file, taken) => matchSheet(database, file, catalog, taken))) {
     if (refusal) return refusal;
     const number = String(sheet.meta.job_number).trim().toUpperCase();
     if (seen.has(number)) {
