@@ -310,7 +310,7 @@ function lvlPlanRows(plan, { labels }) {
 // An LVL plan's boards as the yard reads them (#184, story 19): from on
 // hand or to buy, the pieces, and the remainder, which goes back on hand
 // at its even foot (27′8″ left, 26′ back on hand) or is scrap. Boards
-// alike in all of that are one entry with their count (Q34), in plan order.
+// alike in all of that are one entry with their count (#184 Q34), in plan order.
 function lvlBoards(plan) {
   const boards = new Map();
   for (const { item_id, depth, length_ft, source, pieces_ft, remainder_ft, kept_ft } of plan) {
@@ -683,7 +683,8 @@ function lumberPrint(plan) {
 async function pullList(database, number) {
   if (!number) return { status: 400, error: 'Name the job whose pull list to print.' };
   const parts = [];
-  // One read after another, as lvlLines reads: each holds a pool connection.
+  // Deliberately one read after another, not Promise.all: each read holds a
+  // pool connection, so in parallel one print takes two of the pool's three.
   for (const { plan } of Object.values(FAMILIES).filter((f) => f.plan)) {
     const saved = await savedPlan(database, plan.table, number);
     if (saved) parts.push({ saved, html: plan.print(saved.plan) });

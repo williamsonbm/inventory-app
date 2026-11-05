@@ -637,6 +637,7 @@ const LUMBER_SHEET = [
   '1BM4-4,2.1 RigidLam DF LVL 1-3/4 x 11-7/8,4,12-00-00,,,,',
   '1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 14,2,14-00-00,,,,',
 ].join('\n');
+const LUMBER_ONLY_SHEET = LUMBER_SHEET.slice(0, LUMBER_SHEET.indexOf('\nRectangular EWP'));
 
 // The app with Ann signed in and LUMBER_SHEET's boards and LVL in the catalog.
 async function appWithLumber() {
@@ -757,6 +758,16 @@ test('the lumber pull list prints the saved cut plan, after the buying options c
 
   assert.deepEqual((await board(ctx)).map((j) => j.pull_list), [true]);
   assert.equal((await get(ctx.base, '/api/jobs/pull-list?number=99999', ctx.cookie)).status, 404);
+});
+
+test('a job with lumber and no LVL prints its lumber pull list with no LVL part (#184)', async () => {
+  const ctx = await appWithLumber();
+  const res = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile(LUMBER_ONLY_SHEET) }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+
+  const text = await pullListText(ctx, '33865R');
+  assert.match(text, /11 boards 116 LF 0 ft scrap/);
+  assert.doesNotMatch(text, /LVL/);
 });
 
 test('a committed job keeps its saved cut plan after the buying options change: the check shows it, the same sheet is unchanged, a retry answers as before (#99, S20, S22)', async () => {
@@ -2517,12 +2528,15 @@ test('24″ LVL is committed at the sheet\'s lengths, and a piece longer than ev
   const text = lvlSheet(['1BM2-1,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,50-00-00,,,,', '1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 24,2,16-00-00,,,,']);
   const res = await post(ctx.base, '/api/jobs/check', { file: { name: 'sheet.csv', text } }, ctx.cookie);
   assert.equal(res.status, 200, await res.clone().text());
-  assert.deepEqual((await res.json()).lines.map(({ cuts, ...l }) => l), [
-    { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', quantity: 1, lf: 48, flag: null },
+  assert.deepEqual((await res.json()).lines, [
+    { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', quantity: 1, lf: 48, flag: null,
+      cuts: [{ boards: 1, from: 'to buy', cut: '2 × 10′', remainder: '28′ back on hand' }] },
     { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 50′', quantity: 1, lf: 50, flag: null,
-      at_length: 'Longer than every length we buy of 9-1/2″ LVL (48′), so it is bought at its length.' },
+      at_length: 'Longer than every length we buy of 9-1/2″ LVL (48′), so it is bought at its length.',
+      cuts: [{ boards: 1, from: 'to buy', cut: '1 × 50′', remainder: 'none' }] },
     { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 24 · 16′', quantity: 2, lf: 32, flag: null,
-      at_length: 'We buy no set length of 24″ LVL, so it is bought at its length.' },
+      at_length: 'We buy no set length of 24″ LVL, so it is bought at its length.',
+      cuts: [{ boards: 2, from: 'to buy', cut: '1 × 16′', remainder: 'none' }] },
   ]);
   await ctx.commitLvl(text);
   assert.deepEqual(await currentLines(ctx.db, '33591R'),
@@ -2710,12 +2724,11 @@ test('a lumber job committed before 025 checks as unchanged (#182, story 36, PR 
   };
   for (const length_ft of [8, 10]) await add({ size: '2x4', grade: '#2', length_ft });
   await add({ size: '2x6', grade: 'DSS', length_ft: 16 });
-  const lumberOnly = LUMBER_SHEET.slice(0, LUMBER_SHEET.indexOf('\nRectangular EWP'));
-  const res = await commitFile(ctx, lumberOnly);
+  const res = await commitFile(ctx, LUMBER_ONLY_SHEET);
   assert.equal(res.status, 200, await res.clone().text());
 
   await migrate(urlFor(ctx.db));
-  const check = await checkFile(ctx, lumberOnly);
+  const check = await checkFile(ctx, LUMBER_ONLY_SHEET);
   assert.equal(check.status, 200, await check.clone().text());
   assert.equal((await check.json()).job.unchanged, true);
 });
@@ -2821,7 +2834,7 @@ test('33591R\'s pull list prints its LVL board: one line with depth, length, to 
   assert.deepEqual((await board(ctx)).map((j) => j.pull_list), [true], 'a job with LVL and no lumber has a pull list');
 });
 
-test('the LVL part marks on hand or to buy, scrap below the shortest remainder kept, a remainder off the even foot, and boards alike as one line; it stays as saved after on hand and the settings change (#184, Q34, Q36)', async () => {
+test('the LVL part marks on hand or to buy, scrap below the shortest remainder kept, a remainder off the even foot, and boards alike as one line; it stays as saved after on hand and the settings change (#184 Q34 and Q36)', async () => {
   const ctx = await appWithLvl();
   await ctx.onHand(ctx.items['9-1/2 48'], 1);
   // 40′, 4 × 24′, 20′8″ and 9′ of 9-1/2″: the on-hand 48′ takes the 40′.
