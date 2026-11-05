@@ -279,7 +279,7 @@ function createApp({ database, plannerDatabase, sessionSecret }) {
     const { status, body } = await toGiveBack(database, req.query.action, req.query.number);
     res.status(status).json(body);
   }));
-  // A job's lumber pull list, a page to print (#99).
+  // A job's pull list, a page to print: lumber, then LVL (#99, #184).
   app.get('/api/jobs/pull-list', catchAsync(async (req, res) => {
     const { status, html, error } = await pullList(database, req.query.number);
     if (error) return res.status(status).json({ ok: false, error });

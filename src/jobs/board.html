@@ -31,7 +31,7 @@
 <!--
   board.html — Jobs (#97): drop one job's material sheet, see what it would save, then commit it, or
   Deduct directly (#100); drop many, or send them from the Planner, and commit them in one save (#103); and the Job board, one row per job, with a Print menu for a job with a lumber
-  pull list (#99), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68);
+  pull list (#99; LVL too, #184), Built and Shipped on each row, and check boxes to mark several jobs at once (#100, J68);
   Cancel job, Un-build and Un-ship on each row, one job at a time, after a confirmation (#101, J86, J87).
   The board sorts by any column, searches job number or name, filters by status and family; a job's row
   opens its job view below it: a tab per family, History, and its delivery date to edit (#102). A built
@@ -197,7 +197,7 @@
       dayText(j.delivery_date) + '</td><td>' +
       esc(showTime(j.changed_at)) + ' · ' + esc(j.changed_by) + '</td><td>' + markButton('built', j) + markButton('shipped', j) + undoButtons(j) + (j.pull_list
         ? '<details class="print"><summary>Print</summary><div><a target="_blank" href="' +
-          esc('/api/jobs/pull-list?' + new URLSearchParams({ number: j.number })) + '">Lumber pull list</a></div></details>'
+          esc('/api/jobs/pull-list?' + new URLSearchParams({ number: j.number })) + '">Pull list</a></div></details>'
         : '') + '</td></tr>' +
       (opened?.number === j.number ? '<tr class="jobs"><td colspan="8">' + viewHtml() + '</td></tr>' : '')).join('')
       || '<tr><td colspan="8" class="sub">' + (jobs.size ? 'No jobs match.' : 'No jobs yet.') + '</td></tr>';
@@ -459,8 +459,11 @@
     return '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
       lines.map((l, i) => {
         shownFlags[prefix + i] = l.flag;
-        // An LVL line no board holds says why it is bought at its length (#182).
-        return '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + (l.lf ? ' · ' + esc(l.lf) + ' LF' : '') + '</td><td>' + esc(l.quantity) + '</td><td>' +
+        // An LVL line no board holds says why it is bought at its length (#182);
+        // under each LVL board, its pieces and remainder (#184).
+        return '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + (l.lf ? ' · ' + esc(l.lf) + ' LF' : '') +
+          (l.cuts || []).map((c) => '<div class="sub">×' + esc(c.boards) + ' ' + esc(c.from) + ': cut ' + esc(c.cut) + '; remainder ' + esc(c.remainder) + '</div>').join('') +
+          '</td><td>' + esc(l.quantity) + '</td><td>' +
           (l.at_length ? '<span class="sub">' + esc(l.at_length) + '</span> ' : '') + flagsHtml(l.flag, prefix + i, l.family) + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
