@@ -91,9 +91,10 @@ async function signInAndChoose(base, email, temporary, password) {
   return cookieFrom(res);
 }
 
-// An app with Ann, an admin, signed in with her own password.
-async function withAdmin() {
-  const ctx = await startApp();
+// An app with Ann, an admin, signed in with her own password; on database
+// `db` when given (one the test built itself), else on a fresh one.
+async function withAdmin({ db } = {}) {
+  const ctx = db ? { ...await startApp({ databaseUrl: urlFor(db, 'inv_app') }), db } : await startApp();
   const ann = await addFirstUser(ctx.db);
   const cookie = await signInAndChoose(ctx.base, 'ann@example.com', 'temporary password 1', 'ann own password');
   return { ...ctx, ann, cookie };

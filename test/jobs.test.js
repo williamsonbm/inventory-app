@@ -18,6 +18,7 @@ const { withAdmin, get, post } = require('./support/app.js');
 const { openDatabase } = require('../src/db/database.js');
 const { migrate } = require('../src/db/migrate.js');
 const { readItemJobs } = require('../src/inventory/item-jobs.js');
+const { checkSheet } = require('../src/jobs/jobs.js');
 
 // A database with Ann, a supplier, a plate and two hangers in the catalog;
 // receive(item, quantity) receives from the supplier.
@@ -31,14 +32,22 @@ async function withCatalog() {
   return { db, ann, receive, plate: await add('plates', 'MT20 3x4'), lus28: await add('hangers', 'LUS28'), hus: await add('hangers', 'HUS26') };
 }
 
-// Commits a job as Ann. `lines` are [item, quantity] pairs.
-// A revised sheet carries the version its change screen saw and, when its
-// date differs from the job's, keepDate: whether the job keeps its own.
+// Commits a job as Ann. `lines` are [item, quantity] pairs; an LVL item's
+// boards go in the sheet's LVL plan, one entry per board, as the app sends
+// them (#182). A revised sheet carries the version its change screen saw
+// and, when its date differs from the job's, keepDate: whether the job
+// keeps its own.
 function commit(ctx, lines, { number = '33864R', name = 'Smith Residence', deliveryDate = '2026-11-02', key = crypto.randomUUID(),
   version, keepDate, timing } = {}) {
+  const lvl = lines.filter(([item]) => item.family === 'lvl');
   return call(ctx.db, 'commit_job', ctx.ann.id, key, {
     number, name, delivery_date: deliveryDate,
-    lines: lines.map(([item, quantity]) => ({ item_id: item.id, quantity })),
+    lines: lines.filter(([item]) => item.family !== 'lvl').map(([item, quantity]) => ({ item_id: item.id, quantity })),
+    ...(lvl.length && { lvl: {
+      demand: lvl.map(([item, quantity]) => ({ depth: item.size, length_ft: item.length_ft, quantity })),
+      plan: lvl.flatMap(([item, quantity]) => Array(quantity).fill({ item_id: item.id, depth: item.size, length_ft: item.length_ft,
+        source: 'buy', pieces_ft: [item.length_ft], remainder_ft: 0, kept_ft: null })),
+    } }),
     version, keep_date: keepDate,
   }, ...(timing ? [JSON.stringify(timing)] : []));
 }
@@ -227,10 +236,11 @@ function lumberJob({ at8, at10 }) {
   };
 }
 
-// The saved cut plan of job `number`'s current sheet, or null.
-async function savedPlan(db, number) {
+// The saved cut plan (or, with `table` lvl_cut_plans, the LVL plan) of job
+// `number`'s current sheet, or null.
+async function savedPlan(db, number, table = 'lumber_cut_plans') {
   return as(db, APP, async (app) => (await app.query(`
-    SELECT p.plan FROM inv.lumber_cut_plans p JOIN inv.job_sheets s ON s.id = p.sheet_id
+    SELECT p.plan FROM inv.${table} p JOIN inv.job_sheets s ON s.id = p.sheet_id
       JOIN inv.jobs j ON j.id = s.job_id
      WHERE j.number = $1 ORDER BY s.revision DESC LIMIT 1`, [number])).rows[0]?.plan ?? null);
 }
@@ -309,7 +319,10 @@ test("an LVL depth's linear feet count what jobs commit, so its lengths turn Low
   await goLive(db, 'lvl');
   await ctx.receive(long, 70);
   // 70 × 16′ = 1,120 LF on hand; the job takes 10 × 16′, leaving 960 LF, at the threshold.
-  await commit(ctx, [[long, 10]]);
+  await call(db, 'commit_job', ann.id, crypto.randomUUID(), { number: '33864R', lines: [], lvl: {
+    demand: [{ depth: '11-7/8', length_ft: 16, quantity: 10 }],
+    plan: Array(10).fill({ item_id: long.id, depth: '11-7/8', length_ft: 16, source: 'on hand', pieces_ft: [16], remainder_ft: 0, kept_ft: null }),
+  } });
 
   const reorder = await figure(db, 'reorder');
   assert.deepEqual([reorder[long.id], reorder[short.id]], ['Low', 'Low']);
@@ -639,7 +652,15 @@ async function appWithLumber() {
   for (const [size, length_ft] of [['11-7/8', 20], ['11-7/8', 12], ['14', 14]]) {
     await add('lvl', { product: '2.1 RigidLam LVL 1-3/4', size, length_ft }, `LVL ${size} ${length_ft}`);
   }
-  return { ...ctx, items };
+  // The LVL on hand at the sheet's lengths, so its plan pulls those boards (#182).
+  await goLive(ctx.db, 'lvl');
+  const supplier = await call(ctx.db, 'add_supplier', ctx.ann.id, crypto.randomUUID(), 'Boise');
+  const onHand = (name, quantity) => call(ctx.db, 'receive', ctx.ann.id, crypto.randomUUID(), null, null, supplier.id, null,
+    JSON.stringify([{ item_id: items[name].id, quantity }]));
+  await onHand('LVL 11-7/8 20', 4);
+  await onHand('LVL 11-7/8 12', 4);
+  await onHand('LVL 14 14', 2);
+  return { ...ctx, items, onHand };
 }
 
 const lumberFile = (text = LUMBER_SHEET) => ({ name: '33865R-materials.csv', text });
@@ -778,6 +799,7 @@ test('a revised sheet saves its own cut plan when its lumber lines changed, and 
     "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '#2'")).rows);
   await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '#2', version, [6, 7, 8, 12, 14, 16, 20]);
   const moreLvl = moreLumber.replace('1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 14,2,', '1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 14,3,');
+  await ctx.onHand('LVL 14 14', 1);
   assert.deepEqual((await check(moreLvl)).changes, [{ family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 14 · 14′', was: 2, now: 3 }],
     'the lumber lines did not change, so neither did the plan');
   assert.equal((await commitLumber(moreLvl, 2)).status, 200);
@@ -800,7 +822,8 @@ test('a cut plan saved before 014 has no lumber lines, so a sheet for its job is
 
 test('an LVL line shows its linear feet to two decimals (#99, Q59)', async () => {
   const ctx = await appWithLumber();
-  const text = LUMBER_SHEET.replace('1-3/4 x 14,2,14-00-00', '1-3/4 x 14,3,11-04-00');
+  // 24″ is bought at the sheet's lengths (#182), so its line is 3 × 11′4″.
+  const text = LUMBER_SHEET.replace('1-3/4 x 14,2,14-00-00', '1-3/4 x 24,3,11-04-00');
   const { lines } = await (await post(ctx.base, '/api/jobs/check', { file: lumberFile(text) }, ctx.cookie)).json();
   assert.equal(lines.at(-1).lf, 34);
 });
@@ -2368,6 +2391,9 @@ test('the return route saves a return on a shipped job; the job view offers Retu
   await lvl('14', 20);
   await goLive(ctx.db, 'hangers');
   await goLive(ctx.db, 'lvl');
+  // On hand, so the job's plan pulls the four 20′ (#182).
+  const supplier = await call(ctx.db, 'add_supplier', ctx.ann.id, crypto.randomUUID(), 'Boise');
+  await call(ctx.db, 'receive', ctx.ann.id, crypto.randomUUID(), null, null, supplier.id, null, JSON.stringify([{ item_id: twenty.id, quantity: 4 }]));
   const withLvl = SHEET + '\nRectangular EWP,,,,,,,\nLABEL,SIZE,QTY,LENGTH,,,,\n1BM1-4,2.1 RigidLam DF LVL 1-3/4 x 11-7/8,4,20-00-00,,,,';
   assert.equal((await commitFile(ctx, withLvl)).status, 200);
   const view = async () => (await get(ctx.base, '/api/jobs/view?number=33864R', ctx.cookie)).json();
@@ -2420,4 +2446,361 @@ test('the return route saves a return on a shipped job; the job view offers Retu
     ['reverse', 'added: reversal of the return: LUS28 −2; note: wrong job'],
     ['record return', '1 of 2.1 RigidLam LVL 1-3/4 x 11-7/8 9′ returned from the job site, added as Non-Stock'],
   ], 'the job\'s History shows the return reversed');
+});
+
+// ── Seam 1 of #178: a job's LVL committed as the boards the yard pulls (#182) ──
+
+// Sheet 33591R as #178 tells it: 2 × 10′ of 9-1/2″ LVL, and `more` LVL lines.
+const lvlSheet = (more = []) => [
+  'Quote Date:,3/2/2026,Job Number:,33591R',
+  'Order Date:,3/4/2026,Product:,EWP',
+  'Delivery Date:,7/1/2026,,',
+  'Job Name:,Sample Job A,Delivery Area,',
+  'Rectangular EWP,,,,,,,',
+  'LABEL,SIZE,QTY,LENGTH,,,,',
+  '1BM1-2,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,2,10-00-00,,,,',
+  ...more,
+].join('\n');
+
+// The app with Ann signed in, LVL live and one item per [depth, length] in
+// `lengths`; onHand(item, quantity) receives it, so it is on hand.
+async function appWithLvl(lengths = [['9-1/2', 48], ['9-1/2', 10]]) {
+  const ctx = await withAdmin();
+  const items = {};
+  for (const [size, length_ft] of lengths) {
+    const res = await post(ctx.base, '/api/items/add',
+      { key: crypto.randomUUID(), family: 'lvl', identity: { product: '2.1 RigidLam LVL 1-3/4', size, length_ft } }, ctx.cookie);
+    assert.equal(res.status, 200, await res.clone().text());
+    items[`${size} ${length_ft}`] = (await res.json()).item;
+  }
+  await goLive(ctx.db, 'lvl');
+  const supplier = await call(ctx.db, 'add_supplier', ctx.ann.id, crypto.randomUUID(), 'Boise');
+  const onHand = (item, quantity) => call(ctx.db, 'receive', ctx.ann.id, crypto.randomUUID(), null, null, supplier.id, null,
+    JSON.stringify([{ item_id: item.id, quantity }]));
+  const commitLvl = async (text = lvlSheet()) => {
+    const res = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: { name: 'sheet.csv', text } }, ctx.cookie);
+    assert.equal(res.status, 200, await res.clone().text());
+    return res.json();
+  };
+  return { ...ctx, items, onHand, commitLvl };
+}
+
+test('33591R with only 48′ available commits 1 × 48′; with 2 × 10′ available, the two 10′ (#182, stories 1–5)', async () => {
+  const only48 = await appWithLvl();
+  await only48.onHand(only48.items['9-1/2 48'], 1);
+  await only48.commitLvl();
+  assert.deepEqual(await currentLines(only48.db, '33591R'), { [only48.items['9-1/2 48'].id]: 1 });
+
+  const two10 = await appWithLvl();
+  await two10.onHand(two10.items['9-1/2 48'], 1);
+  await two10.onHand(two10.items['9-1/2 10'], 2);
+  await two10.commitLvl();
+  assert.deepEqual(await currentLines(two10.db, '33591R'), { [two10.items['9-1/2 10'].id]: 2 });
+});
+
+test('a board committed to another job is left out of the plan (#182, story 7)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.onHand(ctx.items['9-1/2 10'], 2);
+  await ctx.commitLvl();
+  await ctx.commitLvl(lvlSheet().replace('33591R', '33592R'));
+  assert.deepEqual(await currentLines(ctx.db, '33592R'), { [ctx.items['9-1/2 48'].id]: 1 }, 'the two 10′ are 33591R\'s');
+});
+
+test('24″ LVL is committed at the sheet\'s lengths, and a piece longer than every purchasable length at its own; the check says why for each (#182, stories 10, 11)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 50], ['24', 16]]);
+  const text = lvlSheet(['1BM2-1,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,50-00-00,,,,', '1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 24,2,16-00-00,,,,']);
+  const res = await post(ctx.base, '/api/jobs/check', { file: { name: 'sheet.csv', text } }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual((await res.json()).lines, [
+    { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', quantity: 1, lf: 48, flag: null },
+    { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 50′', quantity: 1, lf: 50, flag: null,
+      at_length: 'Longer than every length we buy of 9-1/2″ LVL (48′), so it is bought at its length.' },
+    { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 24 · 16′', quantity: 2, lf: 32, flag: null,
+      at_length: 'We buy no set length of 24″ LVL, so it is bought at its length.' },
+  ]);
+  await ctx.commitLvl(text);
+  assert.deepEqual(await currentLines(ctx.db, '33591R'),
+    { [ctx.items['9-1/2 48'].id]: 1, [ctx.items['9-1/2 50'].id]: 1, [ctx.items['24 16'].id]: 2 });
+});
+
+test('a job\'s LVL lines are the boards of its LVL plan, saved with its sheet, which holds only LVL and cannot be edited (#182, story 13)', async () => {
+  const ctx = await withCatalog();
+  const { db, ann, plate } = ctx;
+  const lvl = (size, length_ft) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size, length_ft });
+  const at48 = await lvl('9-1/2', 48);
+  const at50 = await lvl('9-1/2', 50);
+  const job = (p) => call(db, 'commit_job', ann.id, crypto.randomUUID(), { number: '33591R', lines: [], ...p });
+  const plan = [
+    { item_id: at48.id, depth: '9-1/2', length_ft: 48, source: 'buy', pieces_ft: [10, 10], remainder_ft: 28, kept_ft: 28 },
+    { item_id: at50.id, depth: '9-1/2', length_ft: 50, source: 'at length', pieces_ft: [50], remainder_ft: 0, kept_ft: null },
+  ];
+  const demand = [{ depth: '9-1/2', length_ft: 10, quantity: 2 }, { depth: '9-1/2', length_ft: 50, quantity: 1 }];
+
+  const before = await contents(db);
+  await refused(job({ lines: [{ item_id: at48.id, quantity: 1 }] }), 'IV400', 'an LVL line beside the plan');
+  await refused(job({ lvl: { demand, plan: [{ ...plan[0], item_id: plate.id }] } }), 'IV400', 'a plate in the plan');
+  await refused(job({ lvl: { demand, plan: [] } }), 'IV400', 'an empty plan');
+  assert.deepEqual(await contents(db), before, 'a refusal saves nothing');
+
+  await job({ lines: [{ item_id: plate.id, quantity: 930 }], lvl: { demand, plan } });
+  assert.deepEqual(await currentLines(db, '33591R'), { [plate.id]: 930, [at48.id]: 1, [at50.id]: 1 });
+  assert.deepEqual(await savedPlan(db, '33591R', 'lvl_cut_plans'), plan);
+  await as(db, null, async (owner) => {
+    await refused(owner.query('UPDATE inv.lvl_cut_plans SET plan = \'[]\''), 'IV422', 'edit a saved plan');
+    await refused(owner.query('DELETE FROM inv.lvl_cut_plans'), 'IV422', 'delete a saved plan');
+  });
+});
+
+test('the saved LVL plan is kept when on hand changes: the same sheet again is unchanged and keeps it (#182, stories 14, 16, J138)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  const plan = await savedPlan(ctx.db, '33591R', 'lvl_cut_plans');
+  assert.deepEqual(plan, [{ item_id: ctx.items['9-1/2 48'].id, depth: '9-1/2', length_ft: 48, source: 'on hand',
+    pieces_ft: [10, 10], remainder_ft: 28, kept_ft: 28 }]);
+
+  // Two 10′ now on hand: a new plan would take them instead.
+  await ctx.onHand(ctx.items['9-1/2 10'], 2);
+  const res = await post(ctx.base, '/api/jobs/check', { file: { name: 'sheet.csv', text: lvlSheet() } }, ctx.cookie);
+  const check = await res.json();
+  assert.equal(check.job.unchanged, true, JSON.stringify(check));
+  assert.deepEqual(check.lines.map((l) => [l.sku, l.quantity]), [['2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', 1]]);
+  assert.equal((await ctx.commitLvl()).job.unchanged, true);
+  assert.deepEqual(await savedPlan(ctx.db, '33591R', 'lvl_cut_plans'), plan);
+  assert.deepEqual(await currentLines(ctx.db, '33591R'), { [ctx.items['9-1/2 48'].id]: 1 });
+});
+
+// The settings are still read: they name the depths the saved plan's demand is in.
+test('a sheet that keeps its saved LVL plan is not planned again: the check reads no LVL availability (#182, owner L22)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  const database = openDatabase(urlFor(ctx.db, 'inv_app'));
+  try {
+    const checked = async (text) => {
+      const reads = [];
+      const counting = Object.create(database, { read: { value: (sql, params) => { reads.push(sql); return database.read(sql, params); } } });
+      const { status, body } = await checkSheet(counting, { file: { name: 'sheet.csv', text } });
+      assert.equal(status, 200, JSON.stringify(body));
+      return reads.filter((sql) => sql.includes('inv.lvl_available')).length;
+    };
+    assert.equal(await checked(lvlSheet()), 0, 'the same sheet keeps its saved plan');
+    assert.equal(await checked(lvlSheet().replace('33591R', '33592R')), 1, 'a new job is planned');
+  } finally {
+    await database.end();
+  }
+});
+
+test('a changed purchasable length affects only jobs committed or checked after the change (#182, story 32)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 24]]);
+  await ctx.commitLvl();
+  const before = await savedPlan(ctx.db, '33591R', 'lvl_cut_plans');
+  await call(ctx.db, 'set_lvl_purchasable_lengths', ctx.ann.id, crypto.randomUUID(), '9-1/2', 1, [24, 48]);
+
+  assert.equal((await ctx.commitLvl()).job.unchanged, true, 'the committed job keeps its plan');
+  assert.deepEqual(await savedPlan(ctx.db, '33591R', 'lvl_cut_plans'), before);
+  await ctx.commitLvl(lvlSheet().replace('33591R', '33592R'));
+  assert.deepEqual(await currentLines(ctx.db, '33592R'), { [ctx.items['9-1/2 24'].id]: 1 }, 'a job committed after it buys 24′');
+  assert.deepEqual(await currentLines(ctx.db, '33591R'), { [ctx.items['9-1/2 48'].id]: 1 });
+});
+
+test('the Overview shows 48′ Short when jobs need more 48′ than are available, not 10′; a board a saved plan pulls that is gone shows Short (#182, stories 15, 34)', async () => {
+  const ctx = await appWithLvl();
+  const at48 = ctx.items['9-1/2 48'].id;
+  const at10 = ctx.items['9-1/2 10'].id;
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  const reorder = async () => { const r = await figure(ctx.db, 'reorder'); return { at48: r[at48], at10: r[at10] }; };
+  assert.deepEqual(await reorder(), { at48: 'OK', at10: 'OK' });
+
+  // The 48′ the plan pulls is scrapped: the saved plan still pulls it.
+  await call(ctx.db, 'correct', ctx.ann.id, crypto.randomUUID(), at48, -1, await reasonId(ctx.db, 'Damaged – scrapped'), null);
+  assert.deepEqual(await currentLines(ctx.db, '33591R'), { [at48]: 1 });
+  assert.deepEqual(await reorder(), { at48: 'Short', at10: 'OK' });
+
+  await ctx.commitLvl(lvlSheet().replace('33591R', '33592R'));
+  assert.deepEqual(await figure(ctx.db, 'available').then((a) => [a[at48], a[at10]]), [-2, 0], 'a second job needs a 48′ more');
+  assert.deepEqual(await reorder(), { at48: 'Short', at10: 'OK' });
+});
+
+// A database migrated up to 024, as Production was before 025.
+async function databaseBefore025() {
+  const db = await freshDatabase({ migrated: false });
+  const dir = path.join(__dirname, '..', 'migrations');
+  await as(db, null, async (owner) => {
+    await owner.query('CREATE SCHEMA inv; CREATE TABLE inv.schema_migrations (name text PRIMARY KEY)');
+    for (const file of fs.readdirSync(dir).filter((f) => /^\d{3}-/.test(f) && f < '025').sort()) {
+      await owner.query(fs.readFileSync(path.join(dir, file), 'utf8'));
+      await owner.query('INSERT INTO inv.schema_migrations (name) VALUES ($1)', [file]);
+    }
+  });
+  return db;
+}
+
+test('a job committed before 025 keeps the LVL it committed, with no data step, while its sheet is the same (#182, story 36, PR #190 review F1)', async () => {
+  const db = await databaseBefore025();
+  const ann = await firstUser(db);
+  const at10 = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '9-1/2', length_ft: 10 });
+  await goLive(db, 'lvl');
+  const sheet = { number: '33591R', name: 'Sample Job A', delivery_date: '2026-07-01' };
+  await call(db, 'commit_job', ann.id, crypto.randomUUID(), { ...sheet, lines: [{ item_id: at10.id, quantity: 2 }] });
+
+  await migrate(urlFor(db));
+  assert.deepEqual(await currentLines(db, '33591R'), { [at10.id]: 2 });
+  assert.equal((await figure(db, 'committed'))[at10.id], 2);
+  const current = async (quantity) => (await as(db, APP, async (app) => (await app.query('SELECT inv.is_current_sheet($1) AS current',
+    [{ ...sheet, lines: [], lvl: { demand: [{ depth: '9-1/2', length_ft: 10, quantity }], plan: [] } }])).rows))[0].current;
+  assert.equal(await current(2), true, 'the same sheet is its current sheet');
+  await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: 'Microllam LVL 1-3/4', size: '9-1/2', length_ft: 10 });
+  await call(db, 'retire_item', ann.id, crypto.randomUUID(), at10.id, at10.version);
+  assert.equal(await current(2), true, 'whatever the catalog holds now');
+  assert.equal(await current(3), false, 'a changed sheet is a revised sheet, planned as boards');
+});
+
+test('a built job committed before 025 consumes no LVL again when its same sheet is dropped; a shipped one is not told to un-ship (#182, story 36, PR #190 review F1)', async () => {
+  const ctx = await withAdmin({ db: await databaseBefore025() });
+  const { db, ann } = ctx;
+  const add = (length_ft) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '9-1/2', length_ft });
+  const at10 = await add(10);
+  const at48 = await add(48);
+  await goLive(db, 'lvl');
+  const supplier = await call(db, 'add_supplier', ann.id, crypto.randomUUID(), 'Boise');
+  await call(db, 'receive', ann.id, crypto.randomUUID(), null, null, supplier.id, null,
+    JSON.stringify([{ item_id: at10.id, quantity: 4 }, { item_id: at48.id, quantity: 1 }]));
+  for (const number of ['B1', 'S1']) {
+    await call(db, 'commit_job', ann.id, crypto.randomUUID(),
+      { number, name: 'Sample Job A', delivery_date: '2026-07-01', lines: [{ item_id: at10.id, quantity: 2 }] });
+  }
+  await mark(ctx, 'built', ['B1']);
+  await mark(ctx, 'shipped', ['S1']);
+  await migrate(urlFor(db));
+  const before = await contents(db);
+
+  const sheet = (number, text = lvlSheet()) => text.replace('33591R', number);
+  const check = async (text) => {
+    const res = await checkFile(ctx, text);
+    assert.equal(res.status, 200, await res.clone().text());
+    return res.json();
+  };
+  const built = await check(sheet('B1'));
+  assert.equal(built.job.unchanged, true, JSON.stringify(built));
+  const res = await commitFile(ctx, sheet('B1'));
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal((await res.json()).job.unchanged, true);
+  const { refusal } = await check(sheet('S1'));
+  assert.match(refusal, /^Job S1 was already shipped/);
+  assert.doesNotMatch(refusal, /un-ship/);
+  assert.deepEqual(await contents(db), before, 'nothing saved, nothing consumed again');
+
+  const changed = lvlSheet().replace(',2,10-00-00', ',3,10-00-00');
+  assert.equal((await check(sheet('B1', changed))).job.unchanged, false, 'a changed sheet is a revised sheet');
+});
+
+test('a lumber job committed before 025 checks as unchanged (#182, story 36, PR #190 review F9)', async () => {
+  const ctx = await withAdmin({ db: await databaseBefore025() });
+  const add = async (identity) => {
+    const res = await post(ctx.base, '/api/items/add', { key: crypto.randomUUID(), family: 'lumber', identity }, ctx.cookie);
+    assert.equal(res.status, 200, await res.clone().text());
+  };
+  for (const length_ft of [8, 10]) await add({ size: '2x4', grade: '#2', length_ft });
+  await add({ size: '2x6', grade: 'DSS', length_ft: 16 });
+  const lumberOnly = LUMBER_SHEET.slice(0, LUMBER_SHEET.indexOf('\nRectangular EWP'));
+  const res = await commitFile(ctx, lumberOnly);
+  assert.equal(res.status, 200, await res.clone().text());
+
+  await migrate(urlFor(ctx.db));
+  const check = await checkFile(ctx, lumberOnly);
+  assert.equal(check.status, 200, await check.clone().text());
+  assert.equal((await check.json()).job.unchanged, true);
+});
+
+test('a sheet with a 22″ LVL line beside another depth is checked, the 22″ line flagged as not in the catalog (#182, PR #190 review F2)', async () => {
+  const ctx = await appWithLvl();
+  const text = lvlSheet(['1BM9,2.1 RigidLam DF LVL 1-3/4 x 22,1,10-00-00,,,,']);
+  const res = await checkFile(ctx, text);
+  assert.equal(res.status, 200, await res.clone().text());
+  const lines = (await res.json()).lines.map((l) => [l.sku, l.quantity, Object.keys(l.flag ?? {})]);
+  assert.deepEqual(lines, [['2.1 RigidLam DF LVL 1-3/4 x 22 · 10′', 1, ['notInCatalog']], ['2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', 1, []]]);
+});
+
+test('an LVL line whose depth cannot be read beside a saved LVL plan is shown and flagged, and refuses the commit (#182, PR #190 review F3)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  const before = await contents(ctx.db);
+  const text = lvlSheet(['1BM7,2.1 RigidLam DF LVL 1-3/4 x 7,3,10-00-00,,,,']);
+  const res = await checkFile(ctx, text);
+  assert.equal(res.status, 200, await res.clone().text());
+  const check = await res.json();
+  assert.equal(check.job.unchanged, false);
+  assert.deepEqual(check.lines.map((l) => [l.sku, l.quantity, Object.keys(l.flag ?? {})]),
+    [['2.1 RigidLam DF LVL 1-3/4 x 7 · 10′', 3, ['notInCatalog']], ['2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', 1, []]]);
+  const commitRes = await commitFile(ctx, text);
+  assert.equal(commitRes.status, 422, await commitRes.clone().text());
+  assert.deepEqual(await contents(ctx.db), before, 'a refusal saves nothing');
+});
+
+test('a cancelled job committed again plans its LVL again, without the boards another job took meanwhile (#182, story 7, PR #190 review F4)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl(lvlSheet().replace('33591R', 'A1'));
+  const { version } = await onBoard(ctx.db, 'A1');
+  await call(ctx.db, 'cancel_job', ctx.ann.id, crypto.randomUUID(), 'A1', version);
+  await ctx.commitLvl(lvlSheet().replace('33591R', 'B1'));
+  const res = await commitFile(ctx, lvlSheet().replace('33591R', 'A1'), crypto.randomUUID(), { version: (await onBoard(ctx.db, 'A1')).version });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual((await savedPlan(ctx.db, 'A1', 'lvl_cut_plans')).map((b) => b.source), ['buy'], 'B1 has the one 48′ on hand');
+});
+
+test('an LVL plan that pulls more boards than are available is refused, unless it is the plan saved with the sheet (#182, story 34, PR #190 review F5)', async () => {
+  const ctx = await withCatalog();
+  const { db, ann, plate } = ctx;
+  const at48 = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '9-1/2', length_ft: 48 });
+  await goLive(db, 'lvl');
+  await ctx.receive(at48, 1);
+  const board = { item_id: at48.id, depth: '9-1/2', length_ft: 48, source: 'on hand', pieces_ft: [10, 10], remainder_ft: 28, kept_ft: 28 };
+  const lvl = (boards) => ({ demand: [{ depth: '9-1/2', length_ft: 10, quantity: 2 * boards }], plan: Array(boards).fill(board) });
+  const job = (number, p) => call(db, 'commit_job', ann.id, crypto.randomUUID(), { number, name: 'J', delivery_date: '2026-07-01', lines: [], ...p });
+
+  const before = await contents(db);
+  await refused(job('A1', { lvl: lvl(2) }), 'IV409', 'two 48′ on hand pulled, one on hand');
+  assert.deepEqual(await contents(db), before, 'a refusal saves nothing');
+  await job('A1', { lvl: lvl(1) });
+  await refused(job('B1', { lvl: lvl(1) }), 'IV409', 'the one 48′ is A1\'s');
+
+  // The 48′ is scrapped: A1's saved plan still pulls it, and a revised sheet keeps it.
+  await call(db, 'correct', ann.id, crypto.randomUUID(), at48.id, -1, await reasonId(db, 'Damaged – scrapped'), null);
+  const { version } = await onBoard(db, 'A1');
+  await job('A1', { lines: [{ item_id: plate.id, quantity: 10 }], lvl: lvl(1), version });
+  assert.deepEqual(await currentLines(db, 'A1'), { [plate.id]: 10, [at48.id]: 1 });
+});
+
+test('sheets checked or committed together plan their LVL earliest delivery first, each without the boards the ones before it took (#182, owner L19)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.onHand(ctx.items['9-1/2 10'], 2);
+  const later = lvlSheet().replace('33591R', '33592R').replace('7/1/2026', '8/1/2026');
+  const files = [{ name: 'later.csv', text: later }, { name: 'sooner.csv', text: lvlSheet() }];
+  const check = await post(ctx.base, '/api/jobs/check-many', { files }, ctx.cookie);
+  assert.equal(check.status, 200, await check.clone().text());
+  assert.deepEqual((await check.json()).sheets.map((s) => [s.job.number, s.lines.map((l) => [l.sku, l.quantity])]), [
+    ['33592R', [['2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', 1]]],
+    ['33591R', [['2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 10′', 2]]],
+  ], 'shown in the order dropped; the sooner one takes the two 10′');
+
+  const res = await post(ctx.base, '/api/jobs/commit-many', { key: crypto.randomUUID(), files }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual(await currentLines(ctx.db, '33591R'), { [ctx.items['9-1/2 10'].id]: 2 }, 'delivered first, so it takes the two 10′');
+  assert.deepEqual(await currentLines(ctx.db, '33592R'), { [ctx.items['9-1/2 48'].id]: 1 });
+});
+
+test('the Planner\'s "Already handled" reads a committed job\'s LVL sheet as the check does: the same sheet does not differ (#182, story 49)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  await ctx.onHand(ctx.items['9-1/2 10'], 2);
+  const res = await post(ctx.base, '/api/planner/already-handled', { files: [{ name: 'sheet.csv', text: lvlSheet() }] }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual((await res.json()).jobs.map((j) => [j.number, j.differs]), [['33591R', false]]);
 });

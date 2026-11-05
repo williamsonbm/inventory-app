@@ -459,8 +459,9 @@
     return '<table class="log"><thead><tr><th>Family</th><th>Sheet line</th><th>Quantity</th><th></th></tr></thead><tbody>' +
       lines.map((l, i) => {
         shownFlags[prefix + i] = l.flag;
+        // An LVL line no board holds says why it is bought at its length (#182).
         return '<tr><td>' + esc(l.family) + '</td><td>' + esc(l.sku) + (l.lf ? ' · ' + esc(l.lf) + ' LF' : '') + '</td><td>' + esc(l.quantity) + '</td><td>' +
-          flagsHtml(l.flag, prefix + i, l.family) + '</td></tr>';
+          (l.at_length ? '<span class="sub">' + esc(l.at_length) + '</span> ' : '') + flagsHtml(l.flag, prefix + i, l.family) + '</td></tr>';
       }).join('') + '</tbody></table>';
   }
   function showLines(lines, intro) {
