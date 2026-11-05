@@ -15,7 +15,7 @@
 
 // Fits and lengths use lumber's 1/16″ tolerance, so floating point never
 // shortens 10′ to 8′ or opens a needless board.
-const { TOL_FT, approxGte, nextStockedUp } = require('../lumber/lumberCutMap.js');
+const { approxGte, nextStockedUp } = require('../lumber/lumberCutMap.js');
 
 const SIXTEENTHS_PER_FT = 192;
 
@@ -66,7 +66,9 @@ function planLvlCuts({ lines, available, purchasable, shortestKept }) {
     }
     for (const b of boards) {
       b.remainderFt = Math.max(0, Math.round(b.remainderFt * SIXTEENTHS_PER_FT) / SIXTEENTHS_PER_FT);
-      const evenFt = Math.floor((b.remainderFt + TOL_FT) / 2) * 2;
+      // In sixteenths, so 1/16″ short of an even foot counts as it exactly
+      // (PR #192 review, finding 4); inv.lvl_plan_today (026) does the same.
+      const evenFt = Math.floor((Math.round(b.remainderFt * SIXTEENTHS_PER_FT) + 1) / (2 * SIXTEENTHS_PER_FT)) * 2;
       b.keptFt = evenFt >= shortestKept[depth] ? evenFt : null;
     }
     if (boards.length) depths.push({ depth, boards });

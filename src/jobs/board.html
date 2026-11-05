@@ -336,9 +336,14 @@
     showSelected();
   });
 
+  // Pieces of items as the confirmations list them: "1 × 9-1/2 48′, 2 × …".
+  const piece = (l) => esc(l.quantity) + ' × ' + esc(l.item);
+  const pieces = (list) => list.map(piece).join(', ');
+
   // One confirmation for every job marked (story 20): what each consumes,
-  // a family not live listed as not tracked yet (J4). Nothing is saved
-  // until the person confirms.
+  // a family not live listed as not tracked yet (J4), and the LVL
+  // remainders it puts back on hand (#185 Q41). Nothing is saved until the
+  // person confirms.
   async function confirmMark(to, numbers) {
     say('');
     const refused = numbers.find((n) => !canMark[to](jobs.get(n)));
@@ -351,10 +356,11 @@
     const query = new URLSearchParams([['to', to], ...numbers.map((n) => ['number', n])]);
     const [body] = (await getAll(['/api/jobs/to-consume?' + query])) ?? [];
     if (!body) return;
-    const lineText = (l) => esc(l.quantity) + ' × ' + esc(l.item) + (l.live ? '' : ' <span class="not-tracked">(' + esc(l.family) + ', not tracked yet)</span>');
+    const lineText = (l) => piece(l) + (l.live ? '' : ' <span class="not-tracked">(' + esc(l.family) + ', not tracked yet)</span>');
     el('confirm').innerHTML = '<h2>Mark ' + (numbers.length === 1 ? 'job ' + esc(numbers[0]) : numbers.length + ' jobs') + ' ' + to + '?</h2><ul>' +
       body.jobs.map((j) => '<li><b>Job ' + esc(j.number) + '</b>' + (j.name ? ' · ' + esc(j.name) : '') + ': ' +
-        (j.lines.length ? j.lines.map(lineText).join(', ') : 'nothing left to consume') + '</li>').join('') + '</ul><p>' +
+        (j.lines.length ? j.lines.map(lineText).join(', ') : 'nothing left to consume') +
+        (j.remainders.length ? '. Back on hand: ' + pieces(j.remainders) : '') + '</li>').join('') + '</ul><p>' +
       '<button type="button" id="confirm-mark">Mark ' + to + '</button> <button type="button" class="ghost" id="cancel-mark">Cancel</button></p>';
     el('confirm-mark').addEventListener('click', (e) => busy(e.target, () => mark({
       key: crypto.randomUUID(), to, jobs: numbers.map((n) => ({ number: n, version: jobs.get(n).version })),
@@ -380,7 +386,8 @@
   }
 
   // Cancel, Un-build or Un-ship one job (J86) after a confirmation that
-  // lists what comes back and where the job goes (J87). Nothing is saved
+  // lists what comes back, the LVL remainders that go out again (#185 Q41)
+  // with a warning for one another job used (Q45), and where the job goes (J87). Nothing is saved
   // until the person confirms.
   async function confirmUndo(action, number) {
     say('');
@@ -389,7 +396,10 @@
     const [body] = (await getAll(['/api/jobs/to-give-back?' + query])) ?? [];
     if (!body) return;
     el('confirm').innerHTML = '<h2>' + u.title + ' job ' + esc(body.number) + (body.name ? ' · ' + esc(body.name) : '') + '?</h2><p>' +
-      u.back + ': ' + (body.lines.length ? body.lines.map((l) => esc(l.quantity) + ' × ' + esc(l.item)).join(', ') : 'nothing') + '.</p><p>' +
+      u.back + ': ' + (body.lines.length ? pieces(body.lines) : 'nothing') + '.</p><p>' +
+      (body.remainders.length ? 'Goes out again: ' + pieces(body.remainders) + '.</p><p>' : '') +
+      body.remainders.filter((l) => l.on_hand_after < 0)
+        .map((l) => '<b>' + esc(l.item) + ': on hand goes to ' + esc(String(l.on_hand_after).replace('-', '−')) + '.</b></p><p>').join('') +
       (u.note ? '<b>' + u.note + '</b>' : 'The job goes back to ' + esc(body.to) + '.') + '</p><p>' +
       '<button type="button" id="confirm-undo">' + u.label + '</button> <button type="button" class="ghost" id="keep-job">' + u.no + '</button></p>';
     el('confirm-undo').addEventListener('click', (e) => busy(e.target, () => undo({ key: crypto.randomUUID(), action, number, version: jobs.get(number).version })));

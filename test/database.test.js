@@ -254,7 +254,7 @@ test('no login can insert, update, delete or empty any table (S62)', async () =>
 test('the app runs only its granted functions; the Planner runs only the calculation\'s; the backup login none', async () => {
   const db = await freshDatabase();
   const APP_FUNCTIONS = ['add_item', 'add_pack_size', 'add_reason', 'add_supplier', 'add_user', 'approve_count', 'base_count', 'cancel_job', 'change_pack_size', 'change_password', 'close_po_line', 'commit_job', 'commit_jobs', 'correct', 'correct_month_end', 'count_entries', 'count_found', 'count_json', 'count_review', 'deduct_directly', 'discard_count',
-    'edit_item', 'edit_po', 'enter_po', 'grant_admin', 'is_current_sheet', 'item_label', 'item_name', 'job_committed', 'job_handled', 'job_settled', 'job_to_consume', 'job_to_give_back', 'lumber_sizes', 'lvl_available', 'lvl_depths', 'mark_built', 'mark_shipped', 'month_end_json', 'nothing_before', 'on_hand_at', 'po_json', 'po_line_number', 'reactivate_user', 'receive', 'received',
+    'edit_item', 'edit_po', 'enter_po', 'grant_admin', 'is_current_sheet', 'item_label', 'item_name', 'job_committed', 'job_handled', 'job_remainders', 'job_settled', 'job_to_consume', 'job_to_give_back', 'lumber_sizes', 'lvl_available', 'lvl_depths', 'lvl_plan_today', 'mark_built', 'mark_shipped', 'month_end_json', 'nothing_before', 'on_hand_at', 'po_json', 'po_line_number', 'reactivate_user', 'receive', 'received',
     'record_password_check', 'record_return', 'reject_count', 'remove_lumber_group', 'remove_user', 'rename_item', 'rename_supplier', 'rename_user', 'reopen_po_line', 'retire_item', 'retire_reason', 'reverse', 'revoke_admin',
     'save_count', 'set_count_approval_by_another', 'set_delivery_date', 'set_grade_redirect', 'set_lumber_lengths', 'set_lvl_depth_threshold', 'set_lvl_purchasable_lengths', 'set_lvl_shortest_remainder_kept', 'set_password', 'set_working_day_window',
     'sign_out', 'start_count', 'submit_count', 'swap_plate', 'tidy', 'trim', 'unbuild_job', 'undo_to', 'unretire_item', 'unretire_reason', 'unship_job'];
@@ -267,8 +267,9 @@ test('the app runs only its granted functions; the Planner runs only the calcula
      WHERE n.nspname = 'inv' ORDER BY 1`)).rows);
   assert.ok(rows.length > APP_FUNCTIONS.length, 'the sweep found the private functions too');
   assert.deepEqual(rows.filter((r) => r.app).map((r) => r.name), APP_FUNCTIONS);
-  // The functions inv.item_figures calls, and the ones they call (#81, "The Planner login").
-  assert.deepEqual(rows.filter((r) => r.planner).map((r) => r.name), ['base_count', 'count_found', 'is_current_sheet', 'job_committed', 'jobs_handled', 'lvl_available', 'on_hand_at', 'received']);
+  // The functions inv.item_figures calls, and the ones they call (#81, "The Planner login"), and
+  // the one "Already handled" reads a saved LVL plan through, as the check does (#185 Q42).
+  assert.deepEqual(rows.filter((r) => r.planner).map((r) => r.name), ['base_count', 'count_found', 'is_current_sheet', 'job_committed', 'jobs_handled', 'lvl_available', 'lvl_plan_today', 'on_hand_at', 'received']);
   assert.deepEqual(rows.filter((r) => r.backup).map((r) => r.name), []);
 });
 
