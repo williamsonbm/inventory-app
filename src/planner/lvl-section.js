@@ -7,9 +7,16 @@
 
    Registers window.PlannerSections.lvl.
 
-   NOT UNIT-TESTED: render() builds DOM, and this repo has no Node DOM harness.
-   Checked by hand in the browser, one pass per family (spec #72). The route's
-   output is proven by test/recorded-output.test.js.
+   The "LVL stock lengths we buy" panel here holds each LVL depth's purchasable
+   lengths and shortest remainder kept (#181), shared by every computer and
+   logged, as lumber's panel is: read from /api/lvl/settings, each change
+   saved at once. Nothing plans with them yet (#182).
+
+   NOT UNIT-TESTED: render() and the panel build DOM, and this repo has no
+   Node DOM harness. Checked by hand in the browser, one pass per family
+   (spec #72), and the panel by a jsdom smoke check outside the suite (#181).
+   The route's output is proven by test/recorded-output.test.js; what the
+   panel saves, by test/catalog.test.js and test/inventory.test.js.
    ============================================================= */
 (function () {
   'use strict';
@@ -161,6 +168,84 @@
     }
   }
 
+  // ── The stock-lengths panel (#181) ─────────────────────────────────────────
+  // The rows /api/lvl/settings returns.
+  let depthSettings = [];
+
+  function paintSettings() {
+    el('lvl-lengths-mount').innerHTML = depthSettings.map((d) => {
+      const chips = d.purchasable_lengths.map((L) =>
+        `<span class="len-chip on">${L}′ <button type="button" class="ghost lvl-length-remove" data-len="${L}" aria-label="Remove ${L}′ from ${esc(d.depth)}″">×</button></span>`,
+      ).join('') || '<span class="sub">none, bought at the sheet’s lengths</span>';
+      return `<div class="menu-row" data-depth="${esc(d.depth)}"><span class="lbl">${esc(d.depth)}″</span>${chips}
+        <form class="lvl-length-add"><label class="field">Add length <input type="number" min="1" step="1" required style="width:5em" aria-label="Add a length to ${esc(d.depth)}″">′</label> <button>Add</button></form>
+        <label class="field">Shortest remainder kept <input type="number" class="lvl-kept" min="2" step="2" required value="${d.shortest_remainder_kept_ft}" style="width:4em">′</label></div>`;
+    }).join('');
+  }
+
+  function sayLengths(text) {
+    el('lvl-lengths-message').innerHTML = text ? `<div class="note bad">${esc(text)}</div>` : '';
+    if (text) el('lvl-lengths-sec').open = true;
+  }
+
+  async function loadSettings() {
+    const d = await fetch('/api/lvl/settings').then((r) => r.json()).catch(() => null);
+    if (!d || !d.ok) return sayLengths('The LVL stock lengths did not load. Reload the page to try again.');
+    depthSettings = d.settings;
+    paintSettings();
+  }
+
+  // As lumber's saveOption: on a refusal the panel says so, and it always
+  // reloads what is saved, taking no clicks until then, so a second click
+  // never carries an old version.
+  async function saveSetting(route, d, change) {
+    sayLengths('');
+    el('lvl-lengths-mount').inert = true;
+    try {
+      await AppHeader.send(route, { key: crypto.randomUUID(), depth: d.depth, version: d.version, ...change });
+    } catch (err) {
+      sayLengths(err.message);
+    }
+    await loadSettings();
+    el('lvl-lengths-mount').inert = false;
+  }
+
+  // The settings of the depth whose row an event happened in.
+  const settingsAt = (e) => {
+    const { depth } = e.target.closest('.menu-row').dataset;
+    return depthSettings.find((d) => d.depth === depth);
+  };
+
+  function mount({ tools }) {
+    tools.innerHTML = `
+      <details class="sec" id="lvl-lengths-sec">
+        <summary>LVL stock lengths we buy (shared)</summary>
+        <p class="sub" style="margin:8px 0 0">The lengths the yard buys each LVL depth in, in whole feet, and the shortest remainder it keeps (an even length, 2′ or more); a shorter one is scrap. Each change is saved at once for every computer, and the Activity Log shows who made it. Nothing plans with these yet.</p>
+        <div id="lvl-lengths-message" role="status"></div>
+        <div class="menu-wrap" id="lvl-lengths-mount"></div>
+      </details>`;
+    const mountEl = el('lvl-lengths-mount');
+    mountEl.addEventListener('click', (e) => {
+      const remove = e.target.closest('.lvl-length-remove');
+      if (!remove) return;
+      const d = settingsAt(e);
+      const L = Number(remove.dataset.len);
+      saveSetting('/api/lvl/purchasable-lengths', d, { lengths: d.purchasable_lengths.filter((x) => x !== L) });
+    });
+    // The input's min and step refuse most bad lengths; the database is the backstop.
+    mountEl.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const d = settingsAt(e);
+      const L = Number(e.target.querySelector('input').value);
+      saveSetting('/api/lvl/purchasable-lengths', d, { lengths: [...d.purchasable_lengths, L] });
+    });
+    mountEl.addEventListener('change', (e) => {
+      if (!e.target.classList.contains('lvl-kept')) return;
+      saveSetting('/api/lvl/shortest-remainder-kept', settingsAt(e), { ft: Number(e.target.value) });
+    });
+    loadSettings();
+  }
+
   window.PlannerSections = window.PlannerSections || {};
   window.PlannerSections.lvl = {
     label: 'LVL',
@@ -176,5 +261,6 @@
              (head.includes('available') || head.includes('qty') || head.includes('on_hand'));
     },
     render,
+    mount,
   };
 })();

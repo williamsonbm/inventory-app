@@ -3,7 +3,7 @@
 //
 // A row's family (story 56) is its item's, or its PO lines', or the items its
 // ledger rows hold (a receipt, correction, trim, return, plate swap or reversal); lumber lengths
-// and grade redirects are Lumber's, LVL depth thresholds LVL's. A row with no
+// and grade redirects are Lumber's, LVL depth thresholds and settings LVL's. A row with no
 // family (a person, a supplier, a reason, the catalog import) shows only under
 // All (Q66). The family list rides along for the page's family bar.
 //
@@ -46,7 +46,7 @@ async function readActivity(database, { person, action, family, from, to, before
        AND ($5::bigint IS NULL OR l.id < $5)
        AND ($7::text IS NULL OR CASE
              WHEN l.target_table IN ('items', 'pack_sizes') THEN item.family = $7
-             WHEN l.target_table = 'lvl_depth_thresholds' THEN $7 = 'lvl'
+             WHEN l.target_table IN ('lvl_depth_thresholds', 'lvl_depth_settings') THEN $7 = 'lvl'
              WHEN l.target_table IN ('lumber_purchasable_lengths', 'lumber_grade_redirects') THEN $7 = 'lumber'
              WHEN l.target_table = 'families'
                THEN EXISTS (SELECT FROM inv.families f WHERE f.code = $7 AND f.name = l.new_value ->> 'name')
@@ -84,12 +84,15 @@ async function readActivity(database, { person, action, family, from, to, before
 // about a person, by the table it changed. `row` is the change's saved value
 // (now, or was when there is no now); `item` is the item a change to an item
 // or a pack size is about.
+const lvlDepthName = (_item, row) => `LVL ${row.depth}″`;
+
 const TARGET_NAMES = {
   items: (item) => (item ? itemLabel(item) : 'the catalog'),  // the import touches many items
   pack_sizes: (item, row) => `${itemLabel(item)} ${row.kind}`,
   suppliers: (_item, row) => row.name,
   reasons: (_item, row) => row.text,
-  lvl_depth_thresholds: (_item, row) => `LVL ${row.depth}″`,
+  lvl_depth_thresholds: lvlDepthName,
+  lvl_depth_settings: lvlDepthName,
   lumber_purchasable_lengths: (_item, row) => `${row.size} ${row.grade}`,
   lumber_grade_redirects: (_item, row) => `${row.size} ${row.from_grade}`,
   purchase_orders: (_item, row) => `PO ${row.number}`,
@@ -107,6 +110,9 @@ const targetName = (action, table, item, row) => byAction(TARGET_NAMES, action, 
 // the table: a month-end correction writes a count's record, not the count.
 const byAction = (map, action, table) => map[action] ?? map[table];
 
+// Lengths in feet, "24′, 48′", or the given word when there are none.
+const feetList = (lengths, none = 'none') => (lengths.length ? lengths.map((l) => `${l}′`).join(', ') : none);
+
 // What an addition added, beyond the name the row already shows, by its
 // action where two actions write one table (a trim and a correction both
 // write the ledger), else by the table it went into. The catalog import's
@@ -119,7 +125,7 @@ const ADDED = {
     : `${row.stocking}, ${row.threshold === null ? 'no threshold' : `threshold ${row.threshold}`}`),
   pack_sizes: (row) => `${row.pieces} pieces`,
   lvl_depth_thresholds: (row) => (row.threshold_lf === null ? 'no threshold' : `${row.threshold_lf} linear feet`),
-  lumber_purchasable_lengths: (row) => (row.lengths.length ? row.lengths.map((l) => `${l}′`).join(', ') : 'no lengths'),
+  lumber_purchasable_lengths: (row) => feetList(row.lengths, 'no lengths'),
   lumber_grade_redirects: (row) => (row.to_grade ? `to ${row.to_grade}` : 'no redirect'),
   purchase_orders: (row) => `${row.supplier}, dated ${row.po_date}, ${row.lines.length} line${row.lines.length === 1 ? '' : 's'}`,
   receipts: describeReceipt,
@@ -259,6 +265,11 @@ const CHANGED = {
   purchase_orders: describePoChange, counts: describeCountChange, settings: describeSettingChange,
   'correct month-end': describeMonthEndChange, jobs: (was, now) => `status: ${was.status} → ${now.status}${timed(now)}`,
   'set delivery date': (was, now) => `delivery date: ${was.delivery_date ?? 'none'} → ${now.delivery_date ?? 'none'}`,
+  // An LVL depth's settings, from the Planner's stock-lengths panel (#181).
+  'set LVL purchasable lengths': (was, now) =>
+    `purchasable lengths: ${feetList(was.purchasable_lengths)} → ${feetList(now.purchasable_lengths)}`,
+  'set LVL shortest remainder kept': (was, now) =>
+    `shortest remainder kept: ${was.shortest_remainder_kept_ft}′ → ${now.shortest_remainder_kept_ft}′`,
   // A swap on a built job's plate line (#106, J320).
   'swap plate': (_, now) => `${now.swap.quantity} of ${now.swap.planned} swapped to ${now.swap.used}${timed(now)}`,
   // A return from the job site on a shipped job (#107); a new LVL length is

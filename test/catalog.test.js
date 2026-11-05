@@ -193,6 +193,113 @@ test('an LVL threshold is set per depth in linear feet, blank or 0 or more, and 
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
 });
 
+test("each LVL depth's purchasable lengths and shortest remainder kept start seeded, are changed, and each change is logged", async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const rows = await as(db, APP, async (app) => (await app.query(
+    'SELECT depth, purchasable_lengths, shortest_remainder_kept_ft, version FROM inv.lvl_depth_settings')).rows);
+  const seeded = Object.fromEntries(rows.map((r) => [r.depth, [r.purchasable_lengths, r.shortest_remainder_kept_ft, r.version]]));
+  // #181: 48′ for 9-1/2″ through 20″, none for 24″, 10′ kept for every depth.
+  assert.deepEqual(seeded, {
+    '9-1/2': [[48], 10, 1], '11-7/8': [[48], 10, 1], 14: [[48], 10, 1], 16: [[48], 10, 1],
+    18: [[48], 10, 1], 20: [[48], 10, 1], 24: [[], 10, 1],
+  });
+
+  // The lengths are set as a whole list.
+  const setLengths = (depth, version, lengths) =>
+    call(db, 'set_lvl_purchasable_lengths', ann.id, crypto.randomUUID(), depth, version, lengths);
+
+  // Sorted, and a length given twice is one length.
+  const added = await setLengths('9-1/2', 1, [48, 24, 48]);
+  assert.deepEqual(added, { depth: '9-1/2', purchasable_lengths: [24, 48], shortest_remainder_kept_ft: 10, version: 2 });
+  const log = (await logRows(db)).at(-1);
+  assert.equal(Number(log.actor_id), ann.id);
+  assert.equal(log.action, 'set LVL purchasable lengths');
+  assert.equal(log.target_table, 'lvl_depth_settings');
+  assert.deepEqual([log.old_value, log.new_value], [{ ...added, purchasable_lengths: [48], version: 1 }, added]);
+
+  const removed = await setLengths('9-1/2', 2, []);
+  assert.deepEqual(removed, { ...added, purchasable_lengths: [], version: 3 });
+
+  const changed = await call(db, 'set_lvl_shortest_remainder_kept', ann.id, crypto.randomUUID(), '14', 1, 8);
+  assert.deepEqual(changed, { depth: '14', purchasable_lengths: [48], shortest_remainder_kept_ft: 8, version: 2 });
+  const keptLog = (await logRows(db)).at(-1);
+  assert.equal(keptLog.action, 'set LVL shortest remainder kept');
+  assert.deepEqual([keptLog.old_value, keptLog.new_value], [{ ...changed, shortest_remainder_kept_ft: 10, version: 1 }, changed]);
+});
+
+test('an LVL purchasable length is whole feet above 0, a shortest remainder kept is even and 2′ or more, and a stale save is refused', async () => {
+  const db = await freshDatabase();
+  const ann = await firstUser(db);
+  const setLengths = (lengths, depth = '16') =>
+    call(db, 'set_lvl_purchasable_lengths', ann.id, crypto.randomUUID(), depth, 1, lengths);
+  const setKept = (ft, depth = '16') =>
+    call(db, 'set_lvl_shortest_remainder_kept', ann.id, crypto.randomUUID(), depth, 1, ft);
+
+  const before = (await logRows(db)).length;
+  const LENGTH = 'A purchasable length is a whole number of feet above 0.';
+  const KEPT = 'The shortest remainder kept is an even number of feet, 2 or more.';
+  const DEPTH = 'LVL comes 9-1/2″, 11-7/8″, 14″, 16″, 18″, 20″ or 24″ deep.';
+  const cases = [
+    ['a length of 0', () => setLengths([48, 0]), LENGTH],
+    ['a negative length', () => setLengths([-48]), LENGTH],
+    ['a length that is not whole feet', () => setLengths([47.5]), LENGTH],
+    ['a blank length', () => setLengths([48, null]), LENGTH],
+    ['a length too large to hold', () => setLengths([3000000000]), LENGTH],
+    ['no list at all', () => setLengths(null), LENGTH],
+    ['lengths for a depth not carried', () => setLengths([48], '22'), DEPTH],
+    ['an odd shortest remainder kept', () => setKept(9), KEPT],
+    ['a shortest remainder kept of 0', () => setKept(0), KEPT],
+    ['a negative shortest remainder kept', () => setKept(-2), KEPT],
+    ['a shortest remainder kept that is not whole feet', () => setKept(10.5), KEPT],
+    ['a blank shortest remainder kept', () => setKept(null), KEPT],
+    ['a shortest remainder kept too large to hold', () => setKept(3000000000), KEPT],
+    ['a shortest remainder kept for a depth not carried', () => setKept(10, '22'), DEPTH],
+  ];
+  for (const [label, attempt, message] of cases) {
+    const err = await refused(attempt(), 'IV400', label);
+    assert.equal(err.message, message, label);
+  }
+  assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+  // 2′ is the least kept (#178).
+  assert.equal((await setKept(2)).shortest_remainder_kept_ft, 2);
+
+  // A save from a screen opened before someone else's change to the depth.
+  const setLengthsAt = (version, lengths) =>
+    call(db, 'set_lvl_purchasable_lengths', ann.id, crypto.randomUUID(), '18', version, lengths);
+  const setKeptAt = (version, ft) =>
+    call(db, 'set_lvl_shortest_remainder_kept', ann.id, crypto.randomUUID(), '18', version, ft);
+  await setLengthsAt(1, [40, 48]);  // version 2 now
+  const beforeStale = (await logRows(db)).length;
+  // One version covers both settings of a depth (owner, L8).
+  for (const [label, attempt] of [
+    ['lengths from before the change', () => setLengthsAt(1, [48])],
+    ['a shortest remainder kept from before the change', () => setKeptAt(1, 8)],
+    ['no version', () => setKeptAt(null, 8)],
+  ]) {
+    const err = await refused(attempt(), 'IV409', label);
+    assert.equal(err.message, 'Someone else changed 18″ since you opened this screen.', label);
+    assert.deepEqual(JSON.parse(err.detail).purchasable_lengths, [40, 48], `${label}: the detail is what is saved now`);
+  }
+  assert.equal((await logRows(db)).length, beforeStale, 'no stale save leaves a log row');
+  assert.equal((await setKeptAt(2, 8)).version, 3);
+});
+
+test('the database refuses a bad LVL purchasable length or shortest remainder kept, whatever writes it', async () => {
+  const db = await freshDatabase();
+  await as(db, null, async (owner) => {
+    const update = (set) => owner.query(`UPDATE inv.lvl_depth_settings SET ${set} WHERE depth = '16'`);
+    for (const [label, set] of [
+      ['a length of 0', "purchasable_lengths = '{0,48}'"],
+      ['a blank length', "purchasable_lengths = '{NULL,48}'"],
+      ['an odd shortest remainder kept', 'shortest_remainder_kept_ft = 9'],
+      ['a shortest remainder kept of 0', 'shortest_remainder_kept_ft = 0'],
+    ]) await refused(update(set), '23514', label);
+    await refused(owner.query("INSERT INTO inv.lvl_depth_settings (depth, purchasable_lengths, shortest_remainder_kept_ft) VALUES ('22', '{48}', 10)"),
+      '23514', 'a depth not carried');
+  });
+});
+
 test('suppliers are added and renamed, and one name is never listed twice', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
