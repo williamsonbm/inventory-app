@@ -18,6 +18,7 @@ const { withAdmin, get, post } = require('./support/app.js');
 const { openDatabase } = require('../src/db/database.js');
 const { migrate } = require('../src/db/migrate.js');
 const { readItemJobs } = require('../src/inventory/item-jobs.js');
+const { checkSheet } = require('../src/jobs/jobs.js');
 
 // A database with Ann, a supplier, a plate and two hangers in the catalog;
 // receive(item, quantity) receives from the supplier.
@@ -2568,6 +2569,27 @@ test('the saved LVL plan is kept when on hand changes: the same sheet again is u
   assert.equal((await ctx.commitLvl()).job.unchanged, true);
   assert.deepEqual(await savedPlan(ctx.db, '33591R', 'lvl_cut_plans'), plan);
   assert.deepEqual(await currentLines(ctx.db, '33591R'), { [ctx.items['9-1/2 48'].id]: 1 });
+});
+
+// The settings are still read: they name the depths the saved plan's demand is in.
+test('a sheet that keeps its saved LVL plan is not planned again: the check reads no LVL availability (#182, owner L22)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  const database = openDatabase(urlFor(ctx.db, 'inv_app'));
+  try {
+    const checked = async (text) => {
+      const reads = [];
+      const counting = Object.create(database, { read: { value: (sql, params) => { reads.push(sql); return database.read(sql, params); } } });
+      const { status, body } = await checkSheet(counting, { file: { name: 'sheet.csv', text } });
+      assert.equal(status, 200, JSON.stringify(body));
+      return reads.filter((sql) => sql.includes('inv.lvl_available')).length;
+    };
+    assert.equal(await checked(lvlSheet()), 0, 'the same sheet keeps its saved plan');
+    assert.equal(await checked(lvlSheet().replace('33591R', '33592R')), 1, 'a new job is planned');
+  } finally {
+    await database.end();
+  }
 });
 
 test('a changed purchasable length affects only jobs committed or checked after the change (#182, story 32)', async () => {
