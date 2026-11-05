@@ -9,13 +9,15 @@
 -- LVL plan back on hand when it consumes the job's LVL, and the functions
 -- inv.lvl_plan_today, inv.job_remainders and inv.item_at_length;
 -- inv.job_to_give_back redefined so Un-build and Un-ship take the
--- remainders back out, and inv.reverse_entry so Reverse refuses them. No existing
+-- remainders back out, inv.reverse_entry so Reverse refuses them, and
+-- inv.job_settled so a job's remainders are not what it consumed. No existing
 -- row changes meaning: no row has the new kind, so every row passes both
 -- the old and the new rules, and every job is marked as before but for its
 -- remainders.
 -- Recovery: before any job is built with an LVL plan, rerun 022's
 -- ledger_kind_check and ledger_job_check, 011's inv.mark_jobs and 022's
--- inv.job_to_give_back and inv.reverse_entry (as CREATE OR REPLACE); drop the index ledger_remainder_once and the new
+-- inv.job_to_give_back and inv.reverse_entry, and 021's inv.job_settled
+-- (as CREATE OR REPLACE); drop the index ledger_remainder_once and the new
 -- functions. After one is, its remainder rows are what on hand reads; keep
 -- them.
 
@@ -35,23 +37,35 @@ ALTER TABLE inv.ledger ADD CONSTRAINT ledger_job_check
 -- a second writer of the same build's remainders is refused.
 CREATE UNIQUE INDEX ledger_remainder_once ON inv.ledger (action_id, item_id) WHERE kind = 'remainder';
 
--- Saved LVL plan p_plan (025) with each board's kept_ft as today's
--- shortest remainder kept judges its remainder (Q42): the length it goes
--- back on hand at, rounded down to an even foot as the yard counts (story
--- 22), when that is at or above its depth's shortest remainder kept; null,
--- scrap, below it (story 23). Within 1/16″ (0.0052 ft) of an even foot
--- counts as it. Its boards and pieces stay as saved. What Built puts back
--- on hand (inv.job_remainders) and what the check and the pull list print
+-- Saved LVL plan p_plan (025) of job p_job with each board's kept_ft as
+-- the length its remainder goes back on hand at, rounded down to an even
+-- foot as the yard counts (story 22); null, scrap, otherwise (story 23).
+-- Within 1/16″ of an even foot counts as it, judged in sixteenths, so
+-- exactly 1/16″ short does too (PR #192 review, finding 4). Before the job
+-- consumes its LVL, a remainder is kept at or above today's shortest
+-- remainder kept for its depth (Q42). After, as Built (or Shipped from
+-- committed) put it back (Q46): the remainders still on hand for the job
+-- give the shortest length kept at each depth, as the setting was then.
+-- Its boards and pieces stay as saved. What Built puts back on hand
+-- (inv.job_remainders) and what the check and the pull list print
 -- (src/jobs/jobs.js, FAMILIES) read it, so they agree;
 -- src/lvl/planLvlCuts.js judges a plan not yet saved the same way.
-CREATE FUNCTION inv.lvl_plan_today(p_plan jsonb) RETURNS jsonb
-LANGUAGE sql STABLE
+-- SECURITY DEFINER, as inv.job_committed (011): the Planner's "Already
+-- handled" reads saved plans and has no read of the ledger.
+CREATE FUNCTION inv.lvl_plan_today(p_plan jsonb, p_job inv.jobs) RETURNS jsonb
+LANGUAGE sql STABLE SECURITY DEFINER
 SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT pg_catalog.jsonb_agg(b || pg_catalog.jsonb_build_object('kept_ft',
-           CASE WHEN k.even_ft >= s.shortest_remainder_kept_ft THEN k.even_ft END) ORDER BY n)
+           CASE WHEN CASE WHEN p_job.status IN ('built', 'shipped')
+                          THEN EXISTS (SELECT FROM inv.ledger g JOIN inv.items ri ON ri.id = g.item_id
+                                        WHERE g.job_id = p_job.id AND g.kind = 'remainder'
+                                          AND NOT EXISTS (SELECT FROM inv.ledger x WHERE x.reverses_id = g.id)
+                                          AND ri.size = b ->> 'depth' AND ri.length_ft <= k.even_ft)
+                          ELSE k.even_ft >= s.shortest_remainder_kept_ft END
+                THEN k.even_ft END) ORDER BY n)
     FROM pg_catalog.jsonb_array_elements(p_plan) WITH ORDINALITY AS x(b, n)
-   CROSS JOIN LATERAL (SELECT (pg_catalog.floor(((b ->> 'remainder_ft')::numeric + 0.0052) / 2) * 2)::integer AS even_ft) k
+   CROSS JOIN LATERAL (SELECT (pg_catalog.floor((pg_catalog.round((b ->> 'remainder_ft')::numeric * 192) + 1) / 384) * 2)::integer AS even_ft) k
     LEFT JOIN inv.lvl_depth_settings s ON s.depth = b ->> 'depth'
 $$;
 
@@ -67,7 +81,7 @@ SET search_path = pg_catalog, pg_temp
 AS $$
   SELECT (b ->> 'item_id')::bigint, (b ->> 'kept_ft')::integer, pg_catalog.count(*)::integer
     FROM inv.lvl_cut_plans p
-   CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(inv.lvl_plan_today(p.plan)) b
+   CROSS JOIN LATERAL pg_catalog.jsonb_array_elements(inv.lvl_plan_today(p.plan, p_job)) b
    WHERE p.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = p_job.id ORDER BY s.revision DESC LIMIT 1)
      AND b ->> 'kept_ft' IS NOT NULL
      AND EXISTS (SELECT FROM inv.job_to_consume(p_job, p_to) c JOIN inv.items ci ON ci.id = c.item_id
@@ -75,7 +89,7 @@ AS $$
    GROUP BY 1, 2
 $$;
 
-GRANT EXECUTE ON FUNCTION inv.lvl_plan_today(jsonb) TO inv_app, inv_planner;
+GRANT EXECUTE ON FUNCTION inv.lvl_plan_today(jsonb, inv.jobs) TO inv_app, inv_planner;
 GRANT EXECUTE ON FUNCTION inv.job_remainders(inv.jobs, text) TO inv_app;
 
 -- Item p_item at length p_length_ft: the same product and depth. A length
@@ -259,4 +273,40 @@ BEGIN
   END LOOP;
   RETURN v_first;
 END
+$$;
+
+-- 021's inv.job_settled, with a job's remainder rows, and their reversals,
+-- left out of what it consumed (PR #192 review, finding 1). A remainder is
+-- a board put back, not one the job gave back: with it counted, a revised
+-- sheet on the built job that takes its own remainder consumed it twice.
+-- inv.job_to_consume needs no change: it counts LVL only while the job is
+-- committed, when each of its remainder rows has its reversal, so they sum
+-- to 0. 021's comment stands for the rest.
+CREATE OR REPLACE FUNCTION inv.job_settled(p_job inv.jobs)
+RETURNS TABLE (item_id bigint, quantity integer)
+LANGUAGE sql STABLE
+SET search_path = pg_catalog, pg_temp
+AS $$
+  WITH built AS (
+    SELECT pg_catalog.min(l.id) AS id FROM inv.activity_log l
+     WHERE l.target_table = 'jobs' AND l.target_id = p_job.id AND l.action IN ('mark built', 'mark shipped')
+       AND l.id > coalesce((SELECT pg_catalog.max(u.id) FROM inv.activity_log u
+                             WHERE u.target_table = 'jobs' AND u.target_id = p_job.id
+                               AND u.action IN ('un-build', 'cancel job', 'un-ship')
+                               AND u.new_value ->> 'status' IN ('committed', 'cancelled')), 0))
+  SELECT x.item_id, pg_catalog.max(x.quantity)::integer
+    FROM (SELECT l.item_id, l.quantity
+            FROM inv.job_lines l JOIN inv.job_sheets s ON s.id = l.sheet_id
+           WHERE s.job_id = p_job.id
+             AND s.revision >= (SELECT pg_catalog.max(s2.revision) FROM inv.job_sheets s2, built b
+                                 WHERE s2.job_id = p_job.id AND s2.action_id < b.id)
+          UNION ALL
+          SELECT g.item_id, -pg_catalog.sum(g.quantity)
+            FROM inv.ledger g LEFT JOIN inv.ledger o ON o.id = g.reverses_id
+           WHERE g.job_id = p_job.id
+             AND coalesce(o.kind, g.kind) <> 'remainder'
+             AND NOT EXISTS (SELECT FROM inv.reasons r
+                              WHERE r.id = coalesce(o.reason_id, g.reason_id) AND r.entry = 'swap')
+           GROUP BY g.item_id) x
+   GROUP BY x.item_id
 $$;

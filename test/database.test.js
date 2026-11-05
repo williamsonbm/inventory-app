@@ -268,7 +268,7 @@ test('the app runs only its granted functions; the Planner runs only the calcula
   assert.ok(rows.length > APP_FUNCTIONS.length, 'the sweep found the private functions too');
   assert.deepEqual(rows.filter((r) => r.app).map((r) => r.name), APP_FUNCTIONS);
   // The functions inv.item_figures calls, and the ones they call (#81, "The Planner login"), and
-  // the one that reads a saved LVL plan as the check does (#185 Q42).
+  // the one "Already handled" reads a saved LVL plan through, as the check does (#185 Q42).
   assert.deepEqual(rows.filter((r) => r.planner).map((r) => r.name), ['base_count', 'count_found', 'is_current_sheet', 'job_committed', 'jobs_handled', 'lvl_available', 'lvl_plan_today', 'on_hand_at', 'received']);
   assert.deepEqual(rows.filter((r) => r.backup).map((r) => r.name), []);
 });

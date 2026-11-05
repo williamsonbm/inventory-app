@@ -104,9 +104,10 @@ const DETAIL = {
   // A job's row, whatever wrote it (Built, Shipped, a swap, Un-build or Un-ship,
   // #101): the action says what happened, this names the job.
   // A swap's two rows carry the reason Substitution (#106); an LVL
-  // remainder's row and its reversal say what it is (#185).
+  // remainder's row and its reversal say what each does (#185, PR #192
+  // review, finding 6).
   job: (g) => `Job ${g.job_number}${g.job_name ? `, ${g.job_name}` : ''}${g.reason ? `; ${g.reason}` : ''}${
-    [g.kind, g.reverses_kind].includes('remainder') ? '; remainder back on hand' : ''}`,
+    g.kind === 'remainder' ? '; remainder back on hand' : g.reverses_kind === 'remainder' ? '; remainder out again' : ''}`,
 };
 
 // Answers { error } for an item not in the catalog, else { entries }.

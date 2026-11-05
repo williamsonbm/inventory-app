@@ -278,14 +278,15 @@ function matchLines(lines, behindByFamily) {
 
 // Job `number` with the plan saved in `plan.table` (lumber_cut_plans,
 // lvl_cut_plans) with its current sheet, read through the function
-// `plan.today` names, if any (an LVL plan's remainders by today's settings, #185 Q42), when that plan was worked out from
+// `plan.today` names, if any (an LVL plan's remainders by today's settings
+// until Built, then as Built put them back, #185 Q42 and Q46), when that plan was worked out from
 // the sheet's lines `demand` (#120, J138) and the job is not cancelled, as
 // cancelling freed its boards for other jobs (PR #190 review, finding 4); or
 // from any lines, whatever its status, when `demand` is not given. Nothing
 // for a job not in the app or with no such plan.
-async function savedPlan(database, { table, today = '' }, number, demand) {
+async function savedPlan(database, { table, today }, number, demand) {
   const [job] = await database.read(`
-    SELECT j.number, j.name, j.delivery_date::text AS delivery_date, ${today}(p.plan) AS plan
+    SELECT j.number, j.name, j.delivery_date::text AS delivery_date, ${today ? `${today}(p.plan, j)` : 'p.plan'} AS plan
       FROM inv.jobs j
       JOIN LATERAL (SELECT * FROM inv.job_sheets WHERE job_id = j.id ORDER BY revision DESC LIMIT 1) s ON true
       JOIN inv.${table} p ON p.sheet_id = s.id
@@ -764,7 +765,8 @@ async function undoJob(database, person, { key, action, number, version } = {}) 
 // the status it goes to, and per item the pieces that come back. Cancel
 // lists the unconsumed lines of live families, which return to available
 // (S25); Un-build and Un-ship the consumed pieces they return to on hand,
-// and the LVL remainders they take back out (#185 Q41).
+// and the LVL remainders they take back out (#185 Q41), each with its on
+// hand now, so the confirmation warns when another job used it (Q45).
 async function toGiveBack(database, action, number) {
   if (!Object.hasOwn(UNDO, action)) return notUndo;
   const [job] = await database.read(`
@@ -774,13 +776,14 @@ async function toGiveBack(database, action, number) {
      CROSS JOIN LATERAL (
        SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', c.quantity)
                 ORDER BY pg_catalog.array_position($3::text[], f.code), inv.item_label(i)) FILTER (WHERE NOT c.remainder) AS lines,
-              pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', -c.quantity)
+              pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', -c.quantity, 'on_hand', fig.on_hand)
                 ORDER BY i.length_ft DESC, inv.item_label(i)) FILTER (WHERE c.remainder) AS remainders
          FROM (SELECT g.item_id, g.kind = 'remainder' AS remainder, -pg_catalog.sum(g.quantity)::integer AS quantity
                  FROM inv.job_to_give_back(j, $1) g GROUP BY 1, 2
                UNION ALL
                SELECT c.item_id, false, c.quantity FROM inv.job_to_consume(j, 'shipped') c WHERE $1 = 'cancel job' AND c.live) c
-         JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family) b
+         JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family
+         LEFT JOIN inv.item_figures fig ON fig.item_id = c.item_id AND c.remainder) b
      WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($2))`, [UNDO[action].logged, number ?? '', FAMILY_ORDER]);
   if (!job) return { status: 404, body: { ok: false, error: `Job ${number} is not in the app.` } };
   return { status: 200, body: { ok: true, ...job } };
