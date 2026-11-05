@@ -186,13 +186,20 @@ async function lumberLines(text, database) {
 // of a plan saved with the sheet in `table`, under the payload's family key
 // (inv.commit_sheet): `rows(plan, part)`, a saved plan's boards as lines,
 // and `fresh(part, rows)`, a new plan as it is saved, each board with its
-// item; `part` is what the family's reader says of the sheet.
+// item; `part` is what the family's reader says of the sheet;
+// `print(plan)`, the plan's part of the pull list; `cuts(plan)`, if given,
+// what the check shows under each of its lines, by item.
 const FAMILIES = {
   plates: { read: skuLines(parsePlateSummary, plateKey) },
   hangers: { read: skuLines(parseHangerSheet, hangerKey, hangerCanon) },
-  lumber: { read: lumberLines, byLength: true, plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan } },
-  lvl: { read: lvlLines, byLength: true, plan: { table: 'lvl_cut_plans', rows: lvlPlanRows, fresh: lvlPlan } },
+  lumber: { read: lumberLines, byLength: true, plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan, print: lumberPrint } },
+  lvl: { read: lvlLines, byLength: true,
+    plan: { table: 'lvl_cut_plans', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts } },
 };
+
+// SQL: whether sheet `s` has a saved plan of any family, so its job has a pull list.
+const HAS_PLAN = Object.values(FAMILIES).filter((f) => f.plan)
+  .map(({ plan }) => `EXISTS (SELECT 1 FROM inv.${plan.table} p WHERE p.sheet_id = s.id)`).join(' OR ');
 
 // The file's job and its lines, one per family and key with quantities
 // summed, and each planned family's part under its key. A job already in
@@ -298,6 +305,43 @@ function lvlPlanRows(plan, { labels }) {
     rows.set(item_id, row);
   }
   return [...rows.values()];
+}
+
+// An LVL plan's boards as the yard reads them (#184, story 19): from on
+// hand or to buy, the pieces, and the remainder, which goes back on hand
+// at its even foot (27′8″ left, 26′ back on hand) or is scrap. Boards
+// alike in all of that are one entry with their count (Q34), in plan order.
+function lvlBoards(plan) {
+  const boards = new Map();
+  for (const { item_id, depth, length_ft, source, pieces_ft, remainder_ft, kept_ft } of plan) {
+    const counts = new Map();
+    for (const p of [...pieces_ft].sort((a, b) => b - a)) counts.set(p, (counts.get(p) ?? 0) + 1);
+    const cut = [...counts].map(([p, n]) => `${n} × ${feet(p)}`).join(', ');
+    // planLvlCuts rounds a remainder to 1/16″ and never below 0.
+    const remainder = remainder_ft === 0 ? 'none'
+      : kept_ft === null ? `${feet(remainder_ft)} scrap`
+      : feet(remainder_ft) === feet(kept_ft) ? `${feet(kept_ft)} back on hand`
+      : `${feet(remainder_ft)} left, ${feet(kept_ft)} back on hand`;
+    const from = source === 'on hand' ? 'on hand' : 'to buy';
+    const key = [item_id, from, cut, remainder].join('|');
+    if (!boards.has(key)) boards.set(key, { boards: 0, item_id, depth: `${depth}″`, length: feet(length_ft), from, cut, remainder });
+    boards.get(key).boards += 1;
+  }
+  return [...boards.values()];
+}
+
+// An LVL plan's boards by item, as the check shows them under each line.
+function lvlCuts(plan) {
+  const cuts = new Map();
+  for (const { item_id, depth, length, ...cut } of lvlBoards(plan)) cuts.set(item_id, [...(cuts.get(item_id) ?? []), cut]);
+  return cuts;
+}
+
+// An LVL plan's part of the pull list: one line per board as lvlBoards gives them.
+function lvlPrint(plan) {
+  return '<h2>LVL</h2><table><thead><tr><th>Boards</th><th>Depth</th><th>Length</th><th>From</th><th>Cut</th><th>Remainder</th></tr></thead><tbody>' +
+    lvlBoards(plan).map((b) => `<tr><td class="q">×${fmtInt(b.boards)}</td><td>${esc(b.depth)}</td><td class="l">${esc(b.length)}</td>` +
+      `<td>${esc(b.from)}</td><td>${esc(b.cut)}</td><td>${esc(b.remainder)}</td></tr>`).join('') + '</tbody></table>';
 }
 
 // A saved cut plan's boards as lines, one per item.
@@ -484,9 +528,13 @@ async function checkSheet(database, { file } = {}, catalog, taken) {
     name_was: revising ? found.name_was : null,
     ...(status === 'cancelled' && { cancelled: { handled: found.handled, revision: found.revision + 1 } }),
   };
+  const cuts = Object.fromEntries(Object.entries(plans).filter(([f]) => FAMILIES[f].plan.cuts).map(([f, plan]) => [f, FAMILIES[f].plan.cuts(plan)]));
   return { status: 200, body: { ok: true,
     job: { number, name, delivery_date, status, ...(open && { version: found.version, unchanged }) },
-    lines: rows.map(({ item_id, key, flag, ...line }) => ({ ...line, flag: !status || revising ? flag : null })),
+    // Each LVL board's pieces and remainder, from the plan the commit saves
+    // or the one saved (story 12).
+    lines: rows.map(({ item_id, key, flag, ...line }) => ({ ...line, flag: !status || revising ? flag : null,
+      ...(cuts[line.family]?.has(item_id) && { cuts: cuts[line.family].get(item_id) }) })),
     // LVL's linear feet per depth, as the Planner shows them (Q59).
     lvl_by_depth: planLvl([{ name: 'sheet', text: file.text }]).jobs[0].byDepth.map(({ label, lf }) => ({ label, lf })),
     warnings: sheet.warnings, ...revision }, drawn };
@@ -608,16 +656,11 @@ async function alreadyHandled(database, files) {
 // A date as the office writes it: 11/3/2026.
 const usDate = (date) => new Intl.DateTimeFormat('en-US', { timeZone: OFFICE_TIME_ZONE }).format(date);
 
-// The lumber pull list of job `number`, printed from the cut plan saved
-// with its current sheet (story 48, Q57), whatever its status. One section
-// per size and grade, longest boards first; totals of boards, linear feet
-// and scrap. Returns { status, html } or { status, error }.
-async function pullList(database, number) {
-  if (!number) return { status: 400, error: 'Name the job whose pull list to print.' };
-  const job = await savedPlan(database, FAMILIES.lumber.plan.table, number);
-  if (!job) return { status: 404, error: `Job ${number} has no lumber cut plan.` };
+// A lumber plan's part of the pull list: one section per size and grade,
+// longest boards first, then its totals of boards, linear feet and scrap.
+function lumberPrint(plan) {
   let boards = 0, lf = 0, scrap = 0;
-  const sections = job.plan.map(({ label, draws }) => {
+  const sections = plan.map(({ label, draws }) => {
     const rows = [...draws].sort((a, b) => b.stock_length_ft - a.stock_length_ft).map((d) => {
       boards += d.boards;
       lf += d.boards * d.stock_length_ft;
@@ -630,6 +673,23 @@ async function pullList(database, number) {
     return `<h2>${esc(label)}</h2><table><thead><tr><th>Boards</th><th>Length</th><th>Cut instruction</th><th class="n">LF</th></tr></thead>` +
       `<tbody>${rows.join('')}</tbody></table>`;
   });
+  return sections.join('\n') + `\n<div class="foot"><span><b>${fmtInt(boards)}</b> boards</span><span><b>${fmtNum(lf)}</b> LF</span>` +
+    `<span><b>${fmtInt(Math.round(scrap))}</b> ft scrap</span></div>`;
+}
+
+// The pull list of job `number`, printed from the plans saved with its
+// current sheet (story 48, Q57; #184), whatever its status: each planned
+// family's part, in FAMILIES order. Returns { status, html } or { status, error }.
+async function pullList(database, number) {
+  if (!number) return { status: 400, error: 'Name the job whose pull list to print.' };
+  const parts = [];
+  // One read after another, as lvlLines reads: each holds a pool connection.
+  for (const { plan } of Object.values(FAMILIES).filter((f) => f.plan)) {
+    const saved = await savedPlan(database, plan.table, number);
+    if (saved) parts.push({ saved, html: plan.print(saved.plan) });
+  }
+  if (!parts.length) return { status: 404, error: `Job ${number} has no cut plan.` };
+  const job = parts[0].saved;
   const delivery = job.delivery_date ? `Delivery ${usDate(new Date(`${job.delivery_date}T12:00:00Z`))}<br>` : '';
   const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Pull List - Job ${esc(job.number)}</title><style>
   body{font-family:Arial,Helvetica,sans-serif;color:#222;font-size:13px;margin:1.5rem}
@@ -642,9 +702,7 @@ async function pullList(database, number) {
 </style></head><body>
 <div class="head"><span class="t">Pull List — Job ${esc(job.number)}</span>
 <span class="s">${job.name ? `<b>${esc(job.name)}</b><br>` : ''}${delivery}Printed ${usDate(new Date())}</span></div>
-${sections.join('\n')}
-<div class="foot"><span><b>${fmtInt(boards)}</b> boards</span><span><b>${fmtNum(lf)}</b> LF</span>` +
-    `<span><b>${fmtInt(Math.round(scrap))}</b> ft scrap</span></div>
+${parts.map((p) => p.html).join('\n')}
 </body></html>`;
   return { status: 200, html };
 }
@@ -732,7 +790,7 @@ function listJobs(database) {
               FROM inv.families f
              WHERE f.code IN (SELECT i.family FROM inv.job_lines l JOIN inv.items i ON i.id = l.item_id
                                WHERE l.sheet_id = s.id)) AS families,
-           EXISTS (SELECT 1 FROM inv.lumber_cut_plans p WHERE p.sheet_id = s.id) AS pull_list,
+           (${HAS_PLAN}) AS pull_list,
            last.at AS changed_at, u.name AS changed_by
       FROM inv.jobs j
       JOIN LATERAL (SELECT * FROM inv.job_sheets WHERE job_id = j.id ORDER BY revision DESC LIMIT 1) s ON true

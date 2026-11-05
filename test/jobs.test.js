@@ -684,7 +684,8 @@ test('the check shows each board of the cut plan, each LVL length with its linea
   const res = await post(ctx.base, '/api/jobs/check', { file: lumberFile() }, ctx.cookie);
   assert.equal(res.status, 200, await res.clone().text());
   const { lines, lvl_by_depth } = await res.json();
-  assert.deepEqual(lines, [
+  // Each LVL board's cuts: #184's tests.
+  assert.deepEqual(lines.map(({ cuts, ...l }) => l), [
     { family: 'lumber', sku: '2x4 #2 10′', quantity: 2, flag: null },
     { family: 'lumber', sku: '2x4 #2 8′', quantity: 6, flag: null },
     { family: 'lumber', sku: '2x6 DSS 16′', quantity: 3, flag: null },
@@ -730,6 +731,14 @@ test('each lumber line the plan cannot place says its own fix (#114)', async () 
   });
 });
 
+// Job `number`'s pull list as text, tags and spacing dropped.
+async function pullListText(ctx, number) {
+  const page = await get(ctx.base, '/api/jobs/pull-list?' + new URLSearchParams({ number }), ctx.cookie);
+  assert.equal(page.status, 200, await page.clone().text());
+  assert.match(page.headers.get('content-type'), /text\/html/);
+  return (await page.text()).replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
+}
+
 test('the lumber pull list prints the saved cut plan, after the buying options change too (#99, story 48, story 13, Q57)', async () => {
   const ctx = await appWithLumber();
   const { db, ann } = ctx;
@@ -740,14 +749,11 @@ test('the lumber pull list prints the saved cut plan, after the buying options c
     "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '#2'")).rows);
   await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '#2', version, [6, 7, 8, 12, 14, 16, 20]);
 
-  const page = await get(ctx.base, '/api/jobs/pull-list?number=33865r', ctx.cookie);
-  assert.equal(page.status, 200, await page.clone().text());
-  assert.match(page.headers.get('content-type'), /text\/html/);
-  const text = (await page.text()).replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
+  const text = await pullListText(ctx, '33865r');
   assert.match(text, /Pull List — Job 33865R Jones Garage Delivery 11\/3\/2026/);
   assert.match(text, /2x4 #2 Boards Length Cut instruction LF ×2 10′ 2 × 5′ per board 20 ×6 8′ full length 48 /);
   assert.match(text, /2x6 DSS Boards Length Cut instruction LF ×3 16′ full length 48 /);
-  assert.match(text, /11 boards 116 LF 0 ft scrap/);
+  assert.match(text, /11 boards 116 LF 0 ft scrap LVL Boards Depth /, 'the lumber totals close the lumber part, before LVL (#184)');
 
   assert.deepEqual((await board(ctx)).map((j) => j.pull_list), [true]);
   assert.equal((await get(ctx.base, '/api/jobs/pull-list?number=99999', ctx.cookie)).status, 404);
@@ -784,8 +790,7 @@ test('a revised sheet saves its own cut plan when its lumber lines changed, and 
   const { db, ann } = ctx;
   const commitLumber = (text, version) => post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: lumberFile(text), version }, ctx.cookie);
   const check = async (text) => (await post(ctx.base, '/api/jobs/check', { file: lumberFile(text) }, ctx.cookie)).json();
-  const pullList = async () => (await (await get(ctx.base, '/api/jobs/pull-list?number=33865R', ctx.cookie)).text())
-    .replace(/<[^>]+>/g, ' ').replace(/&#39;/g, "'").replace(/\s+/g, ' ');
+  const pullList = () => pullListText(ctx, '33865R');
   assert.equal((await commitLumber(LUMBER_SHEET)).status, 200);
 
   const moreLumber = LUMBER_SHEET.replace('2x4sp2,6,8-00-00', '2x4sp2,7,8-00-00');
@@ -2512,7 +2517,7 @@ test('24″ LVL is committed at the sheet\'s lengths, and a piece longer than ev
   const text = lvlSheet(['1BM2-1,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,50-00-00,,,,', '1BM3-2,2.1 RigidLam DF LVL 1-3/4 x 24,2,16-00-00,,,,']);
   const res = await post(ctx.base, '/api/jobs/check', { file: { name: 'sheet.csv', text } }, ctx.cookie);
   assert.equal(res.status, 200, await res.clone().text());
-  assert.deepEqual((await res.json()).lines, [
+  assert.deepEqual((await res.json()).lines.map(({ cuts, ...l }) => l), [
     { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', quantity: 1, lf: 48, flag: null },
     { family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 50′', quantity: 1, lf: 50, flag: null,
       at_length: 'Longer than every length we buy of 9-1/2″ LVL (48′), so it is bought at its length.' },
@@ -2803,4 +2808,47 @@ test('the Planner\'s "Already handled" reads a committed job\'s LVL sheet as the
   const res = await post(ctx.base, '/api/planner/already-handled', { files: [{ name: 'sheet.csv', text: lvlSheet() }] }, ctx.cookie);
   assert.equal(res.status, 200, await res.clone().text());
   assert.deepEqual((await res.json()).jobs.map((j) => [j.number, j.differs]), [['33591R', false]]);
+});
+
+// ── Seam 1 of #178: the LVL plan on the pull list and the check (#184) ──────
+
+test('33591R\'s pull list prints its LVL board: one line with depth, length, to buy, the pieces and the remainder back on hand (#184, stories 18, 19)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.commitLvl();
+  const text = await pullListText(ctx, '33591R');
+  assert.match(text, /Pull List — Job 33591R Sample Job A Delivery 7\/1\/2026/);
+  assert.match(text, /LVL Boards Depth Length From Cut Remainder ×1 9-1\/2″ 48′ to buy 2 × 10′ 28′ back on hand /);
+  assert.deepEqual((await board(ctx)).map((j) => j.pull_list), [true], 'a job with LVL and no lumber has a pull list');
+});
+
+test('the LVL part marks on hand or to buy, scrap below the shortest remainder kept, a remainder off the even foot, and boards alike as one line; it stays as saved after on hand and the settings change (#184, Q34, Q36)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  // 40′, 4 × 24′, 20′8″ and 9′ of 9-1/2″: the on-hand 48′ takes the 40′.
+  await ctx.commitLvl(lvlSheet([
+    '1BM2-1,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,40-00-00,,,,',
+    '1BM3-4,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,4,24-00-00,,,,',
+    '1BM4-1,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,20-08-00,,,,',
+  ]).replace(',2,10-00-00,', ',1,9-00-00,'));
+  const lines = '×1 9-1/2″ 48′ on hand 1 × 40′ 8′ scrap ×2 9-1/2″ 48′ to buy 2 × 24′ none ' +
+    '×1 9-1/2″ 48′ to buy 1 × 20′ 8″, 1 × 9′ 18′ 4″ left, 18′ back on hand ';
+  assert.match(await pullListText(ctx, '33591R'), new RegExp('Cut Remainder ' + lines));
+
+  await ctx.onHand(ctx.items['9-1/2 48'], 5);
+  await call(ctx.db, 'set_lvl_shortest_remainder_kept', ctx.ann.id, crypto.randomUUID(), '9-1/2', 1, 20);
+  assert.match(await pullListText(ctx, '33591R'), new RegExp('Cut Remainder ' + lines), 'the saved plan, unchanged');
+});
+
+test('the check shows under each LVL board its pieces and remainder, for a sheet not yet committed and for one committed, from its saved plan (#184, story 12)', async () => {
+  const ctx = await appWithLvl();
+  const checked = async () => {
+    const res = await post(ctx.base, '/api/jobs/check', { file: { name: 'sheet.csv', text: lvlSheet() } }, ctx.cookie);
+    assert.equal(res.status, 200, await res.clone().text());
+    return (await res.json()).lines.map((l) => [l.sku, l.cuts]);
+  };
+  const shown = [['2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', [{ boards: 1, from: 'to buy', cut: '2 × 10′', remainder: '28′ back on hand' }]]];
+  assert.deepEqual(await checked(), shown);
+  await ctx.commitLvl();
+  await ctx.onHand(ctx.items['9-1/2 10'], 2);
+  assert.deepEqual(await checked(), shown, 'the saved plan, though 2 × 10′ are now on hand');
 });
