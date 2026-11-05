@@ -1200,8 +1200,8 @@ test('the board gives each job its version and what it can be marked; the confir
     { item: 'TC26', family: 'Hangers', quantity: 6, live: true },
   ];
   assert.deepEqual((await res.json()).jobs, [
-    { number: '33864R', name: 'Smith Residence', lines: [{ item: 'MT20 3x4', family: 'Plates', quantity: 930, live: false }, ...hangers] },
-    { number: '33865R', name: 'Smith Residence', lines: hangers },
+    { number: '33864R', name: 'Smith Residence', lines: [{ item: 'MT20 3x4', family: 'Plates', quantity: 930, live: false }, ...hangers], remainders: [] },
+    { number: '33865R', name: 'Smith Residence', lines: hangers, remainders: [] },
   ], 'plates are listed, not tracked yet (J4)');
 
   const marked = await post(ctx.base, '/api/jobs/mark',
@@ -1492,7 +1492,7 @@ test('the board says what each job can undo; the confirmation lists what comes b
   ];
   const preview = await get(ctx.base, '/api/jobs/to-give-back?action=unship&number=33864R', ctx.cookie);
   assert.equal(preview.status, 200, await preview.clone().text());
-  assert.deepEqual(await preview.json(), { ok: true, number: '33864R', name: 'Smith Residence', to: 'built', lines: hangers });
+  assert.deepEqual(await preview.json(), { ok: true, number: '33864R', name: 'Smith Residence', to: 'built', lines: hangers, remainders: [] });
 
   const res = await post(ctx.base, '/api/jobs/undo',
     { key: crypto.randomUUID(), action: 'unship', number: '33864R', version: shipped.version }, ctx.cookie);
@@ -2834,7 +2834,7 @@ test('33591R\'s pull list prints its LVL board: one line with depth, length, to 
   assert.deepEqual((await board(ctx)).map((j) => j.pull_list), [true], 'a job with LVL and no lumber has a pull list');
 });
 
-test('the LVL part marks on hand or to buy, scrap below the shortest remainder kept, a remainder off the even foot, and boards alike as one line; it stays as saved after on hand and the settings change (#184 Q34 and Q36)', async () => {
+test('the LVL part marks on hand or to buy, scrap below the shortest remainder kept, a remainder off the even foot, and boards alike as one line; its boards stay as saved after on hand and the settings change, its remainders follow today\'s shortest remainder kept (#184 Q34 and Q36, #185 Q42)', async () => {
   const ctx = await appWithLvl();
   await ctx.onHand(ctx.items['9-1/2 48'], 1);
   // 40′, 4 × 24′, 20′8″ and 9′ of 9-1/2″: the on-hand 48′ takes the 40′.
@@ -2849,7 +2849,8 @@ test('the LVL part marks on hand or to buy, scrap below the shortest remainder k
 
   await ctx.onHand(ctx.items['9-1/2 48'], 5);
   await call(ctx.db, 'set_lvl_shortest_remainder_kept', ctx.ann.id, crypto.randomUUID(), '9-1/2', 1, 20);
-  assert.match(await pullListText(ctx, '33591R'), new RegExp('Cut Remainder ' + lines), 'the saved plan, unchanged');
+  assert.match(await pullListText(ctx, '33591R'), new RegExp('Cut Remainder ' + lines.replace('18′ 4″ left, 18′ back on hand', '18′ 4″ scrap')),
+    'the saved boards; 18′ is below 20′ now, so scrap, as Built treats it');
 });
 
 test('the check shows under each LVL board its pieces and remainder, for a sheet not yet committed and for one committed, from its saved plan (#184, story 12)', async () => {
@@ -2864,4 +2865,169 @@ test('the check shows under each LVL board its pieces and remainder, for a sheet
   await ctx.commitLvl();
   await ctx.onHand(ctx.items['9-1/2 10'], 2);
   assert.deepEqual(await checked(), shown, 'the saved plan, though 2 × 10′ are now on hand');
+});
+
+// ── Seam 1 of #178: remainders back on hand at Built, out again at Un-build (#185) ──
+
+// Item `item`'s on-hand figure.
+const onHandOf = async (db, item) => (await figure(db, 'on_hand'))[item.id];
+
+test('33591R built consumes the 48′ and puts a 28′ back on hand; the depth\'s linear feet drop by 20 (#185, stories 21, 22, 33)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  await mark(ctx, 'built', ['33591R']);
+  assert.equal(await onHandOf(ctx.db, ctx.items['9-1/2 48']), 0, 'the 48′ is consumed');
+  assert.equal(await onHandOf(ctx.db, ctx.items['9-1/2 28']), 1, 'the 28′ remainder is back on hand');
+  assert.equal((await figure(ctx.db, 'depth_lf'))[ctx.items['9-1/2 28'].id], 28, '48 LF on hand before, 20 LF cut');
+});
+
+// Job `number`'s remainder rows, as [item id, quantity].
+const remainders = (db, number) => as(db, APP, async (app) => (await app.query(
+  `SELECT g.item_id::int, g.quantity FROM inv.ledger g JOIN inv.jobs j ON j.id = g.job_id
+    WHERE j.number = $1 AND g.kind = 'remainder' ORDER BY g.id`, [number])).rows.map((r) => [r.item_id, r.quantity]));
+
+test('a 9′ remainder, below the shortest remainder kept of 10′, is scrap and makes no entry (#185, story 23)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl(lvlSheet().replace(',2,10-00-00,', ',1,39-00-00,'));
+  await mark(ctx, 'built', ['33591R']);
+  assert.deepEqual(await remainders(ctx.db, '33591R'), []);
+  assert.equal(await onHandOf(ctx.db, ctx.items['9-1/2 48']), 0);
+});
+
+test('a shortest remainder kept changed after the commit applies at the next Built (#185, story 22)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  await call(ctx.db, 'set_lvl_shortest_remainder_kept', ctx.ann.id, crypto.randomUUID(), '9-1/2', 1, 30);
+  await mark(ctx, 'built', ['33591R']);
+  assert.deepEqual(await remainders(ctx.db, '33591R'), [], 'the 28′ is below 30′ now, so scrap');
+});
+
+test('a remainder at a length not in the catalog is added as a Non-Stock item of the same product and depth (#185, story 24, Q21)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  await mark(ctx, 'built', ['33591R']);
+  const [added] = await as(ctx.db, APP, async (app) => (await app.query(
+    "SELECT id::int, product, size, length_ft, stocking FROM inv.items WHERE family = 'lvl' AND length_ft = 28")).rows);
+  assert.deepEqual({ ...added, id: undefined },
+    { id: undefined, product: '2.1 RigidLam LVL 1-3/4', size: '9-1/2', length_ft: 28, stocking: 'Non-Stock' });
+  assert.deepEqual(await remainders(ctx.db, '33591R'), [[added.id, 1]]);
+  assert.equal(await onHandOf(ctx.db, added), 1);
+});
+
+test('Un-build takes the remainders back out with the boards it puts back: on hand is as before, each remainder credited once and reversed once (#185, stories 25, 26, S49)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  const before = await figure(ctx.db, 'on_hand');
+  await mark(ctx, 'built', ['33591R']);
+  await undo(ctx, 'unbuild_job', '33591R');
+  assert.deepEqual(await figure(ctx.db, 'on_hand'), before);
+  const rows = await as(ctx.db, APP, async (app) => (await app.query(
+    `SELECT g.kind, o.kind AS reverses, g.quantity, l.action FROM inv.ledger g
+       LEFT JOIN inv.ledger o ON o.id = g.reverses_id JOIN inv.activity_log l ON l.id = g.action_id
+      WHERE g.item_id = $1 ORDER BY g.id`, [ctx.items['9-1/2 28'].id])).rows);
+  assert.deepEqual(rows, [
+    { kind: 'remainder', reverses: null, quantity: 1, action: 'mark built' },
+    { kind: 'reversal', reverses: 'remainder', quantity: -1, action: 'un-build' },
+  ]);
+
+  await mark(ctx, 'built', ['33591R']);
+  assert.deepEqual(await remainders(ctx.db, '33591R'), [[ctx.items['9-1/2 28'].id, 1], [ctx.items['9-1/2 28'].id, 1]],
+    'built again, its new build credits the 28′ again');
+  assert.equal(await onHandOf(ctx.db, ctx.items['9-1/2 28']), 1);
+});
+
+test('the Built confirmation lists the remainders going back on hand, also at a length not in the catalog yet; the Un-build one lists them going out again (#185 Q41)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  const res = await get(ctx.base, '/api/jobs/to-consume?to=built&number=33591R', ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.deepEqual((await res.json()).jobs, [{ number: '33591R', name: 'Sample Job A',
+    lines: [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 48′', family: 'LVL', quantity: 1, live: true }],
+    remainders: [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1 }] }]);
+
+  await mark(ctx, 'built', ['33591R']);
+  const back = await get(ctx.base, '/api/jobs/to-give-back?action=unbuild&number=33591R', ctx.cookie);
+  assert.equal(back.status, 200, await back.clone().text());
+  assert.deepEqual(await back.json(), { ok: true, number: '33591R', name: 'Sample Job A', to: 'committed',
+    lines: [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 48′', quantity: 1 }],
+    remainders: [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1 }] });
+});
+
+test('Shipped from committed, which consumes the LVL then, puts the remainders back on hand; Un-ship, to built (J85), keeps them and Un-build takes them out (#185, stories 22, 25)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  const [at48, at28] = [ctx.items['9-1/2 48'], ctx.items['9-1/2 28']];
+  await ctx.onHand(at48, 1);
+  await ctx.commitLvl();
+  await mark(ctx, 'shipped', ['33591R']);
+  assert.deepEqual([await onHandOf(ctx.db, at48), await onHandOf(ctx.db, at28)], [0, 1], 'shipped from committed');
+  await undo(ctx, 'unship_job', '33591R');
+  assert.deepEqual([await jobStatus(ctx.db, '33591R'), await onHandOf(ctx.db, at48), await onHandOf(ctx.db, at28)], ['built', 0, 1]);
+  await undo(ctx, 'unbuild_job', '33591R');
+  assert.deepEqual([await jobStatus(ctx.db, '33591R'), await onHandOf(ctx.db, at48), await onHandOf(ctx.db, at28)], ['committed', 1, 0]);
+
+  await mark(ctx, 'built', ['33591R']);
+  await mark(ctx, 'shipped', ['33591R']);
+  assert.deepEqual(await remainders(ctx.db, '33591R'), [[at28.id, 1], [at28.id, 1]], 'Shipped after Built credits none again');
+  await undo(ctx, 'unship_job', '33591R');
+  assert.deepEqual([await jobStatus(ctx.db, '33591R'), await onHandOf(ctx.db, at48), await onHandOf(ctx.db, at28)], ['built', 0, 1]);
+});
+
+test('a remainder at the length of a retired item refuses Built, saying what to do, and saves nothing (#185, story 24)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  await call(ctx.db, 'retire_item', ctx.ann.id, crypto.randomUUID(), ctx.items['9-1/2 28'].id, ctx.items['9-1/2 28'].version);
+  const before = await contents(ctx.db);
+  const err = await refused(mark(ctx, 'built', ['33591R']), 'IV422', 'a retired remainder item');
+  assert.match(err.message, /9-1\/2 28′ is retired, and job 33591R puts a remainder back on hand at that length\. Un-retire it, then mark the job built\./);
+  assert.deepEqual(await contents(ctx.db), before);
+});
+
+test('a job that pulls an on-hand 28′ and leaves a 28′ remainder: Shipped after Built takes no LVL again, and Un-build lists and gives back each, restoring on hand (#185, stories 25, 26)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  const [at48, at28] = [ctx.items['9-1/2 48'], ctx.items['9-1/2 28']];
+  await ctx.onHand(at48, 1);
+  await ctx.onHand(at28, 1);
+  await ctx.commitLvl(lvlSheet(['1BM2-1,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,28-00-00,,,,']));
+  assert.deepEqual(await currentLines(ctx.db, '33591R'), { [at48.id]: 1, [at28.id]: 1 }, 'the 28′ piece takes the on-hand 28′');
+  const before = await figure(ctx.db, 'on_hand');
+  await mark(ctx, 'built', ['33591R']);
+  assert.deepEqual([await onHandOf(ctx.db, at48), await onHandOf(ctx.db, at28)], [0, 1], 'the 28′ pulled, a 28′ back');
+
+  const back = await (await get(ctx.base, '/api/jobs/to-give-back?action=unbuild&number=33591R', ctx.cookie)).json();
+  assert.deepEqual([back.lines, back.remainders], [
+    [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1 }, { item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 48′', quantity: 1 }],
+    [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 28′', quantity: 1 }],
+  ]);
+  await mark(ctx, 'shipped', ['33591R']);
+  assert.deepEqual([await onHandOf(ctx.db, at48), await onHandOf(ctx.db, at28)], [0, 1], 'Shipped takes no LVL');
+  await undo(ctx, 'unship_job', '33591R');
+  await undo(ctx, 'unbuild_job', '33591R');
+  assert.deepEqual(await figure(ctx.db, 'on_hand'), before);
+});
+
+test('a remainder row cannot be reversed by hand, as Built cannot; the item\'s History names it as the job\'s remainder back on hand, then its Un-build (#185, story 26)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  const at28 = ctx.items['9-1/2 28'];
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  await mark(ctx, 'built', ['33591R']);
+  const [{ id }] = await as(ctx.db, APP, async (app) => (await app.query("SELECT id FROM inv.ledger WHERE kind = 'remainder'")).rows);
+  const before = await contents(ctx.db);
+  const err = await refused(call(ctx.db, 'reverse', ctx.ann.id, crypto.randomUUID(), id, 'by mistake'), 'IV422', 'reversing a remainder row');
+  assert.equal(err.message, 'A job\'s Built or Shipped cannot be reversed here.');
+  assert.deepEqual(await contents(ctx.db), before);
+
+  await undo(ctx, 'unbuild_job', '33591R');
+  const history = await (await get(ctx.base, `/api/items/history?id=${at28.id}`, ctx.cookie)).json();
+  assert.deepEqual(history.entries.filter((e) => e.change !== null).map((e) => [e.action, e.change, e.detail, e.from_job]), [
+    ['un-build', -1, 'Job 33591R, Sample Job A; remainder back on hand', true],
+    ['mark built', 1, 'Job 33591R, Sample Job A; remainder back on hand', true],
+  ]);
 });

@@ -194,7 +194,7 @@ const FAMILIES = {
   hangers: { read: skuLines(parseHangerSheet, hangerKey, hangerCanon) },
   lumber: { read: lumberLines, byLength: true, plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan, print: lumberPrint } },
   lvl: { read: lvlLines, byLength: true,
-    plan: { table: 'lvl_cut_plans', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts } },
+    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts } },
 };
 
 // SQL: whether sheet `s` has a saved plan of any family, so its job has a pull list.
@@ -221,7 +221,7 @@ async function readSheet(text, database, ctx) {
     meta ??= sheet.meta;
     warnings.push(...sheet.warnings);
     const { planned, ...part } = sheet[family] ?? {};
-    const saved = planned && await savedPlan(database, plan.table, meta.job_number, part.demand);
+    const saved = planned && await savedPlan(database, plan, meta.job_number, part.demand);
     const { lines: boards = [], unplaced: notPlaced = [], ...fresh } = planned && !saved ? await planned() : {};
     if (planned) parts[family] = saved ? { ...part, saved: saved.plan } : { ...part, ...fresh };
     unplaced.push(...notPlaced.map((u) => ({ family, ...u })));
@@ -276,15 +276,16 @@ function matchLines(lines, behindByFamily) {
   return { rows, several };
 }
 
-// Job `number` with the plan saved in `table` (lumber_cut_plans,
-// lvl_cut_plans) with its current sheet, when that plan was worked out from
+// Job `number` with the plan saved in `plan.table` (lumber_cut_plans,
+// lvl_cut_plans) with its current sheet, read through the function
+// `plan.today` names, if any (an LVL plan's remainders by today's settings, #185 Q42), when that plan was worked out from
 // the sheet's lines `demand` (#120, J138) and the job is not cancelled, as
 // cancelling freed its boards for other jobs (PR #190 review, finding 4); or
 // from any lines, whatever its status, when `demand` is not given. Nothing
 // for a job not in the app or with no such plan.
-async function savedPlan(database, table, number, demand) {
+async function savedPlan(database, { table, today = '' }, number, demand) {
   const [job] = await database.read(`
-    SELECT j.number, j.name, j.delivery_date::text AS delivery_date, p.plan
+    SELECT j.number, j.name, j.delivery_date::text AS delivery_date, ${today}(p.plan) AS plan
       FROM inv.jobs j
       JOIN LATERAL (SELECT * FROM inv.job_sheets WHERE job_id = j.id ORDER BY revision DESC LIMIT 1) s ON true
       JOIN inv.${table} p ON p.sheet_id = s.id
@@ -686,7 +687,7 @@ async function pullList(database, number) {
   // Deliberately one read after another, not Promise.all: each read holds a
   // pool connection, so in parallel one print takes two of the pool's three.
   for (const { plan } of Object.values(FAMILIES).filter((f) => f.plan)) {
-    const saved = await savedPlan(database, plan.table, number);
+    const saved = await savedPlan(database, plan, number);
     if (saved) parts.push({ saved, html: plan.print(saved.plan) });
   }
   if (!parts.length) return { status: 404, error: `Job ${number} has no cut plan.` };
@@ -721,6 +722,8 @@ async function markJobs(database, person, { key, to, jobs, timing = null } = {})
 // What marking jobs `numbers` built or shipped (`to`) consumes, per job,
 // for the confirmation (story 20): each line's item, family and quantity,
 // and whether its family is live; one that is not is not tracked yet (J4).
+// With the LVL remainders it puts back on hand (#185 Q41), each by the
+// item at its length, which the mark adds if the catalog lacks it.
 async function toConsume(database, to, numbers) {
   if (!MARK[to]) return { status: 400, body: { ok: false, error: 'Mark jobs built or shipped.' } };
   const jobs = await database.read(`
@@ -729,7 +732,12 @@ async function toConsume(database, to, numbers) {
                               'item', inv.item_label(i), 'family', f.name, 'quantity', c.quantity, 'live', c.live)
                               ORDER BY pg_catalog.array_position($3::text[], f.code), inv.item_label(i))
                        FROM inv.job_to_consume(j, $1) c
-                       JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family), '[]') AS lines
+                       JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family), '[]') AS lines,
+           coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', r.item, 'quantity', r.quantity) ORDER BY r.length_ft DESC, r.item)
+                       FROM (SELECT inv.item_label(pg_catalog.jsonb_populate_record(i, pg_catalog.jsonb_build_object('length_ft', k.length_ft))) AS item,
+                                    k.length_ft, pg_catalog.sum(k.quantity)::integer AS quantity
+                               FROM inv.job_remainders(j, $1) k JOIN inv.items i ON i.id = k.item_id
+                              GROUP BY 1, 2) r), '[]') AS remainders
       FROM inv.jobs j
      WHERE pg_catalog.upper(j.number) = ANY (SELECT pg_catalog.upper(n) FROM pg_catalog.unnest($2::text[]) n)
      ORDER BY j.number`, [to, [].concat(numbers ?? []), FAMILY_ORDER]);
@@ -755,19 +763,25 @@ async function undoJob(database, person, { key, action, number, version } = {}) 
 // What `action` on job `number` gives back, for its confirmation (J87):
 // the status it goes to, and per item the pieces that come back. Cancel
 // lists the unconsumed lines of live families, which return to available
-// (S25); Un-build and Un-ship the consumed pieces they return to on hand.
+// (S25); Un-build and Un-ship the consumed pieces they return to on hand,
+// and the LVL remainders they take back out (#185 Q41).
 async function toGiveBack(database, action, number) {
   if (!Object.hasOwn(UNDO, action)) return notUndo;
   const [job] = await database.read(`
     SELECT j.number, j.name, inv.undo_to(j, $1) AS "to",
-           coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', c.quantity)
-                              ORDER BY pg_catalog.array_position($3::text[], f.code), inv.item_label(i))
-                       FROM (SELECT g.item_id, -pg_catalog.sum(g.quantity)::integer AS quantity
-                               FROM inv.job_to_give_back(j, $1) g GROUP BY g.item_id
-                             UNION ALL
-                             SELECT c.item_id, c.quantity FROM inv.job_to_consume(j, 'shipped') c WHERE $1 = 'cancel job' AND c.live) c
-                       JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family), '[]') AS lines
-      FROM inv.jobs j WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($2))`, [UNDO[action].logged, number ?? '', FAMILY_ORDER]);
+           coalesce(b.lines, '[]') AS lines, coalesce(b.remainders, '[]') AS remainders
+      FROM inv.jobs j
+     CROSS JOIN LATERAL (
+       SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', c.quantity)
+                ORDER BY pg_catalog.array_position($3::text[], f.code), inv.item_label(i)) FILTER (WHERE NOT c.remainder) AS lines,
+              pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item', inv.item_label(i), 'quantity', -c.quantity)
+                ORDER BY i.length_ft DESC, inv.item_label(i)) FILTER (WHERE c.remainder) AS remainders
+         FROM (SELECT g.item_id, g.kind = 'remainder' AS remainder, -pg_catalog.sum(g.quantity)::integer AS quantity
+                 FROM inv.job_to_give_back(j, $1) g GROUP BY 1, 2
+               UNION ALL
+               SELECT c.item_id, false, c.quantity FROM inv.job_to_consume(j, 'shipped') c WHERE $1 = 'cancel job' AND c.live) c
+         JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family) b
+     WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($2))`, [UNDO[action].logged, number ?? '', FAMILY_ORDER]);
   if (!job) return { status: 404, body: { ok: false, error: `Job ${number} is not in the app.` } };
   return { status: 200, body: { ok: true, ...job } };
 }

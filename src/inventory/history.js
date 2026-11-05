@@ -16,7 +16,7 @@ const {
 
 // Each ledger row of the item, with what its detail is made from. A trim's
 // other row (pair: a correction is one row, a trim two) gives the other length; a reversal's original (o), the
-// action it reverses; a build or ship row's job. reversed says a later reversal undid the row.
+// action and kind it reverses; a build or ship row's job. reversed says a later reversal undid the row.
 const LEDGER_ROWS = `
   SELECT g.effective_at AS at, l.id AS log_id, g.id, who.name AS who, l.action, g.quantity, g.note,
          ol.action AS reverses, EXISTS (SELECT FROM inv.ledger x WHERE x.reverses_id = g.id) AS reversed,
@@ -24,7 +24,7 @@ const LEDGER_ROWS = `
          inv.po_line_number(g.po_line_id) AS po_line, g.packs, g.pack_size, g.pack_kind, g.loose,
          l.new_value -> 'pack_sizes_added' AS pack_sizes_added, inv.item_label(i) AS item, other.length_ft AS other_length,
          (l.new_value ->> 'item_added')::boolean AS added, (l.new_value ->> 'item_unretired')::boolean AS unretired,
-         l.new_value -> 'timed' AS timed, jb.number AS job_number, jb.name AS job_name, g.kind
+         l.new_value -> 'timed' AS timed, jb.number AS job_number, jb.name AS job_name, g.kind, o.kind AS reverses_kind
     FROM inv.ledger g
     JOIN inv.items i ON i.id = g.item_id
     JOIN inv.activity_log l ON l.id = g.action_id
@@ -103,8 +103,10 @@ const DETAIL = {
   reverse: (g) => `reverses ${ENTRY_NAMES[g.reverses]}${noted(g)}`,
   // A job's row, whatever wrote it (Built, Shipped, a swap, Un-build or Un-ship,
   // #101): the action says what happened, this names the job.
-  // A swap's two rows carry the reason Substitution (#106).
-  job: (g) => `Job ${g.job_number}${g.job_name ? `, ${g.job_name}` : ''}${g.reason ? `; ${g.reason}` : ''}`,
+  // A swap's two rows carry the reason Substitution (#106); an LVL
+  // remainder's row and its reversal say what it is (#185).
+  job: (g) => `Job ${g.job_number}${g.job_name ? `, ${g.job_name}` : ''}${g.reason ? `; ${g.reason}` : ''}${
+    [g.kind, g.reverses_kind].includes('remainder') ? '; remainder back on hand' : ''}`,
 };
 
 // Answers { error } for an item not in the catalog, else { entries }.
