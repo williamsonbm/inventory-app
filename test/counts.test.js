@@ -373,14 +373,18 @@ test('an Unmatched item needs a reason from Settings → Reasons before approval
   assert.deepEqual(await figure(db, 'on_hand'), { [hanger.id]: 38, [other.id]: 5 }, 'on hand starts from the count');
 });
 
-test('"Unexplained" is a built-in reason that explains an Unmatched item and cannot be retired (story 71; Q117)', async () => {
+test('"Unexplained" and "Cut differently than planned" are built-in reasons that explain an Unmatched item and cannot be retired, whatever writes it (story 71; Q117; #187)', async () => {
   const { db, ann, bob, hanger, receive, counted, approve } = await withTwo();
   await receive(hanger, 40);
-  const unexplained = await reasonId(db, 'Unexplained');
-  const err = await refused(call(db, 'retire_reason', ann.id, crypto.randomUUID(), unexplained, 1), 'IV422', 'retiring a built-in reason');
-  assert.equal(err.message, 'The app relies on "Unexplained", so it cannot be retired.');
-  const approved = await approve(bob, await counted([{ item_id: hanger.id, loose: 38 }]), { reasons: { [hanger.id]: unexplained } });
-  assert.deepEqual(approved.lines.map((l) => [l.item, l.matched, l.reason]), [['LUS28', false, 'Unexplained']]);
+  for (const [text, loose] of [['Unexplained', 38], ['Cut differently than planned', 36]]) {
+    const id = await reasonId(db, text);
+    const err = await refused(call(db, 'retire_reason', ann.id, crypto.randomUUID(), id, 1), 'IV422', 'retiring ' + text);
+    assert.equal(err.message, `The app relies on "${text}", so it cannot be retired.`);
+    await as(db, null, (owner) => refused(owner.query('UPDATE inv.reasons SET active = false WHERE id = $1', [id]),
+      '23514', 'a write that skips retire_reason, for ' + text));
+    const approved = await approve(bob, await counted([{ item_id: hanger.id, loose }]), { reasons: { [hanger.id]: id } });
+    assert.deepEqual(approved.lines.map((l) => [l.item, l.matched, l.reason]), [['LUS28', false, text]]);
+  }
 });
 
 test('an Unmatched item with nothing recorded before the count needs no reason; after its first approved count it does (story 71; Q118)', async () => {
