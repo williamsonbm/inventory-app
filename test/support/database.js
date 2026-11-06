@@ -11,6 +11,8 @@
 
 const { after } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { Client } = require('pg');
 
 const { migrate } = require('../../src/db/migrate.js');
@@ -35,7 +37,9 @@ async function connect(url) {
   return client;
 }
 
-async function freshDatabase({ migrated = true } = {}) {
+// `before`, a migration number such as '028': the database as one was
+// before that migration, with every earlier one applied and recorded.
+async function freshDatabase({ migrated = true, before = null } = {}) {
   assert.ok(ADMIN_URL,
     'TEST_DATABASE_URL is not set. Run pg-test-up in the pod; CI sets it in test.yml.');
   const name = `inv_test_${process.pid}_${++created}`;
@@ -46,7 +50,16 @@ async function freshDatabase({ migrated = true } = {}) {
     await admin.end();
   }
   databases.push(name);
-  if (migrated) await migrate(urlFor(name));
+  if (before) {
+    const dir = path.join(__dirname, '..', '..', 'migrations');
+    await as(name, null, async (owner) => {
+      await owner.query('CREATE SCHEMA inv; CREATE TABLE inv.schema_migrations (name text PRIMARY KEY)');
+      for (const file of fs.readdirSync(dir).filter((f) => /^\d{3}-/.test(f) && f < before).sort()) {
+        await owner.query(fs.readFileSync(path.join(dir, file), 'utf8'));
+        await owner.query('INSERT INTO inv.schema_migrations (name) VALUES ($1)', [file]);
+      }
+    });
+  } else if (migrated) await migrate(urlFor(name));
   return name;
 }
 

@@ -93,7 +93,7 @@ test('Settings lists and changes pack sizes, suppliers, reasons and LVL depth th
   const back = (await change(ctx, '/api/reasons/unretire', { id: reason.id, version: 2 })).body.reason;
   assert.equal(retired.active, false);
   const { reasons } = await read(ctx, '/api/reasons');
-  assert.equal(reasons.length, 9, 'the eight built in, and Miscounted');
+  assert.equal(reasons.length, 10, 'the nine built in, and Miscounted');
   assert.deepEqual(reasons.find((r) => r.id === reason.id), back);
 
   const depth = (await change(ctx, '/api/lvl-depth-thresholds/set', { depth: '14', version: null, threshold_lf: 720 })).body.threshold;

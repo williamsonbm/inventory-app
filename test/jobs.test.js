@@ -10,8 +10,6 @@
 
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 
 const { freshDatabase, urlFor, as, APP, firstUser, call, logRows, refused, contents, goLive, figure, reasonId } = require('./support/database.js');
 const { withAdmin, get, post } = require('./support/app.js');
@@ -2237,15 +2235,7 @@ test('a job\'s build row with a reason other than Substitution is refused, whate
 });
 
 test('migration 021 stops with a clear message, and changes nothing, on a database where a person already added a reason "Substitution" (#106)', async () => {
-  const db = await freshDatabase({ migrated: false });
-  const dir = path.join(__dirname, '..', 'migrations');
-  await as(db, null, async (owner) => {
-    await owner.query('CREATE SCHEMA inv; CREATE TABLE inv.schema_migrations (name text PRIMARY KEY)');
-    for (const file of fs.readdirSync(dir).filter((f) => /^\d{3}-/.test(f) && f < '021').sort()) {
-      await owner.query(fs.readFileSync(path.join(dir, file), 'utf8'));
-      await owner.query('INSERT INTO inv.schema_migrations (name) VALUES ($1)', [file]);
-    }
-  });
+  const db = await freshDatabase({ before: '021' });
   const ann = await firstUser(db);
   await call(db, 'add_reason', ann.id, crypto.randomUUID(), 'substitution');
   const before = await contents(db);
@@ -2725,22 +2715,9 @@ test('the Overview shows 48′ Short when jobs need more 48′ than are availabl
   assert.deepEqual(await reorder(), { at48: 'Short', at10: 'OK' });
 });
 
-// A database migrated up to 024, as Production was before 025.
-async function databaseBefore025() {
-  const db = await freshDatabase({ migrated: false });
-  const dir = path.join(__dirname, '..', 'migrations');
-  await as(db, null, async (owner) => {
-    await owner.query('CREATE SCHEMA inv; CREATE TABLE inv.schema_migrations (name text PRIMARY KEY)');
-    for (const file of fs.readdirSync(dir).filter((f) => /^\d{3}-/.test(f) && f < '025').sort()) {
-      await owner.query(fs.readFileSync(path.join(dir, file), 'utf8'));
-      await owner.query('INSERT INTO inv.schema_migrations (name) VALUES ($1)', [file]);
-    }
-  });
-  return db;
-}
 
 test('a job committed before 025 keeps the LVL it committed, with no data step, while its sheet is the same (#182, story 36, PR #190 review F1)', async () => {
-  const db = await databaseBefore025();
+  const db = await freshDatabase({ before: '025' });
   const ann = await firstUser(db);
   const at10 = await call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '9-1/2', length_ft: 10 });
   await goLive(db, 'lvl');
@@ -2760,7 +2737,7 @@ test('a job committed before 025 keeps the LVL it committed, with no data step, 
 });
 
 test('a built job committed before 025 consumes no LVL again when its same sheet is dropped; a shipped one is not told to un-ship (#182, story 36, PR #190 review F1)', async () => {
-  const ctx = await withAdmin({ db: await databaseBefore025() });
+  const ctx = await withAdmin({ db: await freshDatabase({ before: '025' }) });
   const { db, ann } = ctx;
   const add = (length_ft) => call(db, 'add_item', ann.id, crypto.randomUUID(), 'lvl', { product: '2.1 RigidLam LVL 1-3/4', size: '9-1/2', length_ft });
   const at10 = await add(10);
@@ -2799,7 +2776,7 @@ test('a built job committed before 025 consumes no LVL again when its same sheet
 });
 
 test('a lumber job committed before 025 checks as unchanged (#182, story 36, PR #190 review F9)', async () => {
-  const ctx = await withAdmin({ db: await databaseBefore025() });
+  const ctx = await withAdmin({ db: await freshDatabase({ before: '025' }) });
   const add = async (identity) => {
     const res = await post(ctx.base, '/api/items/add', { key: crypto.randomUUID(), family: 'lumber', identity }, ctx.cookie);
     assert.equal(res.status, 200, await res.clone().text());

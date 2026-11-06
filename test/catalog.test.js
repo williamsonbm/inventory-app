@@ -11,7 +11,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { freshDatabase, as, APP, HASH, firstUser, call, logRows, refused } = require('./support/database.js');
+const { freshDatabase, urlFor, as, APP, HASH, firstUser, call, logRows, refused } = require('./support/database.js');
+const { migrate } = require('../src/db/migrate.js');
 const { DEFAULT_LUMBER_MENU } = require('../src/lumber/lumberMenu.js');
 
 test('a new item starts Special Order with no threshold, and one log row records it', async () => {
@@ -323,14 +324,14 @@ test('suppliers are added and renamed, and one name is never listed twice', asyn
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
 });
 
-test('reasons: the eight the app relies on are there from the start; others are added, retired and un-retired', async () => {
+test('reasons: the nine the app relies on are there from the start; others are added, retired and un-retired', async () => {
   const db = await freshDatabase();
   const ann = await firstUser(db);
   const listed = await as(db, APP, async (app) =>
     (await app.query('SELECT text, active, built_in FROM inv.reasons ORDER BY text')).rows);
-  assert.deepEqual(listed.map((r) => r.text), ['Arrived, amount not known', 'Damaged – scrapped', 'Opening balance (web app)', 'Remake',
-    'Returned from job site', 'Substitution', 'Unexplained', 'Weathered – trimmed']);
-  assert.ok(listed.every((r) => r.active && r.built_in), 'the eight start active and built in');
+  assert.deepEqual(listed.map((r) => r.text), ['Arrived, amount not known', 'Cut differently than planned', 'Damaged – scrapped',
+    'Opening balance (web app)', 'Remake', 'Returned from job site', 'Substitution', 'Unexplained', 'Weathered – trimmed']);
+  assert.ok(listed.every((r) => r.active && r.built_in), 'the nine start active and built in');
 
   const miscount = await call(db, 'add_reason', ann.id, crypto.randomUUID(), ' Miscounted ');
   assert.deepEqual(miscount, { id: miscount.id, text: 'Miscounted', active: true, built_in: false, entry: null, version: 1 });
@@ -354,6 +355,19 @@ test('reasons: the eight the app relies on are there from the start; others are 
   ];
   for (const [label, attempt, code] of cases) await refused(attempt(), code, label);
   assert.equal((await logRows(db)).length, before, 'no refusal leaves a log row');
+});
+
+test('migration 028 makes a reason a person already added as "Cut differently than planned", in any capitals and retired, the built-in one (#187, Q77)', async () => {
+  const db = await freshDatabase({ before: '028' });
+  const ann = await firstUser(db);
+  const added = await call(db, 'add_reason', ann.id, crypto.randomUUID(), 'cut Differently than PLANNED');
+  await call(db, 'retire_reason', ann.id, crypto.randomUUID(), added.id, 1);
+
+  await migrate(urlFor(db));
+  const rows = await as(db, APP, async (app) => (await app.query(
+    "SELECT id, text, active, built_in, entry, version FROM inv.reasons WHERE pg_catalog.lower(text) = 'cut differently than planned'")).rows);
+  assert.deepEqual(rows, [{ id: String(added.id), text: 'Cut differently than planned', active: true, built_in: true, entry: null, version: 3 }],
+    'one reason, the same row: records that name it keep it');
 });
 
 test("lumber buying options start as the engine's default menu, and each change is shared and logged", async () => {
