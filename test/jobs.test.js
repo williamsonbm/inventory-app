@@ -2627,7 +2627,7 @@ test('a revised sheet with other LVL lines is planned again from the job\'s own 
   // The job's own 48′, not a new one to buy: 48 − 3 × 10 = 18′ back on hand.
   assert.deepEqual(check.lines.map((l) => [l.sku, l.quantity, l.cuts]), [['2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 48′', 1,
     [{ boards: 1, from: 'on hand', cut: '3 × 10′', remainder: '18′ back on hand' }]]]);
-  assert.deepEqual(check.changes, [{ family: 'lvl', sku: '9-1/2″ LVL', was: '2 × 10′', now: '3 × 10′', same_boards: true }]);
+  assert.deepEqual(check.changes, [{ family: 'lvl', sku: '9-1/2″ LVL', was: '48′: 2 × 10′', now: '48′: 3 × 10′', same_boards: true }]);
 
   const first = await savedPlan(ctx.db, '33591R', 'lvl_cut_plans');
   const commit = await post(ctx.base, '/api/jobs/commit',
@@ -2651,6 +2651,46 @@ test('a revised sheet whose LVL boards change lists the board lines was → now,
   const res = await post(ctx.base, '/api/jobs/check', { file: { name: 'sheet.csv', text: lvlSheet([more30]) } }, ctx.cookie);
   const check = await res.json();
   assert.deepEqual(check.changes, [{ family: 'lvl', sku: '2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · 10′', was: null, now: 1 }]);
+});
+
+test('a revised sheet that cuts a depth\'s same pieces from the same boards another way lists that depth\'s new cuts, board by board (#183, PR #195 review F1, Q56)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 36], ['11-7/8', 48]]);
+  await call(ctx.db, 'set_lvl_purchasable_lengths', ctx.ann.id, crypto.randomUUID(), '9-1/2', 1, [36, 48]);
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  const more30 = '1BM4,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,30-00-00,,,,';
+  const deeper = (n) => `1BM5,2.1 RigidLam DF LVL 1-3/4 x 11-7/8,${n},10-00-00,,,,`;
+  // 30′ and 10′ from the 48′ on hand, the other 10′ from a 36′ to buy.
+  await ctx.commitLvl(lvlSheet([more30, deeper(1)]));
+  await ctx.onHand(ctx.items['9-1/2 36'], 1);
+
+  // Another 11-7/8″ piece plans 9-1/2″ again: 30′ from the 36′ now on
+  // hand, both 10′ from the 48′. The same two boards, cut another way.
+  const res = await post(ctx.base, '/api/jobs/check', { file: { name: 'sheet.csv', text: lvlSheet([more30, deeper(2)]) } }, ctx.cookie);
+  const check = await res.json();
+  assert.deepEqual(check.changes, [
+    { family: 'lvl', sku: '9-1/2″ LVL', was: '36′: 1 × 10′; 48′: 1 × 30′, 1 × 10′', now: '36′: 1 × 30′; 48′: 2 × 10′', same_boards: true },
+    { family: 'lvl', sku: '11-7/8″ LVL', was: '48′: 1 × 10′', now: '48′: 2 × 10′', same_boards: true },
+  ]);
+});
+
+// The sheet holds only LVL, so a new delivery date is what revises it here.
+test('a revised sheet whose LVL lines are the same lists no LVL change and keeps the saved plan (#183, PR #195 review F2)', async () => {
+  const ctx = await appWithLvl();
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.commitLvl();
+  const plan = await savedPlan(ctx.db, '33591R', 'lvl_cut_plans');
+  // Two 10′ now on hand: a new plan would take them instead.
+  await ctx.onHand(ctx.items['9-1/2 10'], 2);
+
+  const text = lvlSheet().replace('7/1/2026', '7/8/2026');
+  const res = await post(ctx.base, '/api/jobs/check', { file: { name: 'sheet.csv', text } }, ctx.cookie);
+  const check = await res.json();
+  assert.equal(check.job.unchanged, false, JSON.stringify(check));
+  assert.deepEqual(check.changes, []);
+  const commit = await post(ctx.base, '/api/jobs/commit', { key: crypto.randomUUID(), file: { name: 'sheet.csv', text },
+    version: check.job.version, keep_date: false }, ctx.cookie);
+  assert.equal((await commit.json()).job.revision, 2);
+  assert.deepEqual(await savedPlan(ctx.db, '33591R', 'lvl_cut_plans'), plan);
 });
 
 test('a changed purchasable length affects only jobs committed or checked after the change (#182, story 32)', async () => {
