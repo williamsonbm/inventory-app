@@ -16,7 +16,8 @@ const { withAdmin, get, post } = require('./support/app.js');
 const { openDatabase } = require('../src/db/database.js');
 const { migrate } = require('../src/db/migrate.js');
 const { readItemJobs } = require('../src/inventory/item-jobs.js');
-const { checkSheet } = require('../src/jobs/jobs.js');
+const { checkSheet, drawPieces } = require('../src/jobs/jobs.js');
+const { cutMapLumber } = require('../src/lumber/lumberCutMap.js');
 const { planLvlCuts } = require('../src/lvl/planLvlCuts.js');
 
 // A database with Ann, a supplier, a plate and two hangers in the catalog;
@@ -2681,6 +2682,83 @@ test('a revised sheet whose LVL lines are the same lists no LVL change and keeps
     version: check.job.version, keep_date: false }, ctx.cookie);
   assert.equal((await commit.json()).job.revision, 2);
   assert.deepEqual(await savedPlan(ctx.db, '33591R', 'lvl_cut_plans'), plan);
+});
+
+test('a revised sheet whose lumber pieces change but whose boards stay lists that size and grade\'s pieces was → now (#196, Q81)', async () => {
+  const ctx = await appWithLumber();
+  const res = await commitFile(ctx, LUMBER_SHEET);
+  assert.equal(res.status, 200, await res.clone().text());
+
+  // Two 4′6″ pieces fit on a 10′ board, as two 5′ pieces did: still 2 × 10′.
+  const text = LUMBER_SHEET.replace('2x4sp2,4,5-00-00', '2x4sp2,4,4-06-00');
+  const check = await (await checkFile(ctx, text)).json();
+  assert.equal(check.job.unchanged, false, JSON.stringify(check));
+  assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x4 #2', was: '6 × 8′, 4 × 5′', now: '6 × 8′, 4 × 4′ 6″', same_boards: true }]);
+});
+
+test('a revised sheet whose lumber boards change lists the board lines was → now, and no "same boards" line for that size and grade (#196)', async () => {
+  const ctx = await appWithLumber();
+  const res = await commitFile(ctx, LUMBER_SHEET);
+  assert.equal(res.status, 200, await res.clone().text());
+
+  const text = LUMBER_SHEET.replace('2x6spdss,3,16-00-00', '2x6spdss,4,16-00-00');
+  const check = await (await checkFile(ctx, text)).json();
+  assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x6 DSS 16′', was: 3, now: 4 }]);
+});
+
+test('a revised sheet with fewer lumber pieces on the same boards and the same cut lists the pieces was → now (#196, Q81)', async () => {
+  const ctx = await appWithLumber();
+  const { db, ann } = ctx;
+  // Only 10′ 2x4 #2 bought: three 5′ pieces take two boards, as four did.
+  const [{ version }] = await as(db, APP, async (app) => (await app.query(
+    "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '#2'")).rows);
+  await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '#2', version, [10]);
+  const res = await commitFile(ctx, LUMBER_SHEET);
+  assert.equal(res.status, 200, await res.clone().text());
+
+  const text = LUMBER_SHEET.replace('2x4sp2,4,5-00-00', '2x4sp2,3,5-00-00');
+  const check = await (await checkFile(ctx, text)).json();
+  assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x4 #2', was: '6 × 8′, 4 × 5′', now: '6 × 8′, 3 × 5′', same_boards: true }]);
+});
+
+test('a revised sheet that changes a piece cut from a mixed board, on the same boards, lists the pieces was → now (#196)', async () => {
+  const ctx = await appWithLumber();
+  const { db, ann } = ctx;
+  // Only 16′ 2x6 DSS bought: a 7′ and a 6′ piece cut from one board.
+  const [{ version }] = await as(db, APP, async (app) => (await app.query(
+    "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x6' AND grade = 'DSS'")).rows);
+  await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x6', 'DSS', version, [16]);
+  const sheet = (other) => LUMBER_SHEET.replace('2x6spdss,3,16-00-00,2x6 SP DSS,Regular,,48.00,,,,', ['2x6spdss,3,16-00-00,2x6 SP DSS,Regular,,48.00,,,,',
+    '2x6spdss,1,7-00-00,2x6 SP DSS,Regular,,7.00,,,,', `2x6spdss,1,${other},2x6 SP DSS,Regular,,6.00,,,,`].join('\n'));
+  const res = await commitFile(ctx, sheet('6-00-00'));
+  assert.equal(res.status, 200, await res.clone().text());
+
+  const check = await (await checkFile(ctx, sheet('5-06-00'))).json();
+  assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x6 DSS', was: '3 × 16′, 1 × 7′, 1 × 6′', now: '3 × 16′, 1 × 7′, 1 × 5′ 6″', same_boards: true }]);
+});
+
+test('a saved lumber draw gives back the pieces the cut map drew it for, under each cut map rule (#196, PR #201 review F1)', () => {
+  const ft = (feet, inches = 0, sixteenths = 0) => feet + (inches + sixteenths / 16) / 12;
+  const demand = [
+    ['2x4', '#2', ft(8), 10], ['2x4', '#2', ft(1), 100], ['2x4', '#2', ft(2), 3],
+    ['2x6', 'DSS', ft(7), 1], ['2x6', 'DSS', ft(6), 1],
+    ['2x8', '#2', ft(3, 1, 1), 61], ['2x10', '#1', ft(11, 3, 5), 3],
+  ].map(([size_norm, grade_norm, required_length_ft, qty]) => ({ size_norm, grade_norm, required_length_ft, qty }));
+  const { draws, unmatched } = cutMapLumber(demand, {
+    '2x4|#2': [8, 10, 12, 16, 20], '2x6|DSS': [16], '2x8|#2': [16], '2x10|#1': [10, 14],
+  });
+  assert.deepEqual(unmatched, []);
+  assert.deepEqual([...new Set(draws.map((d) => d.rule))].sort(), ['block', 'commodity-override', 'mixed', 'next-up', 'stocked-exact']);
+
+  const drawn = new Map();
+  for (const d of draws) {
+    // As cutPlan saves it, its waste rounded as planLumber rounds it (round2).
+    const pieces = drawPieces({ boards: d.pieces, stock_length_ft: d.stock_length_ft, required_length_ft: d.required_length_ft,
+      contents: d.contents ?? null, waste_ft: Math.round((d.waste_ft_total + Number.EPSILON) * 100) / 100 });
+    assert.equal(pieces.length, d.qty_required, `${d.size_norm} ${d.grade_norm} ${d.rule} draw`);
+    for (const p of pieces) drawn.set(`${d.size_norm} ${d.grade_norm} ${p}`, (drawn.get(`${d.size_norm} ${d.grade_norm} ${p}`) ?? 0) + 1);
+  }
+  assert.deepEqual(drawn, new Map(demand.map((l) => [`${l.size_norm} ${l.grade_norm} ${l.required_length_ft}`, l.qty])));
 });
 
 test('a changed purchasable length affects only jobs committed or checked after the change (#182, story 32)', async () => {

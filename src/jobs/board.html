@@ -487,7 +487,9 @@
   // name when the sheet replaces it (Q142); for a built job, a plate,
   // lumber or LVL line says what the job consumed and what saving consumes
   // more (Q27); an LVL depth whose boards stay but whose cuts change is one
-  // line, each board's cut was → now (#183, Q53, Q56).
+  // line, each board's cut was → now (#183, Q53, Q56), and so is a lumber
+  // size and grade whose boards stay but whose pieces change, its pieces
+  // was → now (#196, Q81).
   function changesHtml(changes, nameWas, name) {
     const amount = (n) => (n === null ? '—' : esc(n));
     return '<h3>What changed</h3>' + (nameWas === null ? '' : '<p>Job name: ' + esc(nameWas) + ' → ' + esc(name) + '</p>') + (!changes.length ? '<p class="sub">No line changed.</p>'
