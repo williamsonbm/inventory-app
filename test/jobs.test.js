@@ -2683,6 +2683,59 @@ test('a revised sheet whose LVL lines are the same lists no LVL change and keeps
   assert.deepEqual(await savedPlan(ctx.db, '33591R', 'lvl_cut_plans'), plan);
 });
 
+test('a revised sheet whose lumber pieces change but whose boards stay lists that size and grade\'s pieces was → now (#196, Q81)', async () => {
+  const ctx = await appWithLumber();
+  const res = await commitFile(ctx, LUMBER_SHEET);
+  assert.equal(res.status, 200, await res.clone().text());
+
+  // Two 4′6″ pieces fit on a 10′ board, as two 5′ pieces did: still 2 × 10′.
+  const text = LUMBER_SHEET.replace('2x4sp2,4,5-00-00', '2x4sp2,4,4-06-00');
+  const check = await (await checkFile(ctx, text)).json();
+  assert.equal(check.job.unchanged, false, JSON.stringify(check));
+  assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x4 #2', was: '6 × 8′, 4 × 5′', now: '6 × 8′, 4 × 4′ 6″', same_boards: true }]);
+});
+
+test('a revised sheet whose lumber boards change lists the board lines was → now, and no "same boards" line for that size and grade (#196)', async () => {
+  const ctx = await appWithLumber();
+  const res = await commitFile(ctx, LUMBER_SHEET);
+  assert.equal(res.status, 200, await res.clone().text());
+
+  const text = LUMBER_SHEET.replace('2x6spdss,3,16-00-00', '2x6spdss,4,16-00-00');
+  const check = await (await checkFile(ctx, text)).json();
+  assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x6 DSS 16′', was: 3, now: 4 }]);
+});
+
+test('a revised sheet with fewer lumber pieces on the same boards and the same cut lists the pieces was → now (#196, Q81)', async () => {
+  const ctx = await appWithLumber();
+  const { db, ann } = ctx;
+  // Only 10′ 2x4 #2 bought: three 5′ pieces take two boards, as four did.
+  const [{ version }] = await as(db, APP, async (app) => (await app.query(
+    "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x4' AND grade = '#2'")).rows);
+  await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x4', '#2', version, [10]);
+  const res = await commitFile(ctx, LUMBER_SHEET);
+  assert.equal(res.status, 200, await res.clone().text());
+
+  const text = LUMBER_SHEET.replace('2x4sp2,4,5-00-00', '2x4sp2,3,5-00-00');
+  const check = await (await checkFile(ctx, text)).json();
+  assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x4 #2', was: '6 × 8′, 4 × 5′', now: '6 × 8′, 3 × 5′', same_boards: true }]);
+});
+
+test('a revised sheet that changes a piece cut from a mixed board, on the same boards, lists the pieces was → now (#196)', async () => {
+  const ctx = await appWithLumber();
+  const { db, ann } = ctx;
+  // Only 16′ 2x6 DSS bought: a 7′ and a 6′ piece cut from one board.
+  const [{ version }] = await as(db, APP, async (app) => (await app.query(
+    "SELECT version FROM inv.lumber_purchasable_lengths WHERE size = '2x6' AND grade = 'DSS'")).rows);
+  await call(db, 'set_lumber_lengths', ann.id, crypto.randomUUID(), '2x6', 'DSS', version, [16]);
+  const sheet = (other) => LUMBER_SHEET.replace('2x6spdss,3,16-00-00,2x6 SP DSS,Regular,,48.00,,,,', ['2x6spdss,3,16-00-00,2x6 SP DSS,Regular,,48.00,,,,',
+    '2x6spdss,1,7-00-00,2x6 SP DSS,Regular,,7.00,,,,', `2x6spdss,1,${other},2x6 SP DSS,Regular,,6.00,,,,`].join('\n'));
+  const res = await commitFile(ctx, sheet('6-00-00'));
+  assert.equal(res.status, 200, await res.clone().text());
+
+  const check = await (await checkFile(ctx, sheet('5-06-00'))).json();
+  assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x6 DSS', was: '3 × 16′, 1 × 7′, 1 × 6′', now: '3 × 16′, 1 × 7′, 1 × 5′ 6″', same_boards: true }]);
+});
+
 test('a changed purchasable length affects only jobs committed or checked after the change (#182, story 32)', async () => {
   const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 24]]);
   await ctx.commitLvl();

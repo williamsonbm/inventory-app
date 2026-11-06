@@ -208,13 +208,15 @@ async function lumberLines(text, database) {
 // and `fresh(part, rows)`, a new plan as it is saved, each board with its
 // item; `part` is what the family's reader says of the sheet;
 // `print(plan)`, the plan's part of the pull list; `cuts(plan)`, if given,
-// what the check shows under each of its lines, by item.
+// what the check shows under each of its lines, by item; `changes(was,
+// now)`, if given, what a revised sheet's change screen adds (sameBoardsChanges).
 const FAMILIES = {
   plates: { read: skuLines(parsePlateSummary, plateKey) },
   hangers: { read: skuLines(parseHangerSheet, hangerKey, hangerCanon) },
-  lumber: { read: lumberLines, byLength: true, plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan, print: lumberPrint } },
+  lumber: { read: lumberLines, byLength: true,
+    plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan, print: lumberPrint, changes: sameBoardsChanges('lumber', lumberBySizeGrade) } },
   lvl: { read: lvlLines, byLength: true,
-    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts, changes: lvlCutChanges } },
+    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts, changes: sameBoardsChanges('lvl', lvlByDepth) } },
 };
 
 // SQL: whether sheet `s` has a saved plan of any family, so its job has a pull list.
@@ -366,39 +368,63 @@ function cutWords(pieces) {
   return [...counts].map(([p, n]) => `${n} × ${feet(p)}`).join(', ');
 }
 
-// What a revised sheet's change screen adds for LVL (#183, owner Q53): for
-// each depth whose boards the new plan keeps but cuts otherwise, one change,
-// each board's cut was → now (PR #195 review F1, Q56): "36′: 1 × 30′; 48′:
-// 2 × 10′". A board line that changes is already a change (sheetChanges),
-// so a depth with one is left out.
-function lvlCutChanges(was, now) {
+// What a revised sheet's change screen adds for a planned family: for each
+// group whose boards the new plan keeps but whose cuts change, one change,
+// its cuts was → now. A board line that changes is already a change
+// (sheetChanges), so a group with one is left out. `groups(plan)`: the
+// plan's groups under the line each change names, each with its boards'
+// items and its cuts in words.
+function sameBoardsChanges(family, groups) {
+  const same = (a, b) => [...a].sort().join() === [...b].sort().join();
+  return (was, now) => {
+    const before = groups(was);
+    const changes = [];
+    for (const [sku, after] of groups(now)) {
+      const b = before.get(sku);
+      if (b && same(b.boards, after.boards) && b.cuts !== after.cuts) {
+        changes.push({ family, sku, was: b.cuts, now: after.cuts, same_boards: true });
+      }
+    }
+    return changes;
+  };
+}
+
+// An LVL plan's groups (#183, owner Q53): one per depth, each board's cut
+// (PR #195 review F1, Q56): "36′: 1 × 30′; 48′: 2 × 10′".
+function lvlByDepth(plan) {
   // Boards alike in length and cut are one entry with their count.
   const words = (cuts) => {
     const counts = new Map();
     for (const c of cuts.sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))) counts.set(c, (counts.get(c) ?? 0) + 1);
     return [...counts].map(([c, n]) => (n === 1 ? c : `${n} × ${c}`)).join('; ');
   };
-  const byDepth = (plan) => {
-    const depths = new Map();
-    for (const { depth, item_id, length_ft, pieces_ft } of plan) {
-      const d = depths.get(depth) ?? { boards: [], cuts: [] };
-      d.boards.push(item_id);
-      d.cuts.push(`${feet(length_ft)}: ${cutWords(pieces_ft)}`);
-      depths.set(depth, d);
-    }
-    for (const d of depths.values()) d.cuts = words(d.cuts);
-    return depths;
-  };
-  const same = (a, b) => [...a].sort().join() === [...b].sort().join();
-  const before = byDepth(was);
-  const changes = [];
-  for (const [depth, after] of byDepth(now)) {
-    const d = before.get(depth);
-    if (d && same(d.boards, after.boards) && d.cuts !== after.cuts) {
-      changes.push({ family: 'lvl', sku: `${depth}″ LVL`, was: d.cuts, now: after.cuts, same_boards: true });
-    }
+  const depths = new Map();
+  for (const { depth, item_id, length_ft, pieces_ft } of plan) {
+    const d = depths.get(`${depth}″ LVL`) ?? { boards: [], cuts: [] };
+    d.boards.push(item_id);
+    d.cuts.push(`${feet(length_ft)}: ${cutWords(pieces_ft)}`);
+    depths.set(`${depth}″ LVL`, d);
   }
-  return changes;
+  for (const d of depths.values()) d.cuts = words(d.cuts);
+  return depths;
+}
+
+// A lumber plan's groups (#196, owner Q81): one per size and grade, its
+// pieces: "6 × 8′, 4 × 5′".
+function lumberBySizeGrade(plan) {
+  return new Map(plan.map(({ label, draws }) => [label, {
+    boards: draws.flatMap((d) => Array(d.boards).fill(d.item_id)),
+    cuts: cutWords(draws.flatMap(drawPieces)),
+  }]));
+}
+
+// A saved lumber draw's pieces, each by its length. A plain draw keeps
+// only its required length, so its count is what its boards hold less
+// its waste, as the cut map works out the waste (cutMapLumber).
+function drawPieces({ boards, stock_length_ft, required_length_ft, contents, waste_ft }) {
+  if (contents) return Array(boards).fill(contents).flat();
+  const count = Math.round((boards * stock_length_ft - waste_ft) / required_length_ft);
+  return Array(count).fill(required_length_ft);
 }
 
 // An LVL plan's boards by item, as the check shows them under each line.
