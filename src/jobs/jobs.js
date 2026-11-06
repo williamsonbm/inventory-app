@@ -77,7 +77,9 @@ async function lvlLines(text, database, { taken }) {
   if (!read.ok) return { error: read.reason };
   if (!read.items.length) return { warnings: [], lines: [] };
   const pieces = read.items.map((it) => ({ ...it, depth: extractDepth(it.size, 'LVL') }));
-  const label = (depth) => pieces.find((p) => p.depth === depth).size;
+  // A depth the sheet no longer has, kept on a built job's board, is named
+  // as its settings name it.
+  const label = (depth) => pieces.find((p) => p.depth === depth)?.size ?? `${names[depth]}″ LVL`;
   // A depth and length's line key, as catalogKeys keys an LVL item; under
   // `lvl` in a batch's `taken`.
   const lengthKey = (depth, lengthFt) => `${depth} ${lengthFt}`;
@@ -101,22 +103,40 @@ async function lvlLines(text, database, { taken }) {
     // After the settings, not beside them: each read holds a pool connection (readCatalogKeys).
     const available = (await lvlAvailable(database, read.meta.jobNumber))
       .map((a) => ({ ...a, quantity: Math.max(0, a.quantity - (taken.get(`lvl ${lengthKey(a.depth, a.lengthFt)}`) ?? 0)) }));
-    const plan = planLvlCuts({ lines: toPlan.map((p) => ({ depth: p.depth, lengthFt: p.decimalFeet, quantity: p.qty })), available, ...settings });
+    // A built job's boards are cut (#186, Q59): kept as its saved plan has
+    // them, every depth, so the plan only grows. Only the pieces the boards
+    // do not hold are planned, against on hand, the job's remainders
+    // included; a piece the sheet dropped stays on its board (Q27).
+    const job = await savedPlan(database, FAMILIES.lvl.plan, read.meta.jobNumber);
+    const cut = job?.status === 'built' ? job.plan : [];
+    const toCut = new Map();
+    for (const p of toPlan) {
+      const k = lengthKey(p.depth, p.decimalFeet);
+      toCut.set(k, { depth: p.depth, lengthFt: p.decimalFeet, quantity: (toCut.get(k)?.quantity ?? 0) + p.qty });
+    }
+    for (const b of cut) {
+      for (const ft of b.pieces_ft) {
+        const left = toCut.get(lengthKey(extractDepth(b.depth, 'LVL'), ft));
+        if (left) left.quantity -= 1;
+      }
+    }
+    const plan = planLvlCuts({ lines: [...toCut.values()].filter((l) => l.quantity > 0), available, ...settings });
     // The plan as inv.commit_sheet saves it, one entry per board; lvlPlan
     // adds each board's item.
     const boards = [];
     const boardLines = [];
     const drawn = [];
-    const add = (depth, lengthFt, entry) => {
+    const add = (depth, lengthFt, entry, { isCut = false } = {}) => {
       const key = lengthKey(depth, lengthFt);
       boards.push({ key, depth: names[depth], length_ft: lengthFt, ...entry });
-      if (entry.source === 'on hand') drawn.push(`lvl ${key}`);
+      if (entry.source === 'on hand' && !isCut) drawn.push(`lvl ${key}`);
       const seen = boardLines.find((l) => l.key === key);
       if (seen) seen.quantity += 1;
       else boardLines.push({ ...line(key, label(depth), 1, lengthFt), ...(entry.reason && { at_length: entry.reason }) });
     };
-    for (const { depth, boards: cut } of plan.depths) {
-      for (const b of cut) {
+    for (const { item_id, depth, length_ft, ...b } of cut) add(extractDepth(depth, 'LVL'), length_ft, { item_id, ...b }, { isCut: true });
+    for (const { depth, boards } of plan.depths) {
+      for (const b of boards) {
         add(depth, b.lengthFt, { source: b.source, pieces_ft: b.pieces, remainder_ft: b.remainderFt, kept_ft: b.keptFt });
       }
     }
@@ -132,7 +152,7 @@ async function lvlLines(text, database, { taken }) {
   };
   return { warnings: read.warnings, lines,
     lvl: { demand: [...demand.values()].sort((a, b) => a.depth.localeCompare(b.depth) || a.length_ft - b.length_ft), planned,
-      labels: Object.fromEntries(toPlan.map((p) => [names[p.depth], label(p.depth)])) } };
+      labels: Object.fromEntries(Object.entries(names).map(([depth, name]) => [name, label(depth)])) } };
 }
 
 // The step that fixes a reason the plan gives for a line it cannot place;
@@ -291,7 +311,7 @@ function matchLines(lines, behindByFamily) {
 // for a job not in the app or with no such plan.
 async function savedPlan(database, { table, today }, number, demand) {
   const [job] = await database.read(`
-    SELECT j.number, j.name, j.delivery_date::text AS delivery_date, ${today ? `${today}(p.plan, j)` : 'p.plan'} AS plan
+    SELECT j.number, j.name, j.status, j.delivery_date::text AS delivery_date, ${today ? `${today}(p.plan, j)` : 'p.plan'} AS plan
       FROM inv.jobs j
       JOIN LATERAL (SELECT * FROM inv.job_sheets WHERE job_id = j.id ORDER BY revision DESC LIMIT 1) s ON true
       JOIN inv.${table} p ON p.sheet_id = s.id
