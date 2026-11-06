@@ -10,6 +10,10 @@
 // Lumber's lines are the boards of the cut plan the Planner's lumber
 // planning works out at commit, saved with the sheet (#99); EWP lines are
 // left out of step 4 (J13).
+//
+// TEST-ONLY SEAM: `drawPieces` is exported for test/jobs.test.js alone. It
+// reverses the cut map's waste rule (cutMapLumber), and only a direct call
+// over each of the cut map's rules shows the two still agree.
 
 const { parsePlateSummary } = require('../plates/parsePlateSummary.js');
 const { skuKey: plateKey } = require('../plates/readPlateStockCsv.js');
@@ -214,9 +218,9 @@ const FAMILIES = {
   plates: { read: skuLines(parsePlateSummary, plateKey) },
   hangers: { read: skuLines(parseHangerSheet, hangerKey, hangerCanon) },
   lumber: { read: lumberLines, byLength: true,
-    plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan, print: lumberPrint, changes: sameBoardsChanges('lumber', lumberBySizeGrade) } },
+    plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan, print: lumberPrint, changes: sameBoardsChanges(lumberBySizeGrade) } },
   lvl: { read: lvlLines, byLength: true,
-    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts, changes: sameBoardsChanges('lvl', lvlByDepth) } },
+    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts, changes: sameBoardsChanges(lvlByDepth) } },
 };
 
 // SQL: whether sheet `s` has a saved plan of any family, so its job has a pull list.
@@ -374,7 +378,7 @@ function cutWords(pieces) {
 // (sheetChanges), so a group with one is left out. `groups(plan)`: the
 // plan's groups under the line each change names, each with its boards'
 // items and its cuts in words.
-function sameBoardsChanges(family, groups) {
+function sameBoardsChanges(groups) {
   const same = (a, b) => [...a].sort().join() === [...b].sort().join();
   return (was, now) => {
     const before = groups(was);
@@ -382,7 +386,7 @@ function sameBoardsChanges(family, groups) {
     for (const [sku, after] of groups(now)) {
       const b = before.get(sku);
       if (b && same(b.boards, after.boards) && b.cuts !== after.cuts) {
-        changes.push({ family, sku, was: b.cuts, now: after.cuts, same_boards: true });
+        changes.push({ sku, was: b.cuts, now: after.cuts, same_boards: true });
       }
     }
     return changes;
@@ -400,10 +404,11 @@ function lvlByDepth(plan) {
   };
   const depths = new Map();
   for (const { depth, item_id, length_ft, pieces_ft } of plan) {
-    const d = depths.get(`${depth}″ LVL`) ?? { boards: [], cuts: [] };
+    const key = `${depth}″ LVL`;
+    const d = depths.get(key) ?? { boards: [], cuts: [] };
     d.boards.push(item_id);
     d.cuts.push(`${feet(length_ft)}: ${cutWords(pieces_ft)}`);
-    depths.set(`${depth}″ LVL`, d);
+    depths.set(key, d);
   }
   for (const d of depths.values()) d.cuts = words(d.cuts);
   return depths;
@@ -420,7 +425,9 @@ function lumberBySizeGrade(plan) {
 
 // A saved lumber draw's pieces, each by its length. A plain draw keeps
 // only its required length, so its count is what its boards hold less
-// its waste, as the cut map works out the waste (cutMapLumber).
+// its waste, as the cut map works out the waste (cutMapLumber). The count
+// is a whole number of pieces: Math.round only takes off the error of the
+// waste saved to 2 decimals of a foot (planLumber, round2).
 function drawPieces({ boards, stock_length_ft, required_length_ft, contents, waste_ft }) {
   if (contents) return Array(boards).fill(contents).flat();
   const count = Math.round((boards * stock_length_ft - waste_ft) / required_length_ft);
@@ -619,7 +626,7 @@ async function checkSheet(database, { file } = {}, catalog, taken) {
   const consumed = (family, id) => (status === 'built' && found.built_families.includes(family) ? found.settled[id] ?? 0 : undefined);
   const changes = (status === 'shipped' || revising) && !same ? [...sheetChanges(found.current, rows, consumed),
     // plans_was holds only the families with a changes hook (PLANS_WAS).
-    ...Object.entries(plans).flatMap(([f, plan]) => (found.plans_was[f] ? FAMILIES[f].plan.changes(found.plans_was[f], plan) : []))] : [];
+    ...Object.entries(plans).flatMap(([f, plan]) => (found.plans_was[f] ? FAMILIES[f].plan.changes(found.plans_was[f], plan).map((c) => ({ family: f, ...c })) : []))] : [];
   const revision = status === 'shipped' ? {
     changes,
     refusal: `Job ${found.number} was already ${found.handled}${same ? '' : '; un-ship it first'}.`,
@@ -1043,4 +1050,4 @@ async function jobsBeforeCount(database, family) {
   return { status: 200, body: { ok: true, consumed_when: found.consumed_when, jobs } };
 }
 
-module.exports = { checkSheet, checkSheets, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, recordReturn, jobsBeforeCount };
+module.exports = { checkSheet, checkSheets, commitSheet, commitSheets, alreadyHandled, markJobs, toConsume, undoJob, toGiveBack, listJobs, pullList, jobView, setDeliveryDate, swapPlate, recordReturn, jobsBeforeCount, drawPieces };

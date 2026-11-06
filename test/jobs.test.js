@@ -16,7 +16,8 @@ const { withAdmin, get, post } = require('./support/app.js');
 const { openDatabase } = require('../src/db/database.js');
 const { migrate } = require('../src/db/migrate.js');
 const { readItemJobs } = require('../src/inventory/item-jobs.js');
-const { checkSheet } = require('../src/jobs/jobs.js');
+const { checkSheet, drawPieces } = require('../src/jobs/jobs.js');
+const { cutMapLumber } = require('../src/lumber/lumberCutMap.js');
 const { planLvlCuts } = require('../src/lvl/planLvlCuts.js');
 
 // A database with Ann, a supplier, a plate and two hangers in the catalog;
@@ -2734,6 +2735,30 @@ test('a revised sheet that changes a piece cut from a mixed board, on the same b
 
   const check = await (await checkFile(ctx, sheet('5-06-00'))).json();
   assert.deepEqual(check.changes, [{ family: 'lumber', sku: '2x6 DSS', was: '3 × 16′, 1 × 7′, 1 × 6′', now: '3 × 16′, 1 × 7′, 1 × 5′ 6″', same_boards: true }]);
+});
+
+test('a saved lumber draw gives back the pieces the cut map drew it for, under each cut map rule (#196, PR #201 review F1)', () => {
+  const ft = (feet, inches = 0, sixteenths = 0) => feet + (inches + sixteenths / 16) / 12;
+  const demand = [
+    ['2x4', '#2', ft(8), 10], ['2x4', '#2', ft(1), 100], ['2x4', '#2', ft(2), 3],
+    ['2x6', 'DSS', ft(7), 1], ['2x6', 'DSS', ft(6), 1],
+    ['2x8', '#2', ft(3, 1, 1), 61], ['2x10', '#1', ft(11, 3, 5), 3],
+  ].map(([size_norm, grade_norm, required_length_ft, qty]) => ({ size_norm, grade_norm, required_length_ft, qty }));
+  const { draws, unmatched } = cutMapLumber(demand, {
+    '2x4|#2': [8, 10, 12, 16, 20], '2x6|DSS': [16], '2x8|#2': [16], '2x10|#1': [10, 14],
+  });
+  assert.deepEqual(unmatched, []);
+  assert.deepEqual([...new Set(draws.map((d) => d.rule))].sort(), ['block', 'commodity-override', 'mixed', 'next-up', 'stocked-exact']);
+
+  const drawn = new Map();
+  for (const d of draws) {
+    // As cutPlan saves it, its waste rounded as planLumber rounds it (round2).
+    const pieces = drawPieces({ boards: d.pieces, stock_length_ft: d.stock_length_ft, required_length_ft: d.required_length_ft,
+      contents: d.contents ?? null, waste_ft: Math.round((d.waste_ft_total + Number.EPSILON) * 100) / 100 });
+    assert.equal(pieces.length, d.qty_required, `${d.size_norm} ${d.grade_norm} ${d.rule} draw`);
+    for (const p of pieces) drawn.set(`${d.size_norm} ${d.grade_norm} ${p}`, (drawn.get(`${d.size_norm} ${d.grade_norm} ${p}`) ?? 0) + 1);
+  }
+  assert.deepEqual(drawn, new Map(demand.map((l) => [`${l.size_norm} ${l.grade_norm} ${l.required_length_ft}`, l.qty])));
 });
 
 test('a changed purchasable length affects only jobs committed or checked after the change (#182, story 32)', async () => {
