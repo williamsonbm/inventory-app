@@ -2715,7 +2715,6 @@ test('the Overview shows 48′ Short when jobs need more 48′ than are availabl
   assert.deepEqual(await reorder(), { at48: 'Short', at10: 'OK' });
 });
 
-
 test('a job committed before 025 keeps the LVL it committed, with no data step, while its sheet is the same (#182, story 36, PR #190 review F1)', async () => {
   const db = await freshDatabase({ before: '025' });
   const ann = await firstUser(db);
