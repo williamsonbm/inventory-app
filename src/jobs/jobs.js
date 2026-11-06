@@ -194,12 +194,17 @@ const FAMILIES = {
   hangers: { read: skuLines(parseHangerSheet, hangerKey, hangerCanon) },
   lumber: { read: lumberLines, byLength: true, plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan, print: lumberPrint } },
   lvl: { read: lvlLines, byLength: true,
-    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts } },
+    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts, changes: lvlCutChanges } },
 };
 
 // SQL: whether sheet `s` has a saved plan of any family, so its job has a pull list.
 const HAS_PLAN = Object.values(FAMILIES).filter((f) => f.plan)
   .map(({ plan }) => `EXISTS (SELECT 1 FROM inv.${plan.table} p WHERE p.sheet_id = s.id)`).join(' OR ');
+
+// SQL, beside sheet `s`: each saved plan a family's `changes` compares with a
+// revised sheet's, under the family's key (null for a sheet without one).
+const PLANS_WAS = Object.entries(FAMILIES).filter(([, f]) => f.plan?.changes)
+  .map(([code, { plan }]) => `'${code}', (SELECT p.plan FROM inv.${plan.table} p WHERE p.sheet_id = s.id)`).join(', ');
 
 // The file's job and its lines, one per family and key with quantities
 // summed, and each planned family's part under its key. A job already in
@@ -316,9 +321,7 @@ function lvlPlanRows(plan, { labels }) {
 function lvlBoards(plan) {
   const boards = new Map();
   for (const { item_id, depth, length_ft, source, pieces_ft, remainder_ft, kept_ft } of plan) {
-    const counts = new Map();
-    for (const p of [...pieces_ft].sort((a, b) => b - a)) counts.set(p, (counts.get(p) ?? 0) + 1);
-    const cut = [...counts].map(([p, n]) => `${n} × ${feet(p)}`).join(', ');
+    const cut = cutWords(pieces_ft);
     // planLvlCuts rounds a remainder to 1/16″ and never below 0.
     const remainder = remainder_ft === 0 ? 'none'
       : kept_ft === null ? `${feet(remainder_ft)} scrap`
@@ -330,6 +333,40 @@ function lvlBoards(plan) {
     boards.get(key).boards += 1;
   }
   return [...boards.values()];
+}
+
+// Pieces as the yard reads a cut, longest first: "2 × 10′, 1 × 8′".
+function cutWords(pieces) {
+  const counts = new Map();
+  for (const p of [...pieces].sort((a, b) => b - a)) counts.set(p, (counts.get(p) ?? 0) + 1);
+  return [...counts].map(([p, n]) => `${n} × ${feet(p)}`).join(', ');
+}
+
+// What a revised sheet's change screen adds for LVL (#183, owner Q53): for
+// each depth whose boards the new plan keeps but cuts otherwise, one change,
+// the depth's pieces was → now. A board line that changes is already a change
+// (sheetChanges), so a depth with one is left out.
+function lvlCutChanges(was, now) {
+  const byDepth = (plan) => {
+    const depths = new Map();
+    for (const { depth, item_id, pieces_ft } of plan) {
+      const d = depths.get(depth) ?? { boards: [], pieces: [] };
+      d.boards.push(item_id);
+      d.pieces.push(...pieces_ft);
+      depths.set(depth, d);
+    }
+    return depths;
+  };
+  const same = (a, b) => [...a].sort().join() === [...b].sort().join();
+  const before = byDepth(was);
+  const changes = [];
+  for (const [depth, after] of byDepth(now)) {
+    const d = before.get(depth);
+    if (d && same(d.boards, after.boards) && !same(d.pieces, after.pieces)) {
+      changes.push({ family: 'lvl', sku: `${depth}″ LVL`, was: cutWords(d.pieces), now: cutWords(after.pieces), same_boards: true });
+    }
+  }
+  return changes;
 }
 
 // An LVL plan's boards by item, as the check shows them under each line.
@@ -507,7 +544,8 @@ async function checkSheet(database, { file } = {}, catalog, taken) {
            (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
                      'item_id', jl.item_id, 'family', i.family, 'sku', inv.item_label(i), 'quantity', jl.quantity)), '[]')
               FROM inv.job_lines jl JOIN inv.items i ON i.id = jl.item_id
-             WHERE jl.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1)) AS current
+             WHERE jl.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1)) AS current,
+           (SELECT pg_catalog.jsonb_build_object(${PLANS_WAS}) FROM inv.job_sheets s WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1) AS plans_was
       FROM inv.jobs j
       LEFT JOIN LATERAL (SELECT * FROM inv.activity_log WHERE target_table = 'jobs' AND target_id = j.id
                             AND action = 'set delivery date' ORDER BY id DESC LIMIT 1) l ON j.delivery_date_edited
@@ -519,7 +557,8 @@ async function checkSheet(database, { file } = {}, catalog, taken) {
   const unchanged = status !== 'cancelled' && same;
   const revising = open && !unchanged;
   const consumed = (family, id) => (status === 'built' && found.built_families.includes(family) ? found.settled[id] ?? 0 : undefined);
-  const changes = (status === 'shipped' || revising) && !same ? sheetChanges(found.current, rows, consumed) : [];
+  const changes = (status === 'shipped' || revising) && !same ? [...sheetChanges(found.current, rows, consumed),
+    ...Object.entries(plans).flatMap(([f, plan]) => (found.plans_was[f] ? FAMILIES[f].plan.changes(found.plans_was[f], plan) : []))] : [];
   const revision = status === 'shipped' ? {
     changes,
     refusal: `Job ${found.number} was already ${found.handled}${same ? '' : '; un-ship it first'}.`,
