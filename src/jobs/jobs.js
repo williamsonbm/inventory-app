@@ -194,12 +194,17 @@ const FAMILIES = {
   hangers: { read: skuLines(parseHangerSheet, hangerKey, hangerCanon) },
   lumber: { read: lumberLines, byLength: true, plan: { table: 'lumber_cut_plans', rows: lumberPlanRows, fresh: cutPlan, print: lumberPrint } },
   lvl: { read: lvlLines, byLength: true,
-    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts } },
+    plan: { table: 'lvl_cut_plans', today: 'inv.lvl_plan_today', rows: lvlPlanRows, fresh: lvlPlan, print: lvlPrint, cuts: lvlCuts, changes: lvlCutChanges } },
 };
 
 // SQL: whether sheet `s` has a saved plan of any family, so its job has a pull list.
 const HAS_PLAN = Object.values(FAMILIES).filter((f) => f.plan)
   .map(({ plan }) => `EXISTS (SELECT 1 FROM inv.${plan.table} p WHERE p.sheet_id = s.id)`).join(' OR ');
+
+// SQL, beside sheet `s`: each saved plan a family's `changes` compares with a
+// revised sheet's, under the family's key (null for a sheet without one).
+const PLANS_WAS = Object.entries(FAMILIES).filter(([, f]) => f.plan?.changes)
+  .map(([code, { plan }]) => `'${code}', (SELECT p.plan FROM inv.${plan.table} p WHERE p.sheet_id = s.id)`).join(', ');
 
 // The file's job and its lines, one per family and key with quantities
 // summed, and each planned family's part under its key. A job already in
@@ -316,9 +321,7 @@ function lvlPlanRows(plan, { labels }) {
 function lvlBoards(plan) {
   const boards = new Map();
   for (const { item_id, depth, length_ft, source, pieces_ft, remainder_ft, kept_ft } of plan) {
-    const counts = new Map();
-    for (const p of [...pieces_ft].sort((a, b) => b - a)) counts.set(p, (counts.get(p) ?? 0) + 1);
-    const cut = [...counts].map(([p, n]) => `${n} × ${feet(p)}`).join(', ');
+    const cut = cutWords(pieces_ft);
     // planLvlCuts rounds a remainder to 1/16″ and never below 0.
     const remainder = remainder_ft === 0 ? 'none'
       : kept_ft === null ? `${feet(remainder_ft)} scrap`
@@ -330,6 +333,48 @@ function lvlBoards(plan) {
     boards.get(key).boards += 1;
   }
   return [...boards.values()];
+}
+
+// Pieces as the yard reads a cut, longest first: "2 × 10′, 1 × 8′".
+function cutWords(pieces) {
+  const counts = new Map();
+  for (const p of [...pieces].sort((a, b) => b - a)) counts.set(p, (counts.get(p) ?? 0) + 1);
+  return [...counts].map(([p, n]) => `${n} × ${feet(p)}`).join(', ');
+}
+
+// What a revised sheet's change screen adds for LVL (#183, owner Q53): for
+// each depth whose boards the new plan keeps but cuts otherwise, one change,
+// each board's cut was → now (PR #195 review F1, Q56): "36′: 1 × 30′; 48′:
+// 2 × 10′". A board line that changes is already a change (sheetChanges),
+// so a depth with one is left out.
+function lvlCutChanges(was, now) {
+  // Boards alike in length and cut are one entry with their count.
+  const words = (cuts) => {
+    const counts = new Map();
+    for (const c of cuts.sort((a, b) => a.localeCompare(b, 'en', { numeric: true }))) counts.set(c, (counts.get(c) ?? 0) + 1);
+    return [...counts].map(([c, n]) => (n === 1 ? c : `${n} × ${c}`)).join('; ');
+  };
+  const byDepth = (plan) => {
+    const depths = new Map();
+    for (const { depth, item_id, length_ft, pieces_ft } of plan) {
+      const d = depths.get(depth) ?? { boards: [], cuts: [] };
+      d.boards.push(item_id);
+      d.cuts.push(`${feet(length_ft)}: ${cutWords(pieces_ft)}`);
+      depths.set(depth, d);
+    }
+    for (const d of depths.values()) d.cuts = words(d.cuts);
+    return depths;
+  };
+  const same = (a, b) => [...a].sort().join() === [...b].sort().join();
+  const before = byDepth(was);
+  const changes = [];
+  for (const [depth, after] of byDepth(now)) {
+    const d = before.get(depth);
+    if (d && same(d.boards, after.boards) && d.cuts !== after.cuts) {
+      changes.push({ family: 'lvl', sku: `${depth}″ LVL`, was: d.cuts, now: after.cuts, same_boards: true });
+    }
+  }
+  return changes;
 }
 
 // An LVL plan's boards by item, as the check shows them under each line.
@@ -501,14 +546,17 @@ async function checkSheet(database, { file } = {}, catalog, taken) {
     SELECT j.number, j.status, j.version, j.delivery_date::text AS delivery_date, u.name AS set_by, l.at AS set_at,
            CASE WHEN j.name IS DISTINCT FROM inv.tidy($3) THEN j.name END AS name_was,
            inv.is_current_sheet($2) AS unchanged, inv.job_handled(j) AS handled,
-           (SELECT max(s.revision) FROM inv.job_sheets s WHERE s.job_id = j.id) AS revision,
+           latest.revision,
            (SELECT coalesce(pg_catalog.jsonb_object_agg(t.item_id, t.quantity), '{}') FROM inv.job_settled(j) t) AS settled,
            ARRAY(SELECT f.code FROM inv.families f WHERE f.consumed_when = 'built' AND f.live) AS built_families,
            (SELECT coalesce(pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object(
                      'item_id', jl.item_id, 'family', i.family, 'sku', inv.item_label(i), 'quantity', jl.quantity)), '[]')
               FROM inv.job_lines jl JOIN inv.items i ON i.id = jl.item_id
-             WHERE jl.sheet_id = (SELECT s.id FROM inv.job_sheets s WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1)) AS current
+             WHERE jl.sheet_id = latest.id) AS current,
+           latest.plans_was
       FROM inv.jobs j
+      LEFT JOIN LATERAL (SELECT s.id, s.revision, pg_catalog.jsonb_build_object(${PLANS_WAS}) AS plans_was FROM inv.job_sheets s
+                          WHERE s.job_id = j.id ORDER BY s.revision DESC LIMIT 1) latest ON true
       LEFT JOIN LATERAL (SELECT * FROM inv.activity_log WHERE target_table = 'jobs' AND target_id = j.id
                             AND action = 'set delivery date' ORDER BY id DESC LIMIT 1) l ON j.delivery_date_edited
       LEFT JOIN inv.users u ON u.id = l.actor_id
@@ -519,7 +567,9 @@ async function checkSheet(database, { file } = {}, catalog, taken) {
   const unchanged = status !== 'cancelled' && same;
   const revising = open && !unchanged;
   const consumed = (family, id) => (status === 'built' && found.built_families.includes(family) ? found.settled[id] ?? 0 : undefined);
-  const changes = (status === 'shipped' || revising) && !same ? sheetChanges(found.current, rows, consumed) : [];
+  const changes = (status === 'shipped' || revising) && !same ? [...sheetChanges(found.current, rows, consumed),
+    // plans_was holds only the families with a changes hook (PLANS_WAS).
+    ...Object.entries(plans).flatMap(([f, plan]) => (found.plans_was[f] ? FAMILIES[f].plan.changes(found.plans_was[f], plan) : []))] : [];
   const revision = status === 'shipped' ? {
     changes,
     refusal: `Job ${found.number} was already ${found.handled}${same ? '' : '; un-ship it first'}.`,
