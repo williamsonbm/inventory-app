@@ -4,8 +4,10 @@
 --
 -- Reach: inv.commit_sheet redefined. For a built job whose current sheet
 -- has a saved LVL plan, the new plan must start with that plan's boards
--- (refused otherwise); the boards after them are the revision's own: only
--- they are checked against what is available, and, when LVL is live and
+-- (refused otherwise, a sheet with no LVL plan too); the boards after them
+-- are the revision's own, and for a built job with no saved LVL plan every
+-- board is. Only the revision's own boards are checked against what is
+-- available and for retired items (Q87), and, when LVL is live and
 -- consumed at Built, their remainders go back on hand as 'remainder' rows
 -- of the revision (kept at today's shortest remainder kept, Q60). Un-build
 -- already takes those rows back out (026, inv.job_to_give_back). The new
@@ -160,7 +162,8 @@ DECLARE
   v_settled jsonb;
   v_saved jsonb;      -- a built job's saved LVL plan, the boards it cut
   v_added jsonb;      -- the boards of v_lvl a commit takes: for a built job, those after v_saved
-  v_today inv.jobs;
+  v_rest jsonb;       -- v_lines but the LVL plan's boards
+  v_as_committed inv.jobs;
 BEGIN
   IF coalesce(v_number, '') = '' THEN
     RAISE EXCEPTION 'The sheet has no job number.' USING ERRCODE = 'IV400';
@@ -189,7 +192,8 @@ BEGIN
     RAISE EXCEPTION 'LVL lines come from the LVL plan, and the LVL plan holds only LVL.' USING ERRCODE = 'IV400';
   END IF;
   -- One line per board of the LVL plan; inv.sheet_lines sums them per item.
-  v_lines := v_lines || v_boards || coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item_id', b -> 'item_id', 'quantity', 1))
+  v_rest := v_lines || v_boards;
+  v_lines := v_rest || coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item_id', b -> 'item_id', 'quantity', 1))
                                                 FROM pg_catalog.jsonb_array_elements(v_lvl) AS b), '[]');
   IF pg_catalog.jsonb_array_length(v_lines) = 0 THEN
     RAISE EXCEPTION 'Job % has no lines to commit.', v_number USING ERRCODE = 'IV400';
@@ -242,9 +246,29 @@ BEGIN
     END IF;
   END IF;
 
-  -- Unknown and retired items refuse the whole sheet (J8).
+  -- A sheet with no LVL plan, or a plan that does not start with the
+  -- boards the job cut, is refused (PR #198 review, finding 2): the server
+  -- always sends them, so only a stale or wrong request reaches this.
+  v_added := v_lvl;
+  IF v_job.status = 'built' THEN
+    SELECT p.plan INTO v_saved FROM inv.lvl_cut_plans p WHERE p.sheet_id = v_current.id;
+    IF v_saved IS NOT NULL THEN
+      IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(v_saved) WITH ORDINALITY AS o(b, i)
+                  WHERE (v_lvl -> (o.i - 1)::integer) - 'kept_ft' IS DISTINCT FROM o.b - 'kept_ft') THEN
+        RAISE EXCEPTION 'The LVL plan for built job % does not keep the boards it cut.', v_number USING ERRCODE = 'IV422';
+      END IF;
+      v_added := (SELECT coalesce(pg_catalog.jsonb_agg(x.b ORDER BY x.i), '[]')
+                    FROM pg_catalog.jsonb_array_elements(v_lvl) WITH ORDINALITY AS x(b, i)
+                   WHERE x.i > pg_catalog.jsonb_array_length(v_saved));
+    END IF;
+  END IF;
+
+  -- Unknown and retired items refuse the whole sheet (J8), but for the
+  -- boards a built job cut, which no fix to the sheet can change (Q87).
   SELECT pg_catalog.string_agg(CASE WHEN i.id IS NULL THEN 'item ' || s.item_id ELSE inv.item_label(i) END, ', ' ORDER BY s.item_id) INTO v_bad
-    FROM inv.sheet_lines(v_lines) AS s LEFT JOIN inv.items i ON i.id = s.item_id
+    FROM inv.sheet_lines(v_rest || coalesce((SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item_id', b -> 'item_id', 'quantity', 1))
+                                              FROM pg_catalog.jsonb_array_elements(v_added) AS b), '[]')) AS s
+    LEFT JOIN inv.items i ON i.id = s.item_id
    WHERE NOT coalesce(i.active, false);
   IF v_bad IS NOT NULL THEN
     -- DETAIL tells this refusal from "already committed": the server shows
@@ -253,19 +277,6 @@ BEGIN
       USING ERRCODE = 'IV422', DETAIL = 'inactive items';
   END IF;
 
-  v_added := v_lvl;
-  IF v_job.status = 'built' AND v_lvl IS NOT NULL THEN
-    SELECT p.plan INTO v_saved FROM inv.lvl_cut_plans p WHERE p.sheet_id = v_current.id;
-    IF v_saved IS NOT NULL THEN
-      IF EXISTS (SELECT 1 FROM pg_catalog.jsonb_array_elements(v_saved) WITH ORDINALITY AS o(b, i)
-                  WHERE (v_lvl -> (o.i - 1)::integer) - 'kept_ft' IS DISTINCT FROM o.b - 'kept_ft') THEN
-        RAISE EXCEPTION 'The LVL plan for built job % does not keep the boards it cut.', v_number;
-      END IF;
-      v_added := (SELECT coalesce(pg_catalog.jsonb_agg(x.b ORDER BY x.i), '[]')
-                    FROM pg_catalog.jsonb_array_elements(v_lvl) WITH ORDINALITY AS x(b, i)
-                   WHERE x.i > pg_catalog.jsonb_array_length(v_saved));
-    END IF;
-  END IF;
   IF v_added @> '[{"source": "on hand"}]'
      AND NOT (v_job.status IN ('committed', 'built')
               AND EXISTS (SELECT 1 FROM inv.lvl_cut_plans WHERE sheet_id = v_current.id AND plan = v_lvl))
@@ -317,14 +328,15 @@ BEGIN
     END IF;
     -- The added boards' remainders back on hand, as 026's inv.mark_jobs
     -- puts back Built's, kept by today's shortest remainder kept: the
-    -- setting a committed job's plan reads.
-    IF v_saved IS NOT NULL AND EXISTS (SELECT FROM inv.families f WHERE f.code = 'lvl' AND f.consumed_when = 'built' AND f.live) THEN
-      v_today := v_job;
-      v_today.status := 'committed';
+    -- setting a committed job's plan reads. For a job with no LVL at
+    -- Built, every board is added (PR #198 review, finding 1).
+    IF v_added IS NOT NULL AND EXISTS (SELECT FROM inv.families f WHERE f.code = 'lvl' AND f.consumed_when = 'built' AND f.live) THEN
+      v_as_committed := v_job;
+      v_as_committed.status := 'committed';
       PERFORM inv.put_back_remainders(v_job,
         (SELECT pg_catalog.jsonb_agg(pg_catalog.jsonb_build_object('item_id', g.item_id, 'length_ft', g.length_ft, 'quantity', g.quantity))
            FROM (SELECT (b ->> 'item_id')::bigint AS item_id, (b ->> 'kept_ft')::integer AS length_ft, pg_catalog.count(*) AS quantity
-                   FROM pg_catalog.jsonb_array_elements(inv.lvl_plan_today(v_added, v_today)) AS b
+                   FROM pg_catalog.jsonb_array_elements(inv.lvl_plan_today(v_added, v_as_committed)) AS b
                   WHERE b ->> 'kept_ft' IS NOT NULL GROUP BY 1, 2) g),
         a.log_id, 'commit the sheet again');
     END IF;

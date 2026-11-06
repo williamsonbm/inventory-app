@@ -2806,8 +2806,16 @@ test('a lumber job committed before 025 checks as unchanged (#182, story 36, PR 
   };
   for (const length_ft of [8, 10]) await add({ size: '2x4', grade: '#2', length_ft });
   await add({ size: '2x6', grade: 'DSS', length_ft: 16 });
+  // The server reads every sheet's job for a saved LVL plan (PR #198
+  // review, finding 2), which 024 has no table for: an empty stand-in,
+  // dropped before 025 and 026 make the real ones.
+  const standIn = (sql) => as(ctx.db, null, (owner) => owner.query(sql));
+  await standIn(`CREATE TABLE inv.lvl_cut_plans (sheet_id bigint, plan jsonb, demand jsonb);
+    CREATE FUNCTION inv.lvl_plan_today(jsonb, inv.jobs) RETURNS jsonb LANGUAGE sql AS 'SELECT $1';
+    GRANT SELECT ON inv.lvl_cut_plans TO PUBLIC; GRANT EXECUTE ON FUNCTION inv.lvl_plan_today(jsonb, inv.jobs) TO PUBLIC`);
   const res = await commitFile(ctx, LUMBER_ONLY_SHEET);
   assert.equal(res.status, 200, await res.clone().text());
+  await standIn('DROP TABLE inv.lvl_cut_plans; DROP FUNCTION inv.lvl_plan_today(jsonb, inv.jobs)');
 
   await migrate(urlFor(ctx.db));
   const check = await checkFile(ctx, LUMBER_ONLY_SHEET);
@@ -3225,7 +3233,7 @@ test('the database refuses an LVL plan for a built job that does not start with 
   const added = { ...cut, item_id: ctx.items['9-1/2 28'].id, length_ft: 28, pieces_ft: [10], remainder_ft: 18, kept_ft: 18 };
   const err = await refused(call(ctx.db, 'commit_job', ctx.ann.id, crypto.randomUUID(), {
     number: '33591R', name: 'Sample Job A', delivery_date: '2026-07-01', lines: [], version,
-    lvl: { demand: [{ depth: '9-1/2', length_ft: 10, quantity: 3 }], plan: [added, cut] } }), 'P0001', 'a plan with its cut board second');
+    lvl: { demand: [{ depth: '9-1/2', length_ft: 10, quantity: 3 }], plan: [added, cut] } }), 'IV422', 'a plan with its cut board second');
   assert.match(err.message, /The LVL plan for built job 33591R does not keep the boards it cut\./);
   assert.deepEqual(await contents(ctx.db), before);
 });
@@ -3339,4 +3347,60 @@ test('the check and Built round a remainder to its even foot as a plan not yet s
     assert.equal(kept, board.keptFt, `a ${board.remainderFt} ft remainder`);
     if (piece === ft(20, 1 / 16)) assert.equal(kept, 28, '27′11-15/16″ is within 1/16″ of 28′');
   }
+});
+
+// 33591R committed with one plate line and no LVL, and built; one 48′ on hand.
+async function builtPlatesOnly() {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  const res = await post(ctx.base, '/api/items/add', { key: crypto.randomUUID(), family: 'plates', identity: { sku: 'MT20 3x4' } }, ctx.cookie);
+  assert.equal(res.status, 200, await res.clone().text());
+  const plate = (await res.json()).item;
+  await goLive(ctx.db, 'plates');
+  await call(ctx.db, 'commit_job', ctx.ann.id, crypto.randomUUID(), {
+    number: '33591R', name: 'Sample Job A', delivery_date: '2026-07-01', lines: [{ item_id: plate.id, quantity: 1 }] });
+  await mark(ctx, 'built', ['33591R']);
+  return { ...ctx, plate };
+}
+
+test('a built job with no LVL at Built, revised to add 2 × 10′ cut from a 48′, puts the 28′ remainder back on hand (PR #198 review, finding 1; Q60)', async () => {
+  const ctx = await builtPlatesOnly();
+  await reviseBuilt(ctx, lvlSheet());
+  assert.deepEqual(await onHands(ctx, [48, 28]), [0, 1], 'the 48 consumed; its 28 back on hand');
+});
+
+test('the database refuses a sheet for a built job that drops the LVL boards it cut, and saves nothing (PR #198 review, finding 2)', async () => {
+  const ctx = await builtLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  const res = await post(ctx.base, '/api/items/add', { key: crypto.randomUUID(), family: 'plates', identity: { sku: 'MT20 3x4' } }, ctx.cookie);
+  const plate = (await res.json()).item;
+  const { version } = await onBoard(ctx.db, '33591R');
+  const before = await contents(ctx.db);
+  let err = null;
+  try {
+    await call(ctx.db, 'commit_job', ctx.ann.id, crypto.randomUUID(), {
+      number: '33591R', name: 'Sample Job B', delivery_date: '2026-07-01', lines: [{ item_id: plate.id, quantity: 1 }], version });
+  } catch (e) { err = e; }
+  assert.ok(err, 'accepted: the built job now has a sheet with no LVL plan and no 48 line');
+  assert.equal(err.code, 'IV422');
+  assert.match(err.message, /The LVL plan for built job 33591R does not keep the boards it cut\./);
+  assert.deepEqual(await contents(ctx.db), before);
+});
+
+test('a built job revised to a sheet with no LVL keeps its cut 48′ on its board and consumes nothing more (PR #198 review, finding 2; Q27)', async () => {
+  const ctx = await builtLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  const [cut] = await savedPlan(ctx.db, '33591R', 'lvl_cut_plans');
+  const check = await reviseBuilt(ctx, lvlSheet().split('\n').filter((l) => !l.includes('LVL 1-3/4')).join('\n'));
+  assert.deepEqual(check.lines.map((l) => [l.sku, l.quantity, l.flag]), [['9-1/2″ LVL · 48′', 1, null]], 'named by its depth');
+  assert.deepEqual(check.changes, []);
+  assert.deepEqual((await savedPlan(ctx.db, '33591R', 'lvl_cut_plans')).map((b) => b.pieces_ft), [cut.pieces_ft], 'the 48′ stays on its board');
+  assert.deepEqual(await onHands(ctx, [48, 28]), [1, 1], 'nothing more consumed');
+});
+
+test('a built job whose cut 48′ was retired after Built can still be revised to add a 10′; the 48′ line is not flagged (PR #198 review, finding 3; Q87)', async () => {
+  const ctx = await builtLvl([['9-1/2', 48], ['9-1/2', 28], ['9-1/2', 18]], 1);
+  const i48 = (await as(ctx.db, APP, async (app) => (await app.query('SELECT id, version FROM inv.items WHERE id = $1', [ctx.items['9-1/2 48'].id])).rows))[0];
+  await call(ctx.db, 'retire_item', ctx.ann.id, crypto.randomUUID(), i48.id, i48.version);
+  const { lines, committed } = await reviseBuilt(ctx, lvlSheet([oneMore10]));
+  assert.ok(!committed.error, committed.error);
+  assert.deepEqual(lines.filter((l) => l.sku === sku(48)).map((l) => [l.quantity, l.flag]), [[1, null]]);
 });
