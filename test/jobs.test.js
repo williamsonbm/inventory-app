@@ -3181,11 +3181,12 @@ test('a remainder row cannot be reversed by hand, as Built cannot; the item\'s H
 const sku = (length) => `2.1 RigidLam DF LVL 1-3/4 x 9-1/2 · ${length}′`;
 const piece = (length) => `1BM2-1,2.1 RigidLam DF LVL 1-3/4 x 9-1/2,1,${length}-00-00,,,,`;
 
-// On hand of 9-1/2″ LVL at each of `lengths`.
-const onHands = async (ctx, lengths) => {
-  const all = await figure(ctx.db, 'on_hand');
+// Figure `column` of 9-1/2″ LVL at each of `lengths`.
+const lvlFigures = async (ctx, column, lengths) => {
+  const all = await figure(ctx.db, column);
   return lengths.map((l) => all[ctx.items[`9-1/2 ${l}`].id]);
 };
+const onHands = (ctx, lengths) => lvlFigures(ctx, 'on_hand', lengths);
 
 // 33591R committed with `received` × 48′ on hand and built: one 48′ cut
 // 2 × 10′, its 28′ back on hand.
@@ -3457,4 +3458,60 @@ test('a built job whose cut 48′ was retired after Built can still be revised t
   const { lines, committed } = await reviseBuilt(ctx, lvlSheet([oneMore10]));
   assert.ok(!committed.error, committed.error);
   assert.deepEqual(lines.filter((l) => l.sku === sku(48)).map((l) => [l.quantity, l.flag]), [[1, null]]);
+});
+
+// ── #199: a board cut from another board's remainder of the same plan ────────
+
+// 33591R committed with no 48′ on hand, built, revised to 3 × 10′ (the
+// third cut from its own 28′ remainder, 18′ back on hand) and un-built.
+async function unbuiltAfterRevision() {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28], ['9-1/2', 18]]);
+  await ctx.commitLvl();
+  await mark(ctx, 'built', ['33591R']);
+  await reviseBuilt(ctx, lvlSheet([oneMore10]));
+  await undo(ctx, 'unbuild_job', '33591R');
+  return ctx;
+}
+
+test('after Un-build, the 28′ a revised job cuts from its own 48′ remainder is not committed on its own: committed 0, available 0, not Short, no job behind it; the 48′ stays committed (#199, Q86)', async () => {
+  const ctx = await unbuiltAfterRevision();
+  assert.deepEqual(await onHands(ctx, [48, 28, 18]), [0, 0, 0]);
+  assert.deepEqual(await lvlFigures(ctx, 'committed', [48, 28, 18]), [1, 0, 0]);
+  assert.deepEqual(await lvlFigures(ctx, 'available', [48, 28, 18]), [-1, 0, 0]);
+  assert.notEqual((await lvlFigures(ctx, 'reorder', [28]))[0], 'Short');
+  assert.deepEqual(await jobsBehind(ctx.db, ctx.items['9-1/2 28']), [], 'the list adds up to Committed');
+  const free = await as(ctx.db, APP, async (app) => (await app.query(
+    'SELECT quantity FROM inv.lvl_available($1) WHERE item_id = $2', ['33591R', ctx.items['9-1/2 28'].id])).rows[0].quantity);
+  assert.equal(free, 0, 'the job\'s own 28′ is not a board it committed, so not free to it either');
+});
+
+test('Built again after Un-build consumes the boards in order: 48′ −1, its 28′ remainder put back and cut, 18′ +1 (#199)', async () => {
+  const ctx = await unbuiltAfterRevision();
+  await mark(ctx, 'built', ['33591R']);
+  assert.deepEqual(await onHands(ctx, [48, 28, 18]), [-1, 0, 1]);
+  assert.deepEqual(await lvlFigures(ctx, 'committed', [48, 28, 18]), [0, 0, 0]);
+});
+
+test('a remainder that today\'s shortest remainder kept makes scrap covers no board: after Un-build with 30′ kept, the 28′ is committed on its own, as Built then consumes it (#199)', async () => {
+  const ctx = await unbuiltAfterRevision();
+  await call(ctx.db, 'set_lvl_shortest_remainder_kept', ctx.ann.id, crypto.randomUUID(), '9-1/2', 1, 30);
+  assert.deepEqual(await lvlFigures(ctx, 'committed', [48, 28, 18]), [1, 1, 0]);
+  await mark(ctx, 'built', ['33591R']);
+  assert.deepEqual(await onHands(ctx, [48, 28, 18]), [-1, -1, 0], 'the 28′ and 18′ remainders are scrap');
+});
+
+test('a board pulled from on hand before a board whose remainder is its length is committed: 26′ from the 28′, then 20′ from the 48′ with a 28′ remainder (#199, Q86)', async () => {
+  const ctx = await appWithLvl([['9-1/2', 48], ['9-1/2', 28]]);
+  await ctx.onHand(ctx.items['9-1/2 48'], 1);
+  await ctx.onHand(ctx.items['9-1/2 28'], 1);
+  await ctx.commitLvl(lvlSheet().replace(',2,10-00-00', ',1,26-00-00').concat('\n', piece(20)));
+  assert.deepEqual((await savedPlan(ctx.db, '33591R', 'lvl_cut_plans')).map((b) => [b.length_ft, b.pieces_ft, b.kept_ft]),
+    [[28, [26], null], [48, [20], 28]]);
+  assert.deepEqual(await lvlFigures(ctx, 'committed', [48, 28]), [1, 1]);
+});
+
+test('after Un-build, the Cancel confirmation releases what the job commits: the 48′, not the 28′ cut from its remainder (#199, Q86)', async () => {
+  const ctx = await unbuiltAfterRevision();
+  const cancel = await (await get(ctx.base, '/api/jobs/to-give-back?action=cancel&number=33591R', ctx.cookie)).json();
+  assert.deepEqual(cancel.lines, [{ item: '2.1 RigidLam LVL 1-3/4 x 9-1/2 48′', quantity: 1 }]);
 });

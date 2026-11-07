@@ -892,7 +892,7 @@ async function toGiveBack(database, action, number) {
                       -pg_catalog.sum(pg_catalog.sum(g.quantity)) OVER (PARTITION BY g.item_id)::integer AS change
                  FROM inv.job_to_give_back(j, $1) g GROUP BY 1, 2
                UNION ALL
-               SELECT c.item_id, false, c.quantity, NULL FROM inv.job_to_consume(j, 'shipped') c WHERE $1 = 'cancel job' AND c.live) c
+               SELECT c.item_id, false, c.quantity, NULL FROM inv.job_commits(j) c WHERE $1 = 'cancel job' AND c.live) c
          JOIN inv.items i ON i.id = c.item_id JOIN inv.families f ON f.code = i.family
          LEFT JOIN inv.item_figures fig ON fig.item_id = c.item_id AND c.remainder) b
      WHERE pg_catalog.upper(j.number) = pg_catalog.upper(inv.tidy($2))`, [UNDO[action].logged, number ?? '', FAMILY_ORDER]);
@@ -1032,10 +1032,10 @@ async function setDeliveryDate(database, person, { key, number, version, deliver
 }
 
 // The jobs a count of `family` lists before it starts (#105, story 51, Q25):
-// each job with lines of that family that Shipped would still consume, as
-// inv.job_to_consume says and src/inventory/item-jobs.js lists them, so a
-// built job lists only under the families consumed at Shipped (J307) and a
-// family not live in Inventory lists none. `consumed_when` is the step
+// each job with lines of that family it commits, as inv.job_commits says
+// and src/inventory/item-jobs.js lists them, so a built job lists only
+// under the families consumed at Shipped (J307) and a family not live in
+// Inventory lists none. `consumed_when` is the step
 // that consumes the family, built or shipped. Returns { status, body }.
 async function jobsBeforeCount(database, family) {
   const [found] = await database.read('SELECT consumed_when FROM inv.families WHERE code = $1', [family ?? '']);
@@ -1044,7 +1044,7 @@ async function jobsBeforeCount(database, family) {
     SELECT j.number, j.name, j.delivery_date::text AS delivery_date
       FROM inv.jobs j
      WHERE j.status IN ('committed', 'built')
-       AND EXISTS (SELECT 1 FROM inv.job_to_consume(j, 'shipped') c JOIN inv.items i ON i.id = c.item_id
+       AND EXISTS (SELECT 1 FROM inv.job_commits(j) c JOIN inv.items i ON i.id = c.item_id
                     WHERE c.live AND i.family = $1)
      ORDER BY j.delivery_date NULLS LAST, j.number`, [family]);
   return { status: 200, body: { ok: true, consumed_when: found.consumed_when, jobs } };
