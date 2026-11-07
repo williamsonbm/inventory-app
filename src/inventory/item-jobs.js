@@ -1,13 +1,13 @@
 // Inventory → Overview → an item (#112): the committed jobs that make up the
-// item's Committed figure. Each job's quantity is what inv.job_to_consume says
-// Shipped would still consume of the item, the way inv.job_committed sums it,
-// so the list adds up to Committed. A built job lists only under the
-// families consumed at Shipped, and a family not live in Inventory lists none.
+// item's Committed figure. Each job's quantity is what inv.job_commits says
+// it commits of the item, the way inv.job_committed sums it, so the list
+// adds up to Committed. A built job lists only under the families consumed
+// at Shipped, and a family not live in Inventory lists none.
 
 // Quantities are pieces; the page shows them in the item's order unit.
 const ITEM_JOBS = `
   SELECT j.number, j.name, pg_catalog.to_char(j.delivery_date, 'YYYY-MM-DD') AS delivery_date, c.quantity
-    FROM inv.jobs j CROSS JOIN LATERAL inv.job_to_consume(j, 'shipped') c
+    FROM inv.jobs j CROSS JOIN LATERAL inv.job_commits(j) c
    WHERE j.status IN ('committed', 'built') AND c.live AND c.item_id = $1
    ORDER BY j.delivery_date NULLS LAST, j.number`;
 
